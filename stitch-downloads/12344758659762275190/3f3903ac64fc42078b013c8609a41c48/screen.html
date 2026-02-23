@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Document Generator Sidebar</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#3370ff","primary-light": "#e1eaff", 
+                        "primary-hover": "#285bd4",
+                        "background-light": "#f5f6f7","background-dark": "#131022",
+                        "surface-light": "#ffffff",
+                        "surface-dark": "#1c1833",
+                        "border-light": "#dee0e3",
+                        "border-dark": "#2d2a45",
+                        "text-main": "#1f2329",
+                        "text-secondary": "#646a73",
+                    },
+                    fontFamily: {
+                        "display": ["Manrope", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.375rem",
+                        "lg": "0.5rem", 
+                        "xl": "0.75rem", 
+                        "2xl": "1rem",
+                        "full": "9999px"
+                    },
+                    boxShadow: {
+                        "lark": "0 2px 8px 0 rgba(0,0,0,0.04), 0 1px 2px 0 rgba(0,0,0,0.02)"
+                    }
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            min-height: max(884px, 100dvh);
+        }.no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-text-main dark:text-slate-100 antialiased selection:bg-primary/20">
+<div class="mx-auto max-w-md min-h-screen bg-background-light dark:bg-background-dark flex flex-col relative shadow-2xl overflow-hidden">
+<header class="flex items-center justify-between px-4 py-3 bg-surface-light dark:bg-surface-dark border-b border-border-light dark:border-border-dark sticky top-0 z-30">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center text-primary">
+<span class="material-symbols-outlined text-[20px]">description</span>
+</div>
+<h1 class="text-base font-bold text-text-main dark:text-white leading-tight">Doc Generator</h1>
+</div>
+<button class="text-text-secondary dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 p-2 rounded-md transition-colors">
+<span class="material-symbols-outlined text-[20px]">more_horiz</span>
+</button>
+</header>
+<main class="flex-1 overflow-y-auto no-scrollbar pb-32">
+<section class="bg-surface-light dark:bg-surface-dark px-5 py-5 mb-3 border-b border-border-light dark:border-border-dark">
+<div class="flex items-center justify-between mb-3">
+<h2 class="text-sm font-bold text-text-main dark:text-white uppercase tracking-wide">1. Template Source</h2>
+<span class="text-xs text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 dark:text-emerald-400 px-2 py-0.5 rounded border border-emerald-100 dark:border-emerald-800">Connected</span>
+</div>
+<div class="space-y-3">
+<div class="relative group">
+<div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+<span class="material-symbols-outlined text-text-secondary text-[18px]">link</span>
+</div>
+<input class="block w-full pl-9 pr-3 py-2.5 text-sm bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark rounded-lg focus:ring-2 focus:ring-primary/20 focus:border-primary placeholder-text-secondary dark:placeholder-slate-500 transition-all" type="url" value="https://larksuite.com/docs/d/123...89"/>
+</div>
+<button class="w-full flex items-center justify-center gap-2 bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark hover:bg-gray-50 dark:hover:bg-slate-700 text-text-main dark:text-white font-medium py-2 rounded-lg transition-colors text-sm shadow-sm">
+<span class="material-symbols-outlined text-[18px]">sync</span>
+                    Re-Analyze Template
+                </button>
+</div>
+</section>
+<section class="bg-surface-light dark:bg-surface-dark px-5 py-5 mb-3 border-b border-border-light dark:border-border-dark">
+<div class="flex items-center justify-between mb-4">
+<h2 class="text-sm font-bold text-text-main dark:text-white uppercase tracking-wide">2. Variable Mapping</h2>
+<div class="text-xs font-medium text-text-secondary">3 Variables</div>
+</div>
+<div class="space-y-3">
+<div class="flex items-center gap-2">
+<div class="w-1/3 shrink-0">
+<div class="text-xs font-medium text-text-secondary mb-1">Variable</div>
+<div class="bg-gray-100 dark:bg-slate-700 text-text-main dark:text-white text-xs px-2 py-2 rounded border border-gray-200 dark:border-slate-600 truncate font-mono">
+                            {{Client}}
+                        </div>
+</div>
+<span class="material-symbols-outlined text-border-light dark:text-slate-600 shrink-0 mt-5">arrow_right_alt</span>
+<div class="flex-1 min-w-0">
+<div class="text-xs font-medium text-text-secondary mb-1">Base Field</div>
+<select class="block w-full text-xs bg-white dark:bg-slate-800 border-border-light dark:border-border-dark rounded focus:ring-primary focus:border-primary text-text-main dark:text-white py-2 pl-2 pr-6">
+<option selected="">Client Name</option>
+<option>Company</option>
+</select>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<div class="w-1/3 shrink-0">
+<div class="bg-gray-100 dark:bg-slate-700 text-text-main dark:text-white text-xs px-2 py-2 rounded border border-gray-200 dark:border-slate-600 truncate font-mono">
+                            {{Date}}
+                        </div>
+</div>
+<span class="material-symbols-outlined text-border-light dark:text-slate-600 shrink-0">arrow_right_alt</span>
+<div class="flex-1 min-w-0">
+<select class="block w-full text-xs bg-white dark:bg-slate-800 border-border-light dark:border-border-dark rounded focus:ring-primary focus:border-primary text-text-main dark:text-white py-2 pl-2 pr-6">
+<option selected="">Issue Date</option>
+<option>Created Time</option>
+</select>
+</div>
+</div>
+<div class="flex items-center gap-2">
+<div class="w-1/3 shrink-0">
+<div class="bg-gray-100 dark:bg-slate-700 text-text-main dark:text-white text-xs px-2 py-2 rounded border border-gray-200 dark:border-slate-600 truncate font-mono">
+                            {{Amount}}
+                        </div>
+</div>
+<span class="material-symbols-outlined text-border-light dark:text-slate-600 shrink-0">arrow_right_alt</span>
+<div class="flex-1 min-w-0 relative">
+<select class="block w-full text-xs bg-white dark:bg-slate-800 border-red-300 dark:border-red-900 rounded focus:ring-red-500 focus:border-red-500 text-text-secondary dark:text-slate-400 py-2 pl-2 pr-6">
+<option disabled="" selected="">Select Field...</option>
+<option>Total</option>
+</select>
+<div class="absolute right-0 top-0 h-full flex items-center pr-7 pointer-events-none">
+<div class="w-1.5 h-1.5 rounded-full bg-red-500"></div>
+</div>
+</div>
+</div>
+</div>
+</section>
+<section class="bg-surface-light dark:bg-surface-dark px-5 py-5 mb-3 border-b border-border-light dark:border-border-dark">
+<h2 class="text-sm font-bold text-text-main dark:text-white uppercase tracking-wide mb-4">3. Generation Settings</h2>
+<div class="space-y-5">
+<div>
+<label class="block text-xs font-semibold text-text-secondary mb-1.5">Output Link Column</label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-2.5 top-2.5 text-text-secondary text-[18px]">view_column</span>
+<select class="block w-full pl-9 text-sm bg-white dark:bg-slate-800 border-border-light dark:border-border-dark rounded-lg focus:ring-primary focus:border-primary text-text-main dark:text-white py-2">
+<option>Generated Document URL</option>
+<option>Attachment</option>
+<option>+ New Field</option>
+</select>
+</div>
+</div>
+<div>
+<label class="block text-xs font-semibold text-text-secondary mb-1.5">Document Owner ID (Optional)</label>
+<div class="relative">
+<span class="material-symbols-outlined absolute left-2.5 top-2.5 text-text-secondary text-[18px]">person</span>
+<input class="block w-full pl-9 text-sm bg-white dark:bg-slate-800 border-border-light dark:border-border-dark rounded-lg focus:ring-primary focus:border-primary text-text-main dark:text-white py-2 placeholder-text-secondary/50" placeholder="ou_12345678" type="text"/>
+</div>
+<p class="text-[10px] text-text-secondary mt-1">Leave empty to use current user.</p>
+</div>
+<div class="flex items-center justify-between">
+<div>
+<div class="text-sm font-medium text-text-main dark:text-white">Public Read Access</div>
+<div class="text-xs text-text-secondary">Allow anyone with link to view</div>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+</div>
+</section>
+<section class="bg-surface-light dark:bg-surface-dark px-5 py-5 pb-8">
+<h2 class="text-sm font-bold text-text-main dark:text-white uppercase tracking-wide mb-4">4. Preview &amp; Generate</h2>
+<div class="bg-background-light dark:bg-slate-800/50 rounded-xl p-4 border border-border-light dark:border-border-dark mb-6">
+<div class="flex items-center gap-2 mb-3">
+<span class="material-symbols-outlined text-primary text-[20px]">visibility</span>
+<span class="text-xs font-bold text-text-main dark:text-white">Selected Record Preview</span>
+</div>
+<div class="space-y-2 text-xs">
+<div class="flex justify-between py-1 border-b border-gray-200 dark:border-slate-700/50 border-dashed">
+<span class="text-text-secondary">{{Client}}</span>
+<span class="font-medium text-text-main dark:text-white">Acme Corp</span>
+</div>
+<div class="flex justify-between py-1 border-b border-gray-200 dark:border-slate-700/50 border-dashed">
+<span class="text-text-secondary">{{Date}}</span>
+<span class="font-medium text-text-main dark:text-white">Oct 24, 2023</span>
+</div>
+<div class="flex justify-between py-1 border-b border-gray-200 dark:border-slate-700/50 border-dashed">
+<span class="text-text-secondary">{{Amount}}</span>
+<span class="font-medium text-red-500 italic">Missing Selection</span>
+</div>
+</div>
+</div>
+</section>
+</main>
+<div class="absolute bottom-0 left-0 right-0 p-4 bg-surface-light dark:bg-surface-dark border-t border-border-light dark:border-border-dark z-40 shadow-[0_-4px_16px_rgba(0,0,0,0.05)]">
+<div class="flex gap-3">
+<button class="flex-1 flex flex-col items-center justify-center bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark text-text-main dark:text-white hover:bg-gray-50 dark:hover:bg-slate-700 h-12 rounded-lg transition-colors active:scale-95">
+<span class="text-xs font-medium">Generate Selected</span>
+<span class="text-[10px] text-text-secondary">(1 Record)</span>
+</button>
+<button class="flex-[1.5] flex items-center justify-center gap-2 bg-primary text-white hover:bg-primary-hover font-bold h-12 rounded-lg shadow-lg shadow-primary/30 transition-all active:scale-95">
+<span class="material-symbols-outlined text-[20px]">rocket_launch</span>
+<span>Batch Generate</span>
+</button>
+</div>
+</div>
+</div>
+
+</body></html>

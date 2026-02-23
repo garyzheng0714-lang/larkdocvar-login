@@ -1,0 +1,27 @@
+services:
+  larkdocvar-login:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: larkdocvar-login
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: ${CONTAINER_PORT:-3180}
+      FEISHU_APP_ID: ${FEISHU_APP_ID:-}
+      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
+      FEISHU_OAUTH_REDIRECT_URI: ${FEISHU_OAUTH_REDIRECT_URI:-}
+      FEISHU_OAUTH_SCOPE: ${FEISHU_OAUTH_SCOPE:-contact:user.base:readonly}
+      SESSION_COOKIE_NAME: ${SESSION_COOKIE_NAME:-larkdocvar_session}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      SESSION_COOKIE_SAMESITE: ${SESSION_COOKIE_SAMESITE:-lax}
+      SESSION_MAX_AGE_SECONDS: ${SESSION_MAX_AGE_SECONDS:-604800}
+      FRONTEND_POST_LOGIN_URL: ${FRONTEND_POST_LOGIN_URL:-}
+    ports:
+      - "127.0.0.1:${HOST_PORT:-18080}:${CONTAINER_PORT:-3180}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${CONTAINER_PORT:-3180}/api/health >/dev/null || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s

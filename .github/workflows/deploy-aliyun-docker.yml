@@ -1,0 +1,221 @@
+name: Deploy Docker To Aliyun
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-larkdocvar
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Package Release
+        run: |
+          set -euo pipefail
+          rm -f /tmp/release.tgz release.tgz
+          tar -czf /tmp/release.tgz \
+            --exclude=".git" \
+            --exclude=".github" \
+            --exclude="node_modules" \
+            --exclude="dist" \
+            --exclude="stitch-downloads" \
+            --exclude=".env" \
+            --exclude=".env.local" \
+            --exclude="release.tgz" \
+            --exclude=".DS_Store" \
+            .
+          cp /tmp/release.tgz release.tgz
+
+      - name: Validate SSH Key
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+          ALIYUN_SSH_KEY: ${{ secrets.ALIYUN_SSH_KEY }}
+          ALIYUN_SSH_KEY_B64: ${{ secrets.ALIYUN_SSH_KEY_B64 }}
+        run: |
+          set -euo pipefail
+          HOST="${ALIYUN_HOST:-112.124.103.65}"
+          USER="${ALIYUN_USER:-root}"
+
+          mkdir -p ~/.ssh
+
+          if [ -n "${ALIYUN_SSH_KEY:-}" ]; then
+            KEY_HEAD="$(printf '%s' "${ALIYUN_SSH_KEY}" | head -n 1)"
+            if printf '%s' "${KEY_HEAD}" | grep -qE '^ssh-(ed25519|rsa|dss) '; then
+              echo "::error::ALIYUN_SSH_KEY looks like a public key. Please set private key content."
+              exit 1
+            fi
+            RAW_KEY="$(printf '%b' "${ALIYUN_SSH_KEY}" | tr -d '\r')"
+            if printf '%s' "${RAW_KEY}" | grep -q -- '-----BEGIN OPENSSH PRIVATE KEY-----'; then
+              printf '%s\n' "${RAW_KEY}" | awk '
+                /-----BEGIN OPENSSH PRIVATE KEY-----/ {in_key=1}
+                in_key {print}
+                /-----END OPENSSH PRIVATE KEY-----/ {if (in_key) {exit}}
+              ' > ~/.ssh/id_aliyun
+            else
+              printf '%s' "${RAW_KEY}" > ~/.ssh/id_aliyun
+            fi
+          elif [ -n "${ALIYUN_SSH_KEY_B64:-}" ]; then
+            printf '%s' "${ALIYUN_SSH_KEY_B64}" | tr -d '\r\n ' | base64 -d > ~/.ssh/id_aliyun
+          else
+            echo "::error::Missing ALIYUN_SSH_KEY or ALIYUN_SSH_KEY_B64"
+            exit 1
+          fi
+
+          chmod 600 ~/.ssh/id_aliyun
+
+          if ! ssh-keygen -y -f ~/.ssh/id_aliyun >/dev/null 2>/tmp/ssh_key_err.log; then
+            echo "::error::Invalid private key content."
+            cat /tmp/ssh_key_err.log || true
+            exit 1
+          fi
+
+          if ! ssh -i ~/.ssh/id_aliyun \
+            -o BatchMode=yes \
+            -o ConnectTimeout=10 \
+            -o StrictHostKeyChecking=accept-new \
+            "${USER}@${HOST}" \
+            "echo SSH_OK" >/tmp/ssh_probe_out.log 2>/tmp/ssh_probe_err.log; then
+            echo "::error::SSH probe failed."
+            cat /tmp/ssh_probe_err.log || true
+            exit 1
+          fi
+
+          grep -q "SSH_OK" /tmp/ssh_probe_out.log
+
+      - name: Upload Release To Server
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+        run: |
+          set -euo pipefail
+          HOST="${ALIYUN_HOST:-112.124.103.65}"
+          USER="${ALIYUN_USER:-root}"
+          scp -i ~/.ssh/id_aliyun \
+            -o BatchMode=yes \
+            -o ConnectTimeout=20 \
+            -o StrictHostKeyChecking=accept-new \
+            release.tgz \
+            "${USER}@${HOST}:/tmp/release.tgz"
+
+      - name: Deploy On Server
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          HOST_PORT: ${{ secrets.HOST_PORT }}
+          CONTAINER_PORT: ${{ secrets.CONTAINER_PORT }}
+          APP_ENV_B64: ${{ secrets.APP_ENV_B64 }}
+          GH_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          HOST="${ALIYUN_HOST:-112.124.103.65}"
+          USER="${ALIYUN_USER:-root}"
+
+          cat > /tmp/remote_deploy.sh <<'REMOTE_SCRIPT'
+            set -euo pipefail
+
+            command -v docker >/dev/null 2>&1 || { echo "Docker 未安装"; exit 1; }
+
+            if command -v docker-compose >/dev/null 2>&1; then
+              DC="docker-compose"
+            elif docker compose version >/dev/null 2>&1; then
+              DC="docker compose"
+            else
+              echo "docker-compose 或 docker compose 不可用"
+              exit 1
+            fi
+
+            APP_ROOT="${APP_DIR:-/opt/larkdocvar}"
+            RELEASES_DIR="${APP_ROOT}/releases"
+            CURRENT_LINK="${APP_ROOT}/current"
+            RELEASE_DIR="${RELEASES_DIR}/${GH_SHA}"
+            HOST_PORT_VALUE="${HOST_PORT:-18080}"
+            CONTAINER_PORT_VALUE="${CONTAINER_PORT:-3180}"
+
+            mkdir -p "${RELEASES_DIR}"
+            rm -rf "${RELEASE_DIR}"
+            mkdir -p "${RELEASE_DIR}"
+            tar -xzf /tmp/release.tgz -C "${RELEASE_DIR}"
+
+            if [[ -f "${CURRENT_LINK}/.env" && ! -f "${RELEASE_DIR}/.env" ]]; then
+              cp "${CURRENT_LINK}/.env" "${RELEASE_DIR}/.env"
+            fi
+            if [[ ! -f "${RELEASE_DIR}/.env" && -n "${APP_ENV_B64:-}" ]]; then
+              printf '%s' "${APP_ENV_B64}" | tr -d '\r\n ' | base64 -d > "${RELEASE_DIR}/.env"
+            fi
+            if [[ ! -f "${RELEASE_DIR}/.env" ]]; then
+              touch "${RELEASE_DIR}/.env"
+            fi
+
+            upsert_env() {
+              local key="$1"
+              local value="$2"
+              if grep -q "^${key}=" "${RELEASE_DIR}/.env"; then
+                sed -i "s|^${key}=.*|${key}=${value}|" "${RELEASE_DIR}/.env"
+              else
+                echo "${key}=${value}" >> "${RELEASE_DIR}/.env"
+              fi
+            }
+
+            upsert_env "HOST_PORT" "${HOST_PORT_VALUE}"
+            upsert_env "CONTAINER_PORT" "${CONTAINER_PORT_VALUE}"
+            upsert_env "PORT" "${CONTAINER_PORT_VALUE}"
+            upsert_env "HOST" "0.0.0.0"
+
+            if ss -ltn "( sport = :${HOST_PORT_VALUE} )" | grep -q LISTEN; then
+              if docker ps --filter "name=^/larkdocvar$" --format '{{.Ports}}' | grep -q ":${HOST_PORT_VALUE}->"; then
+                echo "HOST_PORT=${HOST_PORT_VALUE} currently used by larkdocvar, continue rolling update"
+              else
+                echo "端口冲突: HOST_PORT=${HOST_PORT_VALUE} 已被占用"
+                ss -ltnp | awk -v p=":${HOST_PORT_VALUE}" '$4 ~ p"$" {print}'
+                exit 1
+              fi
+            fi
+
+            ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
+            cd "${CURRENT_LINK}"
+            docker rm -f larkdocvar >/dev/null 2>&1 || true
+            ${DC} up -d --build --remove-orphans
+
+            HEALTH_OK="0"
+            for _ in {1..30}; do
+              if curl -fsS "http://127.0.0.1:${HOST_PORT_VALUE}/api/health" >/dev/null; then
+                HEALTH_OK="1"
+                break
+              fi
+              sleep 1
+            done
+            if [[ "${HEALTH_OK}" != "1" ]]; then
+              echo "健康检查失败: http://127.0.0.1:${HOST_PORT_VALUE}/api/health"
+              docker logs --tail 80 larkdocvar || true
+              exit 1
+            fi
+
+            ls -1dt "${RELEASES_DIR}"/* 2>/dev/null | tail -n +6 | xargs -r rm -rf
+          REMOTE_SCRIPT
+
+          REMOTE_ENV="$(printf \
+            "APP_DIR=%q HOST_PORT=%q CONTAINER_PORT=%q APP_ENV_B64=%q GH_SHA=%q" \
+            "${APP_DIR:-}" "${HOST_PORT:-}" "${CONTAINER_PORT:-}" "${APP_ENV_B64:-}" "${GH_SHA}")"
+
+          ssh -i ~/.ssh/id_aliyun \
+            -o BatchMode=yes \
+            -o ConnectTimeout=20 \
+            -o StrictHostKeyChecking=accept-new \
+            "${USER}@${HOST}" \
+            "${REMOTE_ENV} bash -s" < /tmp/remote_deploy.sh
+
+      - name: Cleanup
+        if: always()
+        run: rm -f ~/.ssh/id_aliyun /tmp/remote_deploy.sh release.tgz /tmp/release.tgz

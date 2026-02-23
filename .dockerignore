@@ -1,0 +1,7 @@
+.git
+.github
+node_modules
+dist
+stitch-downloads
+npm-debug.log*
+.DS_Store

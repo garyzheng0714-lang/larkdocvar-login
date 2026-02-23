@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply min-h-dvh bg-background-light dark:bg-background-dark font-display text-text-main dark:text-slate-100 antialiased selection:bg-primary/20;
+  }
+}
+
+@layer utilities {
+  .icon-spin-smooth {
+    animation: icon-spin-smooth 0.9s linear infinite;
+    transform-origin: center;
+    will-change: transform;
+  }
+
+  @keyframes icon-spin-smooth {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
