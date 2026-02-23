@@ -37,6 +37,7 @@ interface SavedConfigPayload {
     ownerTransferRemoveOldOwner?: boolean;
     ownerTransferStayPut?: boolean;
     ownerTransferOldOwnerPerm?: "view" | "edit" | "full_access";
+    ownerTransferTargetUser?: OwnerCandidate | null;
   };
 }
 
@@ -855,18 +856,26 @@ export default function App() {
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
 
   const [showUnboundModal, setShowUnboundModal] = useState(false);
+  const [showAdvancedConfigModal, setShowAdvancedConfigModal] = useState(false);
   const [pendingGenerateMode, setPendingGenerateMode] = useState<GenerateMode | null>(null);
   const [currentStep, setCurrentStep] = useState<WizardStep>("extract");
 
   const [allUsersCache, setAllUsersCache] = useState<OwnerCandidate[] | null>(null);
 
   const [collaborators, setCollaborators] = useState<Collaborator[]>([]);
+  const [ownerTransferTargetUser, setOwnerTransferTargetUser] = useState<OwnerCandidate | null>(null);
+  const [ownerTransferTargetKeyword, setOwnerTransferTargetKeyword] = useState("");
+  const [ownerTransferTargetCandidates, setOwnerTransferTargetCandidates] = useState<OwnerCandidate[]>([]);
+  const [ownerTransferTargetSearchOpen, setOwnerTransferTargetSearchOpen] = useState(false);
+  const [ownerTransferTargetSearchLoading, setOwnerTransferTargetSearchLoading] = useState(false);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [advancedSettings, setAdvancedSettings] = useState<AdvancedGenerationSettings>(
     DEFAULT_ADVANCED_GENERATION_SETTINGS,
   );
   const collabSearchTimers = useRef<Record<string, number>>({});
+  const ownerTransferSearchTimerRef = useRef<number | null>(null);
   const collabContainerRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const ownerTransferContainerRef = useRef<HTMLDivElement | null>(null);
   const autoSaveTimerRef = useRef<number | null>(null);
   const skipAutoSaveRef = useRef(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -894,6 +903,19 @@ export default function App() {
   useEffect(() => {
     linkedTableFieldsCacheRef.current = linkedTableFieldsCache;
   }, [linkedTableFieldsCache]);
+
+  useEffect(() => {
+    if (!showAdvancedConfigModal) {
+      return undefined;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowAdvancedConfigModal(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showAdvancedConfigModal]);
 
   const fetchLinkedTableFields = useCallback(async (tableId: string): Promise<FieldMetaLite[]> => {
     const cached = linkedTableFieldsCacheRef.current[tableId];
@@ -970,6 +992,11 @@ export default function App() {
       setVariables([]);
       setBindings({});
       setResults([]);
+      setOwnerTransferTargetUser(null);
+      setOwnerTransferTargetKeyword("");
+      setOwnerTransferTargetCandidates([]);
+      setOwnerTransferTargetSearchOpen(false);
+      setOwnerTransferTargetSearchLoading(false);
       setAccountMenuOpen(false);
     } catch (error) {
       setAuthError(toErrorMessage(error));
@@ -1125,8 +1152,24 @@ export default function App() {
             ? raw.ownerTransferOldOwnerPerm
             : DEFAULT_ADVANCED_GENERATION_SETTINGS.ownerTransferOldOwnerPerm,
       });
+      const rawOwnerTransferTarget = (raw as { ownerTransferTargetUser?: unknown }).ownerTransferTargetUser;
+      if (rawOwnerTransferTarget && typeof rawOwnerTransferTarget === "object") {
+        const candidate = rawOwnerTransferTarget as Partial<OwnerCandidate>;
+        if (typeof candidate.openId === "string" && candidate.openId.trim()) {
+          setOwnerTransferTargetUser(candidate as OwnerCandidate);
+          setOwnerTransferTargetKeyword("");
+        } else {
+          setOwnerTransferTargetUser(null);
+          setOwnerTransferTargetKeyword("");
+        }
+      } else {
+        setOwnerTransferTargetUser(null);
+        setOwnerTransferTargetKeyword("");
+      }
     } else {
       setAdvancedSettings(DEFAULT_ADVANCED_GENERATION_SETTINGS);
+      setOwnerTransferTargetUser(null);
+      setOwnerTransferTargetKeyword("");
     }
   }, []);
 
@@ -1222,7 +1265,10 @@ export default function App() {
               outputFieldId,
               titleFieldId,
               collaborators: collaborators.map((item) => ({ user: item.user, role: item.role })),
-              advancedGeneration: advancedSettings,
+              advancedGeneration: {
+                ...advancedSettings,
+                ownerTransferTargetUser: ownerTransferTargetUser ?? null,
+              },
             },
           }),
         });
@@ -1266,7 +1312,7 @@ export default function App() {
     return () => {
       if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
     };
-  }, [authSession.isAuthenticated, templateUrl, templateTitle, bindings, linkConfigs, attachmentConfigs, outputFieldId, titleFieldId, collaborators, advancedSettings, table?.id]);
+  }, [authSession.isAuthenticated, templateUrl, templateTitle, bindings, linkConfigs, attachmentConfigs, outputFieldId, titleFieldId, collaborators, advancedSettings, ownerTransferTargetUser, table?.id]);
 
   const loadAllUsers = useCallback(async (): Promise<OwnerCandidate[]> => {
     if (allUsersCache !== null) return allUsersCache;
@@ -1344,6 +1390,39 @@ export default function App() {
       updateCollaborator(id, { candidates: [], searchOpen: true, searchLoading: false });
     }
   }, [allUsersCache, loadAllUsers, updateCollaborator]);
+
+  const searchOwnerTransferUsers = useCallback(async (keyword: string) => {
+    const trimmed = keyword.trim();
+    setOwnerTransferTargetSearchLoading(true);
+    try {
+      let users: OwnerCandidate[];
+      if (allUsersCache !== null) {
+        users = allUsersCache;
+      } else {
+        users = await loadAllUsers();
+      }
+      if (!trimmed) {
+        setOwnerTransferTargetCandidates(users.slice(0, 50));
+        setOwnerTransferTargetSearchOpen(true);
+        setOwnerTransferTargetSearchLoading(false);
+        return;
+      }
+      const lower = trimmed.toLowerCase();
+      const filtered = users.filter((u) => {
+        const name = (u.name || "").toLowerCase();
+        const nickname = (u.nickname || "").toLowerCase();
+        const enName = (u.enName || "").toLowerCase();
+        return name.includes(lower) || nickname.includes(lower) || enName.includes(lower);
+      });
+      setOwnerTransferTargetCandidates(filtered.slice(0, 20));
+      setOwnerTransferTargetSearchOpen(true);
+      setOwnerTransferTargetSearchLoading(false);
+    } catch {
+      setOwnerTransferTargetCandidates([]);
+      setOwnerTransferTargetSearchOpen(true);
+      setOwnerTransferTargetSearchLoading(false);
+    }
+  }, [allUsersCache, loadAllUsers]);
 
   const handleBindingChange = useCallback((variable: string, fieldId: string) => {
     const resolvedId = fieldId === UNBOUND_FIELD_VALUE ? "" : fieldId;
@@ -1579,10 +1658,18 @@ export default function App() {
         });
         return changed ? next : prev;
       });
+
+      if (
+        ownerTransferTargetSearchOpen &&
+        ownerTransferContainerRef.current &&
+        !ownerTransferContainerRef.current.contains(target)
+      ) {
+        setOwnerTransferTargetSearchOpen(false);
+      }
     };
     document.addEventListener("mousedown", onMouseDown);
     return () => document.removeEventListener("mousedown", onMouseDown);
-  }, []);
+  }, [ownerTransferTargetSearchOpen]);
 
   useEffect(() => {
     if (!accountMenuOpen) return;
@@ -1870,6 +1957,8 @@ export default function App() {
         return;
       }
 
+      setCurrentStep("generate");
+
       let targetRecordIds: string[] = [];
       if (generateMode === "selected") {
         targetRecordIds = [...selectedRecordIds];
@@ -1910,10 +1999,11 @@ export default function App() {
             });
           },
         );
-        const ownerTransfer = authSession.user?.openId && advancedSettings.ownerTransferEnabled
+        const ownerTransferTargetOpenId = ownerTransferTargetUser?.openId || authSession.user?.openId;
+        const ownerTransfer = ownerTransferTargetOpenId && advancedSettings.ownerTransferEnabled
           ? {
               memberType: "openid" as const,
-              memberId: authSession.user.openId,
+              memberId: ownerTransferTargetOpenId,
               needNotification: advancedSettings.ownerTransferNeedNotification,
               removeOldOwner: advancedSettings.ownerTransferRemoveOldOwner,
               stayPut: advancedSettings.ownerTransferStayPut,
@@ -2017,6 +2107,7 @@ export default function App() {
       refreshTableContext,
       titleFieldId,
       collaborators,
+      ownerTransferTargetUser,
       advancedSettings,
     ],
   );
@@ -2044,19 +2135,6 @@ export default function App() {
     },
     [table, templateUrl, templateTitle, hasUnboundVariables, executeGenerate],
   );
-
-  const handleContinueToGenerate = useCallback(() => {
-    if (!templateTitle) {
-      setNotice({ type: "error", text: "请先提取模板变量。" });
-      setCurrentStep("extract");
-      return;
-    }
-    setCurrentStep("generate");
-  }, [templateTitle]);
-
-  const handleBackToConfig = useCallback(() => {
-    setCurrentStep("configure");
-  }, []);
 
   const outputOptions = useMemo(
     () => [
@@ -2342,9 +2420,8 @@ export default function App() {
 
             <div className="order-1">
 
-            {/* 字段映射 — 仅在有变量时展示 */}
-            {variables.length > 0 ? (
-              <div className="px-5 py-5">
+            {/* 字段映射 */}
+            <div className="px-5 py-5">
                 <div className="mb-3">
                   <div className="flex items-center justify-between gap-2">
                     <div className="text-[15px] font-semibold text-[#1f2329] dark:text-white">
@@ -2365,10 +2442,12 @@ export default function App() {
                     </button>
                   </div>
                   <div className="text-[12px] text-[#8f959e] mt-1">
-                    将文档内的变量映射至当前数据表的对应列
+                    将文档内的变量映射至当前数据表的对应列。
                   </div>
                 </div>
 
+                {variables.length > 0 ? (
+                <>
                 <div className="space-y-1">
                   {variables.map((variable) => {
                     const isUnbound = !bindings[variable];
@@ -2543,61 +2622,152 @@ export default function App() {
                   })}
                 </div>
 
-                 {hasUnboundVariables && (
+                  {hasUnboundVariables && (
                    <div className="mt-5 flex items-center gap-2 text-[13px] text-[#f5a623] bg-[#fff8ea] dark:bg-amber-900/10 px-4 py-3 rounded-[8px] border border-[#ffe4a8] dark:border-amber-900/30">
                      <Info className="w-[18px] h-[18px] text-[#f5a623] shrink-0" />
                      <span>未映射的变量将在生成文档时保持原样。</span>
                    </div>
                  )}
-              </div>
-            ) : (
-              <div className="px-5 py-6">
+                </>
+                ) : (
                 <div className="flex items-center gap-2 text-[13px] text-[#8f959e] bg-[#f5f6f7] dark:bg-gray-800/40 px-4 py-3 rounded-[8px]">
                   <Info className="w-[16px] h-[16px] text-[#8f959e] shrink-0" />
                   <span>该模板中未找到 {"{{变量}}"} 格式的占位符，生成时将直接复制文档。</span>
                 </div>
+                )}
+
+                <div className="mt-4 pt-3 border-t border-[#ebedf0] dark:border-gray-700">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="min-w-0 pr-2 text-[13px] font-medium leading-6 text-[#1f2329] dark:text-white">
+                          生成后的文档链接放在哪个字段？
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowAdvancedSettings(true);
+                            setShowAdvancedConfigModal(true);
+                          }}
+                          className="h-6 shrink-0 inline-flex items-center gap-1 px-1.5 text-[12px] leading-6 text-[#3370ff] hover:bg-[#f0f4ff] dark:hover:bg-blue-900/20 rounded-[6px] transition-colors"
+                        >
+                          <span>高级配置</span>
+                          <ChevronDown className="w-[12px] h-[12px] -rotate-90" />
+                        </button>
+                      </div>
+                      <StandardSelect
+                        value={outputFieldId || AUTO_OUTPUT_FIELD_VALUE}
+                        onChange={(val) =>
+                          setOutputFieldId(val === AUTO_OUTPUT_FIELD_VALUE ? "" : val)
+                        }
+                        options={outputOptions}
+                        searchable
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <span className="text-[13px] font-medium text-[#1f2329] dark:text-white">文档命名</span>
+                        <span className="relative inline-flex items-center group">
+                          <span
+                            tabIndex={0}
+                            aria-label="文档命名说明"
+                            className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[#8f959e] hover:text-[#3370ff] focus:text-[#3370ff] outline-none"
+                          >
+                            <Info className="w-[14px] h-[14px]" />
+                          </span>
+                          <span
+                            role="tooltip"
+                            className="pointer-events-none absolute left-0 top-[calc(100%+8px)] z-20 w-[260px] max-w-[calc(100vw-96px)] rounded-[8px] bg-[#1f2329] text-white text-[12px] leading-relaxed whitespace-normal break-words px-3 py-2 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100"
+                          >
+                            指定生成后文档名称来自哪个字段；不配置时默认使用模板名称。
+                          </span>
+                        </span>
+                      </div>
+                      <StandardSelect
+                        value={titleFieldId || AUTO_TITLE_FIELD_VALUE}
+                        onChange={(val) =>
+                          setTitleFieldId(val === AUTO_TITLE_FIELD_VALUE ? "" : val)
+                        }
+                        options={titleFieldOptions}
+                        searchable
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
-            )}
 
             </div>
 
-            <div className="order-2 h-[8px] bg-[#f5f6f7] dark:bg-[#131022]" />
-
-            <div className="order-3">
-
-            <div className="px-5 py-6 space-y-6">
-              <div>
-                <div className="text-[15px] font-semibold text-[#1f2329] dark:text-white">模板与生成设置</div>
-                <div className="text-[12px] text-[#8f959e] mt-1">模板提取后，在这里设置生成文档的存放与协作规则。</div>
-              </div>
-
-              <div>
-                <div className="mb-3 text-[14px] font-medium text-[#1f2329] dark:text-white">
-                  生成的文档链接存放于
+            <div className="order-3 px-5 pt-3 pb-5 space-y-3">
+              {generateProgress.visible ? (
+                <div className="rounded-[8px] border border-[#e6e8eb] dark:border-gray-700 bg-white dark:bg-[#1c1833] px-3 py-2.5">
+                  <div className="flex items-center justify-between text-[12px] mb-1.5">
+                    <span className="text-[#5f6670] dark:text-gray-300">{generateProgress.phase}</span>
+                    <span className="text-[#8f959e]">
+                      {Math.min(generateProgress.completed, generateProgress.total)} / {generateProgress.total}
+                    </span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-[#eef1f5] dark:bg-gray-800 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-[#3370ff] transition-all duration-300"
+                      style={{
+                        width: `${generateProgress.total > 0 ? Math.min(100, Math.round((generateProgress.completed / generateProgress.total) * 100)) : 0}%`,
+                      }}
+                    />
+                  </div>
                 </div>
-                <StandardSelect
-                  value={outputFieldId || AUTO_OUTPUT_FIELD_VALUE}
-                  onChange={(val) =>
-                    setOutputFieldId(val === AUTO_OUTPUT_FIELD_VALUE ? "" : val)
-                  }
-                  options={outputOptions}
-                  searchable
-                />
+              ) : null}
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  className="h-10 px-1.5 sm:px-3 bg-white dark:bg-gray-800 border border-[#d0d3d6] dark:border-gray-700 text-[#1f2329] dark:text-gray-300 text-[13px] sm:text-[14px] font-medium leading-none whitespace-nowrap rounded-[6px] hover:bg-[#f5f6f7] dark:hover:bg-gray-700 transition-colors disabled:bg-[#f5f6f7] disabled:text-[#bbbfc4] disabled:border-[#e6e8eb] disabled:cursor-not-allowed"
+                  onClick={() => void handleGenerate("selected")}
+                  disabled={isGenerating || !selectedRecordIds.length || !templateTitle}
+                >
+                  生成选中记录
+                </button>
+                <button
+                  className="h-10 px-1.5 sm:px-3 bg-[#1456F0] text-white text-[13px] sm:text-[14px] font-medium rounded-[6px] hover:bg-[#0f4ad9] transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1 sm:gap-1.5 whitespace-nowrap"
+                  onClick={() => void handleGenerate("all")}
+                  disabled={isGenerating || !templateTitle}
+                >
+                  {isGenerating ? (
+                    <Loader2 className="hidden sm:block w-[16px] h-[16px] icon-spin-smooth" />
+                  ) : (
+                    <Rocket className="hidden sm:block w-[16px] h-[16px]" />
+                  )}
+                  <span>生成当前视图所有记录</span>
+                </button>
               </div>
 
-              <div>
-                <div className="mb-3 text-[14px] font-medium text-[#1f2329] dark:text-white">
-                  文档命名
-                </div>
-                <StandardSelect
-                  value={titleFieldId || AUTO_TITLE_FIELD_VALUE}
-                  onChange={(val) =>
-                    setTitleFieldId(val === AUTO_TITLE_FIELD_VALUE ? "" : val)
-                  }
-                  options={titleFieldOptions}
-                  searchable
-                />
-              </div>
+              {showAdvancedConfigModal ? (
+                <div
+                  className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-3"
+                  onClick={() => setShowAdvancedConfigModal(false)}
+                >
+                  <div
+                    className="w-full max-w-[760px] max-h-[calc(100dvh-24px)] rounded-[14px] border border-[#e6e8eb] dark:border-gray-700 bg-white dark:bg-[#151224] shadow-[0_16px_50px_rgba(0,0,0,0.18)] overflow-hidden"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="px-5 py-4 border-b border-[#ebedf0] dark:border-gray-800 flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-[15px] font-semibold text-[#1f2329] dark:text-white">高级配置</div>
+                        <div className="text-[12px] text-[#8f959e] mt-1">
+                          配置协作规则与所有权细项
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowAdvancedConfigModal(false)}
+                        className="w-8 h-8 rounded-[8px] flex items-center justify-center text-[#8f959e] hover:text-[#1f2329] hover:bg-[#f5f6f7] dark:hover:bg-gray-800 transition-colors shrink-0"
+                        aria-label="关闭高级配置"
+                      >
+                        <X className="w-[16px] h-[16px]" />
+                      </button>
+                    </div>
+
+                    <div className="px-5 py-5 space-y-4 overflow-y-auto max-h-[calc(100dvh-120px)]">
 
               <div>
                 <div className="mb-3 flex items-center justify-between text-[14px] font-medium text-[#1f2329] dark:text-white">
@@ -2790,13 +2960,13 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="pt-1">
+              <div>
                 <button
                   type="button"
                   onClick={() => setShowAdvancedSettings((prev) => !prev)}
-                  className="w-full h-9 px-3 flex items-center justify-between rounded-[8px] border border-[#dee0e3] dark:border-gray-700 bg-white dark:bg-[#1c1833] text-[13px] text-[#1f2329] dark:text-gray-200 hover:border-[#bfd0ff] transition-colors"
+                  className="w-full h-10 px-4 flex items-center justify-between rounded-[10px] border border-[#dee0e3] dark:border-gray-700 bg-white dark:bg-[#1c1833] text-[14px] text-[#1f2329] dark:text-gray-200 hover:border-[#bfd0ff] transition-colors"
                 >
-                  <span className="font-medium">高级配置</span>
+                  <span className="font-medium">所有权转移细项</span>
                   <ChevronDown className={`w-[14px] h-[14px] text-[#8f959e] transition-transform ${showAdvancedSettings ? "rotate-180" : ""}`} />
                 </button>
 
@@ -2819,7 +2989,138 @@ export default function App() {
 
                     {advancedSettings.ownerTransferEnabled ? (
                       <>
-                        <div className="text-[12px] text-[#8f959e]">默认转移到当前登录人，可自定义转移细项。</div>
+                        <div className="text-[12px] text-[#8f959e]">默认转移到当前登录人；也可以指定转移给其他人。</div>
+
+                        <div ref={ownerTransferContainerRef} className="relative">
+                          <div className="mb-2 text-[12px] text-[#5f6670] dark:text-gray-300">转移给谁（可选）</div>
+                          <div
+                            className={`h-10 flex items-stretch bg-white dark:bg-[#1c1833] border border-[#dee0e3] dark:border-gray-700 rounded-[10px] ${
+                              ownerTransferTargetUser ? "overflow-visible" : "overflow-hidden"
+                            }`}
+                          >
+                            <div className="flex-1 min-w-0">
+                              {ownerTransferTargetUser ? (
+                                <div className="h-full flex items-center gap-2 px-3 bg-[#f5f6f7] dark:bg-[#232033] rounded-[10px]">
+                                  {ownerTransferTargetUser.avatar72 ? (
+                                    <img
+                                      className="w-5 h-5 rounded-full object-cover bg-gray-100 shrink-0"
+                                      src={ownerTransferTargetUser.avatar72}
+                                      alt=""
+                                    />
+                                  ) : (
+                                    <span
+                                      className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
+                                      style={{ backgroundColor: getAvatarColor(ownerTransferTargetUser) }}
+                                    >
+                                      {buildAvatarText(ownerTransferTargetUser)}
+                                    </span>
+                                  )}
+                                  <span className="text-[13px] text-[#1f2329] dark:text-gray-200 truncate flex-1">
+                                    {formatOwnerLabel(ownerTransferTargetUser)}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="w-5 h-5 flex items-center justify-center text-[#8f959e] hover:text-[#1f2329] rounded transition-colors shrink-0"
+                                    onClick={() => {
+                                      setOwnerTransferTargetUser(null);
+                                      setOwnerTransferTargetKeyword("");
+                                      setOwnerTransferTargetCandidates([]);
+                                      setOwnerTransferTargetSearchOpen(false);
+                                    }}
+                                  >
+                                    <X className="w-[12px] h-[12px]" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="relative h-full rounded-[10px]">
+                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 w-[16px] h-[16px] pointer-events-none">
+                                    <Search
+                                      className={`absolute inset-0 w-[16px] h-[16px] text-[#8f959e] transition-opacity ${
+                                        ownerTransferTargetSearchLoading ? "opacity-0" : "opacity-100"
+                                      }`}
+                                    />
+                                    <Loader2
+                                      className={`absolute inset-0 w-[16px] h-[16px] text-[#3370ff] icon-spin-smooth transition-opacity ${
+                                        ownerTransferTargetSearchLoading ? "opacity-100" : "opacity-0"
+                                      }`}
+                                    />
+                                  </span>
+                                  <input
+                                    className="w-full h-full pl-9 pr-3 border-0 rounded-[10px] bg-white dark:bg-[#1c1833] text-[14px] focus:ring-0 focus:outline-none outline-none placeholder-[#8f959e]"
+                                    placeholder="搜索姓名（留空默认当前登录人）"
+                                    value={ownerTransferTargetKeyword}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setOwnerTransferTargetKeyword(val);
+                                      setOwnerTransferTargetUser(null);
+                                      if (ownerTransferSearchTimerRef.current) {
+                                        window.clearTimeout(ownerTransferSearchTimerRef.current);
+                                      }
+                                      if (val.trim()) {
+                                        ownerTransferSearchTimerRef.current = window.setTimeout(() => {
+                                          void searchOwnerTransferUsers(val);
+                                        }, 200);
+                                      } else {
+                                        void searchOwnerTransferUsers("");
+                                      }
+                                    }}
+                                    onFocus={() => {
+                                      void searchOwnerTransferUsers(ownerTransferTargetKeyword);
+                                    }}
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {ownerTransferTargetSearchOpen && !ownerTransferTargetUser && (
+                            <div className="absolute z-20 left-0 right-0 mt-1 bg-white dark:bg-[#1c1833] border border-[#dee0e3] dark:border-gray-700 rounded-[8px] shadow-[0_4px_12px_rgba(0,0,0,0.1)] max-h-[200px] overflow-y-auto py-1">
+                              {ownerTransferTargetSearchLoading ? (
+                                <div className="flex items-center justify-center gap-2 text-[12px] text-[#8f959e] px-3 py-2.5">
+                                  <Loader2 className="w-[12px] h-[12px] icon-spin-smooth" />
+                                  <span>搜索中...</span>
+                                </div>
+                              ) : ownerTransferTargetCandidates.length === 0 ? (
+                                <div className="text-[12px] text-[#8f959e] px-3 py-2.5 text-center">
+                                  没有匹配结果，换个关键词试试吧
+                                </div>
+                              ) : (
+                                ownerTransferTargetCandidates.map((candidate) => (
+                                  <button
+                                    type="button"
+                                    key={`owner-transfer-${candidate.openId}`}
+                                    className="w-full text-left px-3 py-2 hover:bg-[#f5f6f7] dark:hover:bg-gray-800 flex items-center gap-2 transition-colors"
+                                    onClick={() => {
+                                      setOwnerTransferTargetUser(candidate);
+                                      setOwnerTransferTargetKeyword("");
+                                      setOwnerTransferTargetSearchOpen(false);
+                                      setOwnerTransferTargetCandidates([]);
+                                    }}
+                                  >
+                                    {candidate.avatar72 ? (
+                                      <img className="w-6 h-6 rounded-full object-cover bg-gray-100" src={candidate.avatar72} alt="" />
+                                    ) : (
+                                      <span
+                                        className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[10px] font-bold"
+                                        style={{ backgroundColor: getAvatarColor(candidate) }}
+                                      >
+                                        {buildAvatarText(candidate)}
+                                      </span>
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-[13px] text-[#1f2329] dark:text-white font-medium truncate">
+                                        {formatOwnerLabel(candidate)}
+                                      </div>
+                                      <div className="text-[11px] text-[#8f959e] truncate">
+                                        {candidate.departments?.join(" / ") || "暂无部门"}
+                                      </div>
+                                    </div>
+                                  </button>
+                                ))
+                              )}
+                            </div>
+                          )}
+                        </div>
 
                         <div>
                           <div className="mb-2 text-[12px] text-[#5f6670] dark:text-gray-300">原所有者权限</div>
@@ -2873,75 +3174,10 @@ export default function App() {
                 ) : null}
               </div>
 
-              {currentStep === "configure" ? (
-                <div className="mt-5 pt-5 border-t border-[#dee0e3] dark:border-gray-800">
-                  <button
-                    type="button"
-                    onClick={() => handleContinueToGenerate()}
-                    className="w-full h-10 rounded-[8px] bg-[#3370ff] text-white text-[14px] font-medium hover:bg-[#285bd4] transition-colors"
-                  >
-                    下一步：进入生成
-                  </button>
-                </div>
-              ) : null}
-
-              {currentStep === "generate" ? (
-                <div className="mt-5 pt-5 border-t border-[#dee0e3] dark:border-gray-800 space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-[14px] font-medium text-[#1f2329] dark:text-white">第 4 步：开始生成</div>
-                    <button
-                      type="button"
-                      onClick={() => handleBackToConfig()}
-                      className="h-8 px-3 text-[12px] text-[#3370ff] hover:bg-[#f0f4ff] rounded-[6px] transition-colors"
-                    >
-                      返回配置
-                    </button>
-                  </div>
-
-                  {generateProgress.visible ? (
-                    <div className="rounded-[8px] border border-[#e6e8eb] dark:border-gray-700 bg-white dark:bg-[#1c1833] px-3 py-2.5">
-                      <div className="flex items-center justify-between text-[12px] mb-1.5">
-                        <span className="text-[#5f6670] dark:text-gray-300">{generateProgress.phase}</span>
-                        <span className="text-[#8f959e]">
-                          {Math.min(generateProgress.completed, generateProgress.total)} / {generateProgress.total}
-                        </span>
-                      </div>
-                      <div className="h-1.5 rounded-full bg-[#eef1f5] dark:bg-gray-800 overflow-hidden">
-                        <div
-                          className="h-full rounded-full bg-[#3370ff] transition-all duration-300"
-                          style={{
-                            width: `${generateProgress.total > 0 ? Math.min(100, Math.round((generateProgress.completed / generateProgress.total) * 100)) : 0}%`,
-                          }}
-                        />
-                      </div>
                     </div>
-                  ) : null}
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <button
-                      className="py-2.5 bg-white dark:bg-gray-800 border border-[#dee0e3] dark:border-gray-700 text-[#1f2329] dark:text-gray-300 text-[14px] font-medium rounded-[8px] hover:bg-[#f5f6f7] dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      onClick={() => void handleGenerate("selected")}
-                      disabled={isGenerating || !selectedRecordIds.length || !templateTitle}
-                    >
-                      生成选中项
-                    </button>
-                    <button
-                      className="py-2.5 bg-[#3370ff] text-white text-[14px] font-medium rounded-[8px] hover:bg-[#285bd4] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 shadow-sm shadow-[#3370ff]/20"
-                      onClick={() => void handleGenerate("all")}
-                      disabled={isGenerating || !templateTitle}
-                    >
-                      {isGenerating ? (
-                        <Loader2 className="w-[18px] h-[18px] icon-spin-smooth" />
-                      ) : (
-                        <Rocket className="w-[18px] h-[18px]" />
-                      )}
-                      <span>全部生成</span>
-                    </button>
                   </div>
                 </div>
               ) : null}
-            </div>
-
             </div>
 
             </div>

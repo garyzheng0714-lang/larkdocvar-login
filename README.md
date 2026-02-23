@@ -89,12 +89,12 @@ docker compose up -d --build
 
 3. 访问
 
-- 插件地址：`http://127.0.0.1:18080`
-- 健康检查：`http://127.0.0.1:18080/api/health`
+- 插件地址：`http://127.0.0.1:18081`
+- 健康检查：`http://127.0.0.1:18081/api/health`
 
 说明：
 - 容器内部服务端口默认 `3180`（变量：`CONTAINER_PORT`）
-- 宿主机端口默认 `18080`
+- 宿主机端口默认 `18081`
 - `docker-compose.yml` 默认绑定 `127.0.0.1`，避免直接暴露公网和端口冲突
 
 ## 阿里云 ECS 一键部署（Docker）
@@ -106,13 +106,13 @@ docker compose up -d --build
 ```bash
 ./scripts/deploy-aliyun-docker.sh \
   --alias aliyun-prod \
-  --app-dir /opt/larkdocvar \
-  --host-port 18080
+  --app-dir /opt/larkdocvar-login \
+  --host-port 18081
 ```
 
 脚本行为：
 - 打包当前项目并上传到 ECS
-- 发布到 `/opt/larkdocvar/releases/<sha-time>`
+- 发布到 `/opt/larkdocvar-login/releases/<sha-time>`
 - 复用/生成 `.env`
 - 检查 `HOST_PORT` 冲突（被其他服务占用会中止）
 - `docker compose up -d --build` 滚动更新
@@ -132,29 +132,30 @@ docker compose up -d --build
 推荐同时配置：
 - `ALIYUN_HOST`（默认 `112.124.103.65`）
 - `ALIYUN_USER`（默认 `root`）
-- `APP_DIR`（默认 `/opt/larkdocvar`）
-- `HOST_PORT`（默认 `18080`）
+- `APP_DIR`（默认 `/opt/larkdocvar-login`）
+- `APP_NAME`（默认 `larkdocvar-login`）
+- `HOST_PORT`（默认 `18081`）
 - `CONTAINER_PORT`（默认 `3180`）
 - `APP_ENV_B64`（base64 编码后的 `.env` 内容，用于首次部署）
 
 ## 域名接入（后续 DNS）
 
-目标域名：`lark-base-plugin.larkdocvar.garyzheng.com`
+目标域名：`login.larkdocvar.garyzheng.com`
 
 推荐接入方式：
 1. DNS 将该域名解析到 ECS 公网 IP
-2. 在服务器 Caddy/Nginx 反代到 `127.0.0.1:18080`
+2. 在服务器 Caddy/Nginx 反代到 `127.0.0.1:18081`
 
 Caddy 示例：
 
 ```caddyfile
-lark-base-plugin.larkdocvar.garyzheng.com {
-  reverse_proxy 127.0.0.1:18080
+login.larkdocvar.garyzheng.com {
+  reverse_proxy 127.0.0.1:18081
 }
 ```
 
 完成后可将飞书边栏插件运行地址配置为：
-- `https://lark-base-plugin.larkdocvar.garyzheng.com`
+- `https://login.larkdocvar.garyzheng.com`
 
 ## 常用命令
 

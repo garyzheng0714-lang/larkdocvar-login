@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: larkdocvar-login
+    container_name: ${APP_NAME:-larkdocvar-login}
     restart: unless-stopped
     environment:
       HOST: 0.0.0.0
@@ -18,7 +18,7 @@ services:
       SESSION_MAX_AGE_SECONDS: ${SESSION_MAX_AGE_SECONDS:-604800}
       FRONTEND_POST_LOGIN_URL: ${FRONTEND_POST_LOGIN_URL:-}
     ports:
-      - "127.0.0.1:${HOST_PORT:-18080}:${CONTAINER_PORT:-3180}"
+      - "127.0.0.1:${HOST_PORT:-18081}:${CONTAINER_PORT:-3180}"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:${CONTAINER_PORT:-3180}/api/health >/dev/null || exit 1"]
       interval: 20s

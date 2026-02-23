@@ -2,9 +2,9 @@
 set -euo pipefail
 
 SSH_ALIAS="aliyun-prod"
-APP_DIR="/opt/larkdocvar"
-APP_NAME="larkdocvar"
-HOST_PORT="18080"
+APP_DIR="/opt/larkdocvar-login"
+APP_NAME="larkdocvar-login"
+HOST_PORT="18081"
 CONTAINER_PORT="3180"
 KEEP_RELEASES="5"
 APP_ENV_B64=""
@@ -16,9 +16,9 @@ Usage:
 
 Options:
   --alias <ssh_alias>           SSH alias (default: aliyun-prod)
-  --app-dir <remote_path>       Remote deploy root (default: /opt/larkdocvar)
-  --app-name <container_name>   Container/compose project name (default: larkdocvar)
-  --host-port <port>            Host exposed port (default: 18080)
+  --app-dir <remote_path>       Remote deploy root (default: /opt/larkdocvar-login)
+  --app-name <container_name>   Container/compose project name (default: larkdocvar-login)
+  --host-port <port>            Host exposed port (default: 18081)
   --container-port <port>       Container internal port (default: 3180)
   --keep-releases <num>         Keep latest N releases (default: 5)
   --app-env-b64 <base64>        Optional base64 .env content for remote bootstrap
@@ -157,6 +157,7 @@ fi
 
 ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
 cd "${CURRENT_LINK}"
+docker rm -f "${APP_NAME}" >/dev/null 2>&1 || true
 ${DC} -p "${APP_NAME}" up -d --build --remove-orphans
 
 HEALTH_OK="0"

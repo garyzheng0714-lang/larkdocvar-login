@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: deploy-larkdocvar
+  group: deploy-larkdocvar-login
   cancel-in-progress: true
 
 jobs:
@@ -113,6 +113,7 @@ jobs:
           ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
           ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
           APP_DIR: ${{ secrets.APP_DIR }}
+          APP_NAME: ${{ secrets.APP_NAME }}
           HOST_PORT: ${{ secrets.HOST_PORT }}
           CONTAINER_PORT: ${{ secrets.CONTAINER_PORT }}
           APP_ENV_B64: ${{ secrets.APP_ENV_B64 }}
@@ -136,11 +137,12 @@ jobs:
               exit 1
             fi
 
-            APP_ROOT="${APP_DIR:-/opt/larkdocvar}"
+            APP_ROOT="${APP_DIR:-/opt/larkdocvar-login}"
             RELEASES_DIR="${APP_ROOT}/releases"
             CURRENT_LINK="${APP_ROOT}/current"
             RELEASE_DIR="${RELEASES_DIR}/${GH_SHA}"
-            HOST_PORT_VALUE="${HOST_PORT:-18080}"
+            APP_NAME_VALUE="${APP_NAME:-larkdocvar-login}"
+            HOST_PORT_VALUE="${HOST_PORT:-18081}"
             CONTAINER_PORT_VALUE="${CONTAINER_PORT:-3180}"
 
             mkdir -p "${RELEASES_DIR}"
@@ -174,8 +176,8 @@ jobs:
             upsert_env "HOST" "0.0.0.0"
 
             if ss -ltn "( sport = :${HOST_PORT_VALUE} )" | grep -q LISTEN; then
-              if docker ps --filter "name=^/larkdocvar$" --format '{{.Ports}}' | grep -q ":${HOST_PORT_VALUE}->"; then
-                echo "HOST_PORT=${HOST_PORT_VALUE} currently used by larkdocvar, continue rolling update"
+              if docker ps --filter "name=^/${APP_NAME_VALUE}$" --format '{{.Ports}}' | grep -q ":${HOST_PORT_VALUE}->"; then
+                echo "HOST_PORT=${HOST_PORT_VALUE} currently used by ${APP_NAME_VALUE}, continue rolling update"
               else
                 echo "端口冲突: HOST_PORT=${HOST_PORT_VALUE} 已被占用"
                 ss -ltnp | awk -v p=":${HOST_PORT_VALUE}" '$4 ~ p"$" {print}'
@@ -185,8 +187,8 @@ jobs:
 
             ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
             cd "${CURRENT_LINK}"
-            docker rm -f larkdocvar >/dev/null 2>&1 || true
-            ${DC} up -d --build --remove-orphans
+            docker rm -f "${APP_NAME_VALUE}" >/dev/null 2>&1 || true
+            ${DC} -p "${APP_NAME_VALUE}" up -d --build --remove-orphans
 
             HEALTH_OK="0"
             for _ in {1..30}; do
@@ -198,7 +200,7 @@ jobs:
             done
             if [[ "${HEALTH_OK}" != "1" ]]; then
               echo "健康检查失败: http://127.0.0.1:${HOST_PORT_VALUE}/api/health"
-              docker logs --tail 80 larkdocvar || true
+              docker logs --tail 80 "${APP_NAME_VALUE}" || true
               exit 1
             fi
 
@@ -206,8 +208,8 @@ jobs:
           REMOTE_SCRIPT
 
           REMOTE_ENV="$(printf \
-            "APP_DIR=%q HOST_PORT=%q CONTAINER_PORT=%q APP_ENV_B64=%q GH_SHA=%q" \
-            "${APP_DIR:-}" "${HOST_PORT:-}" "${CONTAINER_PORT:-}" "${APP_ENV_B64:-}" "${GH_SHA}")"
+            "APP_DIR=%q APP_NAME=%q HOST_PORT=%q CONTAINER_PORT=%q APP_ENV_B64=%q GH_SHA=%q" \
+            "${APP_DIR:-}" "${APP_NAME:-}" "${HOST_PORT:-}" "${CONTAINER_PORT:-}" "${APP_ENV_B64:-}" "${GH_SHA}")"
 
           ssh -i ~/.ssh/id_aliyun \
             -o BatchMode=yes \
