@@ -876,6 +876,14 @@ app.post('/api/template/variables', async (request, response) => {
       });
       return;
     }
+    const session = resolveCurrentSession(request);
+    if (!session?.access_token) {
+      response.status(401).json({
+        ok: false,
+        error: '请先登录后再提取模板变量。'
+      });
+      return;
+    }
     const parsed = extractVariablesSchema.safeParse(request.body);
     if (!parsed.success) {
       response.status(400).json({
@@ -884,10 +892,7 @@ app.post('/api/template/variables', async (request, response) => {
       });
       return;
     }
-    const session = resolveCurrentSession(request);
-    const result = session
-      ? await extractTemplateVariablesByUserToken(parsed.data.templateUrl, session.access_token)
-      : await feishuService.extractTemplateVariables(parsed.data.templateUrl);
+    const result = await extractTemplateVariablesByUserToken(parsed.data.templateUrl, session.access_token);
     response.json({
       ok: true,
       ...result
