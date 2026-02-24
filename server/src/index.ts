@@ -37,6 +37,7 @@ const SESSION_COOKIE_SAMESITE =
     ? SESSION_COOKIE_SAMESITE_RAW
     : 'lax';
 const FRONTEND_POST_LOGIN_URL = process.env.FRONTEND_POST_LOGIN_URL || '/';
+const EMBEDDED_AUTH_HASH_PARAM = process.env.EMBEDDED_AUTH_HASH_PARAM || 'session_token';
 
 const BITABLE_SYNC_ENABLED = process.env.BITABLE_SYNC_ENABLED !== 'false';
 const BITABLE_APP_TOKEN = process.env.BITABLE_APP_TOKEN || 'IPK4bWtgjahZpEshnv1ctvnKnBc';
@@ -224,6 +225,40 @@ function parseCookies(header: string | undefined): Record<string, string> {
     if (key) cookies[key] = decodeURIComponent(val);
   }
   return cookies;
+}
+
+function appendHashParamToUrl(baseUrl: string, key: string, value: string): string {
+  const hashIndex = baseUrl.indexOf('#');
+  const beforeHash = hashIndex >= 0 ? baseUrl.slice(0, hashIndex) : baseUrl;
+  const rawHash = hashIndex >= 0 ? baseUrl.slice(hashIndex + 1) : '';
+  const hashParams = new URLSearchParams(rawHash);
+  hashParams.set(key, value);
+  const nextHash = hashParams.toString();
+  return nextHash ? `${beforeHash}#${nextHash}` : beforeHash;
+}
+
+function parseBearerToken(header: string | string[] | undefined): string {
+  const raw = Array.isArray(header) ? header[0] : header;
+  if (!raw) return '';
+  const match = raw.match(/^Bearer\s+(.+)$/i);
+  return match?.[1]?.trim() || '';
+}
+
+function resolveSessionTokenFromRequest(request: express.Request): string {
+  const cookies = parseCookies(request.headers.cookie);
+  const cookieToken = (cookies[SESSION_COOKIE_NAME] || '').trim();
+  if (cookieToken) return cookieToken;
+
+  const headerToken = (request.header('X-Session-Token') || '').trim();
+  if (headerToken) return headerToken;
+
+  const bearerToken = parseBearerToken(request.headers.authorization);
+  if (bearerToken) return bearerToken;
+
+  const queryToken = typeof request.query.session_token === 'string'
+    ? request.query.session_token.trim()
+    : '';
+  return queryToken;
 }
 
 function extractDocumentIdFromUrl(input: string): string {
@@ -451,7 +486,7 @@ app.get('/api/auth/feishu/callback', async (request, response) => {
       path: '/',
     });
 
-    response.redirect(FRONTEND_POST_LOGIN_URL);
+    response.redirect(appendHashParamToUrl(FRONTEND_POST_LOGIN_URL, EMBEDDED_AUTH_HASH_PARAM, sessionToken));
   } catch (error) {
     // eslint-disable-next-line no-console
     console.error('Feishu OAuth callback error:', error);
@@ -524,8 +559,7 @@ function resolveAuthContext(
   session: AuthSessionRow | null;
   user: ReturnType<typeof getUserByOpenId> | null;
 } {
-  const cookies = parseCookies(request.headers.cookie);
-  const sessionToken = cookies[SESSION_COOKIE_NAME];
+  const sessionToken = resolveSessionTokenFromRequest(request);
   if (!sessionToken) {
     return { session: null, user: null };
   }

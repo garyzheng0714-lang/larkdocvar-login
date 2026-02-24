@@ -207,6 +207,8 @@ const AUTO_OUTPUT_FIELD_VALUE = "__auto__";
 const AUTO_TITLE_FIELD_VALUE = "__title_auto__";
 const LINK_SUMMARY_VALUE = "__link_summary__";
 const ATTACH_WIDTH_CUSTOM_VALUE = "__attach_width_custom__";
+const EMBEDDED_AUTH_SESSION_TOKEN_KEY = "larkdocvar_embed_session_token";
+const EMBEDDED_AUTH_HASH_PARAM = "session_token";
 
 const COLLABORATOR_ROLES = [
   { id: "full_access" as const, label: "可管理" },
@@ -297,6 +299,65 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
     throw new Error(payload?.error ?? payload?.message ?? "接口返回异常");
   }
   return payload as T;
+}
+
+function getStoredEmbeddedAuthToken(): string {
+  try {
+    return window.localStorage.getItem(EMBEDDED_AUTH_SESSION_TOKEN_KEY)?.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
+function setStoredEmbeddedAuthToken(token: string): void {
+  try {
+    window.localStorage.setItem(EMBEDDED_AUTH_SESSION_TOKEN_KEY, token);
+  } catch {
+    // ignore storage failures in embedded runtime
+  }
+}
+
+function clearStoredEmbeddedAuthToken(): void {
+  try {
+    window.localStorage.removeItem(EMBEDDED_AUTH_SESSION_TOKEN_KEY);
+  } catch {
+    // ignore storage failures in embedded runtime
+  }
+}
+
+function consumeEmbeddedAuthTokenFromHash(): string {
+  if (typeof window === "undefined") return "";
+  const hash = window.location.hash.startsWith("#")
+    ? window.location.hash.slice(1)
+    : window.location.hash;
+  if (!hash) return "";
+
+  const params = new URLSearchParams(hash);
+  const token = params.get(EMBEDDED_AUTH_HASH_PARAM)?.trim() || "";
+  if (!token) return "";
+
+  params.delete(EMBEDDED_AUTH_HASH_PARAM);
+  const nextHash = params.toString();
+  const nextUrl = `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ""}`;
+  try {
+    window.history.replaceState(null, "", nextUrl);
+  } catch {
+    // ignore history API failures in embedded runtime
+  }
+  return token;
+}
+
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  const token = getStoredEmbeddedAuthToken();
+  if (token && !headers.has("X-Session-Token")) {
+    headers.set("X-Session-Token", token);
+  }
+  return fetch(input, {
+    ...init,
+    credentials: "include",
+    headers,
+  });
 }
 
 async function getSelectedRecordIds(table: ITable): Promise<string[]> {
@@ -981,6 +1042,15 @@ export default function App() {
     }
   }, []);
 
+  useEffect(() => {
+    const tokenFromHash = consumeEmbeddedAuthTokenFromHash();
+    if (!tokenFromHash) {
+      return;
+    }
+    setStoredEmbeddedAuthToken(tokenFromHash);
+    clearAuthPendingFlag();
+  }, [clearAuthPendingFlag]);
+
   const checkAuthSession = useCallback(async (options?: { silent?: boolean }) => {
     if (authCheckInFlightRef.current) {
       return;
@@ -988,9 +1058,8 @@ export default function App() {
 
     authCheckInFlightRef.current = true;
     try {
-      const response = await fetch("/api/auth/session", {
+      const response = await apiFetch("/api/auth/session", {
         cache: "no-store",
-        credentials: "include",
       });
 
       if (response.ok) {
@@ -1003,6 +1072,7 @@ export default function App() {
             setNotice({ type: "info", text: `${data.sync.message}（不影响继续使用）` });
           }
         } else {
+          clearStoredEmbeddedAuthToken();
           setAuthSession({ user: null, isAuthenticated: false });
         }
       } else {
@@ -1079,7 +1149,8 @@ export default function App() {
   // Logout handler
   const handleLogout = useCallback(async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+      await apiFetch("/api/auth/logout", { method: "POST" });
+      clearStoredEmbeddedAuthToken();
       setAuthSession({ user: null, isAuthenticated: false });
       setAuthError(null);
       clearAuthPendingFlag();
@@ -1124,7 +1195,7 @@ export default function App() {
       if (table?.id) {
         params.set("tableId", table.id);
       }
-      const response = await fetch(`/api/templates/saved${params.toString() ? `?${params.toString()}` : ""}`, { cache: "no-store" });
+      const response = await apiFetch(`/api/templates/saved${params.toString() ? `?${params.toString()}` : ""}`, { cache: "no-store" });
       const payload = await parseJsonResponse<SavedTemplatesResponse>(response);
       if (payload.sync && !payload.sync.ok && payload.sync.message) {
         setNotice({ type: "info", text: `${payload.sync.message}（不影响继续使用）` });
@@ -1278,7 +1349,7 @@ export default function App() {
       if (table?.id) {
         params.set("tableId", table.id);
       }
-      const response = await fetch(`/api/configs/${configId}${params.toString() ? `?${params.toString()}` : ""}`, { cache: "no-store" });
+      const response = await apiFetch(`/api/configs/${configId}${params.toString() ? `?${params.toString()}` : ""}`, { cache: "no-store" });
       const payload = await parseJsonResponse<SavedConfigDetailResponse>(response);
       applySavedPayload(payload.config?.payload ?? {});
       setCurrentStep("configure");
@@ -1319,7 +1390,7 @@ export default function App() {
           params.set("tableId", table.id);
         }
         const query = params.toString();
-        const response = await fetch(`/api/configs/auto?${query}`, { cache: "no-store" });
+        const response = await apiFetch(`/api/configs/auto?${query}`, { cache: "no-store" });
         const payload = await parseJsonResponse<AutoConfigResponse>(response);
         if (payload.found && payload.config) {
           applySavedPayload(payload.config.payload);
@@ -1346,7 +1417,7 @@ export default function App() {
     if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = window.setTimeout(() => {
       void (async () => {
-        const response = await fetch("/api/configs/auto", {
+        const response = await apiFetch("/api/configs/auto", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1414,7 +1485,7 @@ export default function App() {
   const loadAllUsers = useCallback(async (): Promise<OwnerCandidate[]> => {
     if (allUsersCache !== null) return allUsersCache;
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `/api/users/search?q=&limit=200&_ts=${Date.now()}`,
         { cache: "no-store" },
       );
@@ -1785,7 +1856,7 @@ export default function App() {
     if (!trimmed) {
       throw new Error("请先填写模板文档链接。");
     }
-    const response = await fetch("/api/template/variables", {
+    const response = await apiFetch("/api/template/variables", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ templateUrl: trimmed }),
@@ -2116,7 +2187,7 @@ export default function App() {
             perm: c.role,
           }));
 
-        const response = await fetch("/api/documents/generate", {
+        const response = await apiFetch("/api/documents/generate", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
