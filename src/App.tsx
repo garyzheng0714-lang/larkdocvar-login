@@ -879,12 +879,22 @@ export default function App() {
   const autoSaveTimerRef = useRef<number | null>(null);
   const skipAutoSaveRef = useRef(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const authCheckInFlightRef = useRef(false);
 
   const [linkConfigs, setLinkConfigs] = useState<Record<string, LinkFieldConfig>>({});
   const [attachmentConfigs, setAttachmentConfigs] = useState<Record<string, AttachmentFieldConfig>>({});
   const [linkedTableFieldsCache, setLinkedTableFieldsCache] = useState<Record<string, FieldMetaLite[]>>({});
   const linkedTableFieldsCacheRef = useRef<Record<string, FieldMetaLite[]>>({});
   const linkedTableFieldsInflightRef = useRef<Record<string, Promise<FieldMetaLite[]>>>({});
+  const [authPendingUntil, setAuthPendingUntil] = useState<number>(() => {
+    try {
+      const raw = window.sessionStorage.getItem("feishu_oauth_pending_until");
+      const ts = raw ? Number(raw) : 0;
+      return Number.isFinite(ts) ? ts : 0;
+    } catch {
+      return 0;
+    }
+  });
 
 
   const outputFieldCandidates = useMemo(
@@ -952,40 +962,127 @@ export default function App() {
     });
   }, []);
 
-  // Auth check on mount
-  useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const response = await fetch("/api/auth/session");
-        if (response.ok) {
-          const data = await response.json() as AuthSessionResponse;
-          if (data.user) {
-            setAuthSession({ user: data.user, isAuthenticated: true });
-            if (data.sync && !data.sync.ok && data.sync.message) {
-              setNotice({ type: "info", text: `${data.sync.message}（不影响继续使用）` });
-            }
-          } else {
-            setAuthSession({ user: null, isAuthenticated: false });
+  const clearAuthPendingFlag = useCallback(() => {
+    setAuthPendingUntil(0);
+    try {
+      window.sessionStorage.removeItem("feishu_oauth_pending_until");
+    } catch {
+      // ignore sessionStorage access failures in embedded runtime
+    }
+  }, []);
+
+  const markAuthPending = useCallback((durationMs = 90_000) => {
+    const until = Date.now() + durationMs;
+    setAuthPendingUntil(until);
+    try {
+      window.sessionStorage.setItem("feishu_oauth_pending_until", String(until));
+    } catch {
+      // ignore sessionStorage access failures in embedded runtime
+    }
+  }, []);
+
+  const checkAuthSession = useCallback(async (options?: { silent?: boolean }) => {
+    if (authCheckInFlightRef.current) {
+      return;
+    }
+
+    authCheckInFlightRef.current = true;
+    try {
+      const response = await fetch("/api/auth/session", {
+        cache: "no-store",
+        credentials: "include",
+      });
+
+      if (response.ok) {
+        const data = await response.json() as AuthSessionResponse;
+        if (data.user) {
+          setAuthError(null);
+          setAuthSession({ user: data.user, isAuthenticated: true });
+          clearAuthPendingFlag();
+          if (data.sync && !data.sync.ok && data.sync.message) {
+            setNotice({ type: "info", text: `${data.sync.message}（不影响继续使用）` });
           }
         } else {
           setAuthSession({ user: null, isAuthenticated: false });
         }
-      } catch (error) {
-        setAuthError(toErrorMessage(error));
+      } else {
         setAuthSession({ user: null, isAuthenticated: false });
-      } finally {
-        setAuthLoading(false);
+      }
+    } catch (error) {
+      if (!options?.silent) {
+        setAuthError(toErrorMessage(error));
+      }
+      setAuthSession({ user: null, isAuthenticated: false });
+    } finally {
+      authCheckInFlightRef.current = false;
+      setAuthLoading(false);
+    }
+  }, [clearAuthPendingFlag]);
+
+  // Auth check on mount
+  useEffect(() => {
+    void checkAuthSession();
+  }, [checkAuthSession]);
+
+  // Re-check session when plugin page becomes visible/focused after OAuth popup closes.
+  useEffect(() => {
+    const recheckOnResume = () => {
+      if (document.visibilityState !== "hidden") {
+        void checkAuthSession({ silent: true });
       }
     };
-    void checkAuth();
-  }, []);
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void checkAuthSession({ silent: true });
+      }
+    };
+
+    window.addEventListener("focus", recheckOnResume);
+    window.addEventListener("pageshow", recheckOnResume);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", recheckOnResume);
+      window.removeEventListener("pageshow", recheckOnResume);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [checkAuthSession]);
+
+  // Short polling window after clicking login, to support embedded OAuth dialogs
+  // that do not fully reload the plugin page after authorization completes.
+  useEffect(() => {
+    if (authSession.isAuthenticated) {
+      clearAuthPendingFlag();
+      return;
+    }
+
+    if (!authPendingUntil) {
+      return;
+    }
+
+    if (Date.now() >= authPendingUntil) {
+      clearAuthPendingFlag();
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      if (Date.now() >= authPendingUntil) {
+        clearAuthPendingFlag();
+        return;
+      }
+      void checkAuthSession({ silent: true });
+    }, 1500);
+
+    return () => window.clearInterval(timer);
+  }, [authSession.isAuthenticated, authPendingUntil, checkAuthSession, clearAuthPendingFlag]);
 
   // Logout handler
   const handleLogout = useCallback(async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
       setAuthSession({ user: null, isAuthenticated: false });
       setAuthError(null);
+      clearAuthPendingFlag();
       setSavedTemplates([]);
       setTemplateUrl("");
       setTemplateTitle("");
@@ -1001,7 +1098,7 @@ export default function App() {
     } catch (error) {
       setAuthError(toErrorMessage(error));
     }
-  }, []);
+  }, [clearAuthPendingFlag]);
 
   useEffect(() => {
     if (!authSession.isAuthenticated) {
@@ -2208,6 +2305,7 @@ export default function App() {
           <button
             type="button"
             onClick={() => {
+              markAuthPending();
               window.location.href = "/api/auth/feishu/login";
             }}
             className="w-full h-12 rounded-full border border-[#d8dce3] bg-white dark:bg-[#1c1833] dark:border-gray-700 text-[#1f2329] dark:text-gray-100 text-[16px] font-medium hover:bg-[#fbfcfe] dark:hover:bg-[#232033] transition-colors flex items-center justify-center gap-2"
