@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { FeishuTemplateService, GenerateInput, CollaboratorInput } from './feishu';
-import { upsertUser, getUserByOpenId, upsertSession, getSessionByToken } from './storage';
+import { upsertUser, getUserByOpenId, upsertSession, getSessionByToken, updateSessionTokens } from './storage';
 import type { AuthSessionRow } from './storage';
 import { BitableConfigSyncService } from './bitableConfigSync';
 import type { SyncStatus, BitableConfigRecord } from './bitableConfigSync';
@@ -272,6 +272,60 @@ function extractDocumentIdFromUrl(input: string): string {
     if (match?.[1]) return match[1];
   }
   return '';
+}
+
+async function refreshUserAccessToken(session: AuthSessionRow): Promise<string> {
+  if (!session.refresh_token) {
+    throw new Error('refresh_token 不存在，请重新登录。');
+  }
+
+  const response = await axios.post(
+    'https://open.feishu.cn/open-apis/authen/v2/oauth/token',
+    {
+      grant_type: 'refresh_token',
+      client_id: appId,
+      client_secret: appSecret,
+      refresh_token: session.refresh_token,
+    },
+    { headers: { 'Content-Type': 'application/json' } },
+  );
+
+  const body = response.data as Record<string, unknown>;
+  if (typeof body.code === 'number' && body.code !== 0) {
+    throw new Error(`刷新 token 失败：[code=${body.code}] ${body.msg || '未知错误'}，请重新登录。`);
+  }
+
+  const tokenData = (body.data && typeof body.data === 'object' ? body.data : body) as Record<string, unknown>;
+  const newAccessToken = tokenData.access_token as string | undefined;
+  if (!newAccessToken) {
+    throw new Error('刷新 token 返回无效：缺少 access_token，请重新登录。');
+  }
+
+  const now = Date.now();
+  const expiresIn = Number(tokenData.expires_in) || 7200;
+  const refreshExpiresIn = Number(tokenData.refresh_expires_in ?? tokenData.refresh_token_expires_in) || 0;
+
+  updateSessionTokens({
+    token: session.token,
+    accessToken: newAccessToken,
+    refreshToken: (tokenData.refresh_token as string) || session.refresh_token,
+    expiresAt: new Date(now + expiresIn * 1000).toISOString(),
+    refreshExpiresAt: refreshExpiresIn > 0 ? new Date(now + refreshExpiresIn * 1000).toISOString() : session.refresh_expires_at,
+  });
+
+  return newAccessToken;
+}
+
+async function ensureValidAccessToken(session: AuthSessionRow): Promise<string> {
+  const now = new Date();
+  const expiresAt = new Date(session.expires_at);
+  const bufferMs = 5 * 60 * 1000;
+
+  if (expiresAt.getTime() - now.getTime() > bufferMs) {
+    return session.access_token;
+  }
+
+  return refreshUserAccessToken(session);
 }
 
 async function extractTemplateVariablesByUserToken(templateUrl: string, userAccessToken: string): Promise<{ documentId: string; templateTitle: string; variables: string[]; }> {
@@ -892,7 +946,17 @@ app.post('/api/template/variables', async (request, response) => {
       });
       return;
     }
-    const result = await extractTemplateVariablesByUserToken(parsed.data.templateUrl, session.access_token);
+    let validToken: string;
+    try {
+      validToken = await ensureValidAccessToken(session);
+    } catch {
+      response.status(401).json({
+        ok: false,
+        error: 'access_token 已过期且刷新失败，请重新登录。'
+      });
+      return;
+    }
+    const result = await extractTemplateVariablesByUserToken(parsed.data.templateUrl, validToken);
     response.json({
       ok: true,
       ...result

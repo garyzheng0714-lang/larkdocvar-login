@@ -195,6 +195,32 @@ function getSessionByToken(token: string): AuthSessionRow | undefined {
   return stmt.get(token) as AuthSessionRow | undefined;
 }
 
+function updateSessionTokens(session: {
+  token: string;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
+  refreshExpiresAt: string;
+}): void {
+  const database = initDatabase();
+  const stmt = database.prepare(`
+    UPDATE auth_sessions
+    SET access_token = @access_token,
+        refresh_token = @refresh_token,
+        expires_at = @expires_at,
+        refresh_expires_at = @refresh_expires_at,
+        updated_at = datetime('now')
+    WHERE token = @token
+  `);
+  stmt.run({
+    token: session.token,
+    access_token: session.accessToken,
+    refresh_token: session.refreshToken,
+    expires_at: session.expiresAt,
+    refresh_expires_at: session.refreshExpiresAt,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Saved configs
 // ---------------------------------------------------------------------------
@@ -255,6 +281,7 @@ export {
   getUserByOpenId,
   upsertSession,
   getSessionByToken,
+  updateSessionTokens,
   listSavedConfigs,
   getSavedConfig,
   saveOrUpdateConfig,
