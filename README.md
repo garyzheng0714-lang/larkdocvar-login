@@ -74,11 +74,27 @@ FRONTEND_POST_LOGIN_URL=http://localhost:5173
 - 因此模板文档只需要给“实际使用插件的用户”阅读权限即可。
 - 仍然需要配置飞书应用凭证（`FEISHU_APP_ID / FEISHU_APP_SECRET`）用于登录与后续接口能力。
 
+多维表格配置同步（可选）：
+
+后端支持将用户的模板配置同步到飞书多维表格，`.env` 中相关变量：
+
+```bash
+BITABLE_SYNC_ENABLED=true
+BITABLE_APP_TOKEN=IPK4bWtgjahZpEshnv1ctvnKnBc
+BITABLE_TABLE_ID=tblVwzGkG3Rxc8SQ
+BITABLE_SYNC_COOLDOWN_MS=60000
+```
+
+- `BITABLE_SYNC_ENABLED`：设为 `false` 可关闭同步，默认开启。
+- 同步冷却时间 `BITABLE_SYNC_COOLDOWN_MS` 默认 60 秒，避免频繁写入。
+
 相关接口：
 - 登录跳转：`/api/auth/feishu/login`
 - 会话查询：`/api/auth/session`
 - 退出登录：`/api/auth/logout`
 - 配置存取：`/api/configs`
+- 模板配置历史：`/api/templates/saved`
+- 自动配置恢复：`/api/configs/auto`
 
 ## Docker 本地运行
 
@@ -96,12 +112,12 @@ docker compose up -d --build
 
 3. 访问
 
-- 插件地址：`http://127.0.0.1:18081`
-- 健康检查：`http://127.0.0.1:18081/api/health`
+- 插件地址：`http://127.0.0.1:18080`
+- 健康检查：`http://127.0.0.1:18080/api/health`
 
 说明：
 - 容器内部服务端口默认 `3180`（变量：`CONTAINER_PORT`）
-- 宿主机端口默认 `18081`
+- 宿主机端口默认 `18080`（`.env.example` 中 `HOST_PORT=18080`；如未设置该变量，`docker-compose.yml` 回退到 `18081`）
 - `docker-compose.yml` 默认绑定 `127.0.0.1`，避免直接暴露公网和端口冲突
 
 ## 阿里云 ECS 一键部署（Docker）
