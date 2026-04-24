@@ -1,56 +1,103 @@
 # 飞书边栏插件：云文档变量替换生成器
 
-支持从模板文档提取 `{{变量}}`，按多维表格字段自动绑定并批量生成文档，最后回写生成链接。
+一个带飞书 OAuth 登录的多维表格边栏插件，用于从模板云文档中提取 `{{变量}}`，自动匹配多维表格字段，批量生成新文档，并将生成文档链接回写到表格。
 
-## 快速上手（先看这个）
+## 功能特性
 
-新手建议直接按下面 4 步走，一次就能跑通：
+- 飞书 OAuth 登录和会话保持
+- 从飞书云文档 / Wiki 模板中提取 `{{变量}}`
+- 自动匹配多维表格字段，并支持手动调整绑定
+- 支持文本变量、链接字段和附件图片变量
+- 批量生成全部记录或选中记录
+- 自动创建 / 写回“生成文档链接”字段
+- 支持协作者配置和文档所有权相关高级选项
+- 支持模板配置历史和自动恢复
+- 可选将用户配置同步到飞书多维表格
+- 提供本地开发、Docker、本地预览和远程部署脚本
 
-1. 登录插件（右上角显示你的账号即成功）。
+## 技术栈
+
+- 前端：React、Vite、Tailwind CSS、lucide-react、`@lark-base-open/js-sdk`
+- 后端：Express、TypeScript、tsx、Zod、Axios
+- 存储：SQLite（`better-sqlite3`）
+- 飞书能力：OAuth、云文档、Wiki、多维表格、用户目录
+- 部署：Docker、Docker Compose、GitHub Actions
+
+## 项目结构
+
+```text
+.
+├── src/                         # React 边栏插件前端
+├── server/
+│   └── src/
+│       ├── index.ts             # Express API 和 OAuth 会话
+│       ├── feishu.ts            # 飞书文档 / 用户相关 API
+│       ├── storage.ts           # SQLite 持久化
+│       └── bitableConfigSync.ts # 可选的多维表格配置同步
+├── scripts/
+│   ├── dev-up.sh                # 本地开发启动脚本
+│   └── deploy-aliyun-docker.sh  # Docker 远程部署脚本
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+└── README.md
+```
+
+## 快速上手
+
+插件内的基本流程：
+
+1. 登录插件，右上角显示账号即表示成功。
 2. 粘贴模板文档链接，点击“提取变量”。
-3. 检查“变量映射”是否正确（字段越多越建议用搜索）。
-4. 点击“全部生成”或“生成选中项”，系统会自动回写文档链接到表格。
+3. 检查变量映射，必要时手动调整字段绑定。
+4. 点击“全部生成”或“生成选中项”。
+5. 系统生成文档并将链接写回多维表格。
 
-补充说明（最容易困惑的两点）：
+模板权限说明：
 
-- 文档所有权和默认权限已固定为自动策略，不需要手动配置。
-- 模板变量提取按“当前登录用户”身份读取模板文档；只要该用户有阅读权限即可，不需要额外把飞书应用加到模板协作者里。
-- 生成流程建议始终按“提取变量 -> 检查映射 -> 开始生成”顺序，避免漏填。
+- 模板变量提取使用当前登录用户的 OAuth token。
+- 模板文档需要对实际使用插件的用户开放阅读权限。
+- 飞书应用仍需要配置凭证，用于登录、文档和后续 API 能力。
 
-## 本地开发（尽量少动手）
+## 本地开发
 
-1. 首次配置环境变量
+复制环境变量模板：
 
 ```bash
 cp .env.example .env
 ```
 
-2. 在 `.env` 填写飞书应用凭证
+填写飞书应用配置：
 
 ```bash
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
 PORT=3000
+HOST=0.0.0.0
 ```
 
-3. 启动（会自动检测依赖，缺失时自动执行 `npm install`）
+启动开发环境：
 
 ```bash
+npm install
 npm run dev
 ```
 
 默认地址：
-- 前端运行地址（飞书边栏插件 URL）：`http://localhost:5173`
+
+- 前端插件地址：`http://localhost:5173`
 - 后端 API：`http://localhost:3000`
 - 健康检查：`http://localhost:3000/api/health`
 
-### 登录版额外配置（新项目）
+## 飞书 OAuth 配置
 
-登录版需要飞书 OAuth 回调地址，请在飞书开放平台应用配置中添加：
+在飞书开放平台应用中添加 OAuth 回调地址：
 
-- 回调地址：`http://localhost:3000/api/auth/feishu/callback`
+```text
+http://localhost:3000/api/auth/feishu/callback
+```
 
-并在 `.env` 中确认以下变量：
+本地 `.env` 中确认：
 
 ```bash
 FEISHU_OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/feishu/callback
@@ -62,136 +109,93 @@ SESSION_MAX_AGE_SECONDS=604800
 FRONTEND_POST_LOGIN_URL=http://localhost:5173
 ```
 
-登录态说明：
+会话说明：
 
-- 当前默认会话有效期是 `604800` 秒（7 天）。
-- 在飞书内嵌 WebView 场景里，7 天通常也是最稳妥的上限。
-- 如需跨站嵌入，可尝试 `SESSION_COOKIE_SAMESITE=none` 且同时启用 `SESSION_COOKIE_SECURE=true`（HTTPS 必须）。
+- 默认会话有效期为 7 天。
+- 本地开发通常使用 `SESSION_COOKIE_SAMESITE=lax`。
+- 跨站嵌入或 HTTPS 部署时，可按实际场景调整 SameSite 和 Secure 设置。
 
-模板权限说明（重要）：
+## 可选：多维表格配置同步
 
-- 模板变量提取接口要求先登录，后端会使用登录用户的 OAuth token 读取模板。
-- 因此模板文档只需要给“实际使用插件的用户”阅读权限即可。
-- 仍然需要配置飞书应用凭证（`FEISHU_APP_ID / FEISHU_APP_SECRET`）用于登录与后续接口能力。
-
-多维表格配置同步（可选）：
-
-后端支持将用户的模板配置同步到飞书多维表格，`.env` 中相关变量：
+后端可将用户模板配置同步到飞书多维表格。需要在 `.env` 中配置：
 
 ```bash
 BITABLE_SYNC_ENABLED=true
-BITABLE_APP_TOKEN=IPK4bWtgjahZpEshnv1ctvnKnBc
-BITABLE_TABLE_ID=tblVwzGkG3Rxc8SQ
+BITABLE_APP_TOKEN=base_app_token
+BITABLE_TABLE_ID=table_id
 BITABLE_SYNC_COOLDOWN_MS=60000
 ```
 
-- `BITABLE_SYNC_ENABLED`：设为 `false` 可关闭同步，默认开启。
-- 同步冷却时间 `BITABLE_SYNC_COOLDOWN_MS` 默认 60 秒，避免频繁写入。
+说明：
 
-相关接口：
-- 登录跳转：`/api/auth/feishu/login`
-- 会话查询：`/api/auth/session`
-- 退出登录：`/api/auth/logout`
-- 配置存取：`/api/configs`
-- 模板配置历史：`/api/templates/saved`
-- 自动配置恢复：`/api/configs/auto`
+- `BITABLE_SYNC_ENABLED=false` 可关闭同步。
+- `BITABLE_SYNC_COOLDOWN_MS` 用于限制频繁写入。
+- 应使用部署环境自己的多维表格 App Token 和表 ID。
+
+## API 概览
+
+常用接口：
+
+- `GET /api/health`：健康检查
+- `GET /api/auth/feishu/login`：跳转飞书登录
+- `GET /api/auth/feishu/callback`：OAuth 回调
+- `GET /api/auth/session`：查询当前会话
+- `POST /api/auth/logout`：退出登录
+- `POST /api/template/variables`：提取模板变量
+- `POST /api/documents/generate`：批量生成文档
+- `GET /api/templates/saved`：模板配置历史
+- `GET /api/configs/auto`：自动恢复配置
+- `GET /api/users/search`：搜索用户，用于协作者和所有权配置
 
 ## Docker 本地运行
 
-1. 准备 `.env`
-
 ```bash
 cp .env.example .env
-```
-
-2. 启动容器
-
-```bash
 docker compose up -d --build
 ```
 
-3. 访问
+默认地址：
 
-- 插件地址：`http://127.0.0.1:18080`
+- 插件入口：`http://127.0.0.1:18080`
 - 健康检查：`http://127.0.0.1:18080/api/health`
 
-说明：
-- 容器内部服务端口默认 `3180`（变量：`CONTAINER_PORT`）
-- 宿主机端口默认 `18080`（`.env.example` 中 `HOST_PORT=18080`；如未设置该变量，`docker-compose.yml` 回退到 `18081`）
-- `docker-compose.yml` 默认绑定 `127.0.0.1`，避免直接暴露公网和端口冲突
+端口相关变量：
 
-## 阿里云 ECS 一键部署（Docker）
+- `HOST_PORT`：宿主机映射端口
+- `CONTAINER_PORT`：容器内部服务端口
 
-仓库内已提供脚本：`scripts/deploy-aliyun-docker.sh`
+## 部署
 
-示例：
+仓库提供 Docker 远程部署脚本：
 
 ```bash
 ./scripts/deploy-aliyun-docker.sh \
-  --alias aliyun-prod \
+  --alias your-ssh-alias \
   --app-dir /opt/larkdocvar-login \
   --host-port 18081
 ```
 
-脚本行为：
-- 打包当前项目并上传到 ECS
-- 发布到 `/opt/larkdocvar-login/releases/<sha-time>`
-- 复用/生成 `.env`
-- 检查 `HOST_PORT` 冲突（被其他服务占用会中止）
-- `docker compose up -d --build` 滚动更新
-- 健康检查 `/api/health`
+脚本会打包当前项目、上传到服务器、复用或生成 `.env`、检查端口冲突、执行 `docker compose up -d --build`，并访问 `/api/health` 做健康检查。
 
-## GitHub Actions 自动部署
-
-已提供工作流：`.github/workflows/deploy-aliyun-docker.yml`
-
-触发方式：
-- push 到 `main`
-- 手动执行 `workflow_dispatch`
-
-至少配置以下仓库 Secrets：
-- `ALIYUN_SSH_KEY`（推荐）或 `ALIYUN_SSH_KEY_B64`
-
-推荐同时配置：
-- `ALIYUN_HOST`（默认 `112.124.103.65`）
-- `ALIYUN_USER`（默认 `root`）
-- `APP_DIR`（默认 `/opt/larkdocvar-login`）
-- `APP_NAME`（默认 `larkdocvar-login`）
-- `HOST_PORT`（默认 `18081`）
-- `CONTAINER_PORT`（默认 `3180`）
-- `APP_ENV_B64`（base64 编码后的 `.env` 内容，用于首次部署）
-
-## 域名接入（后续 DNS）
-
-目标域名：`login.larkdocvar.garyzheng.com`
-
-推荐接入方式：
-1. DNS 将该域名解析到 ECS 公网 IP
-2. 在服务器 Caddy/Nginx 反代到 `127.0.0.1:18081`
-
-Caddy 示例：
-
-```caddyfile
-login.larkdocvar.garyzheng.com {
-  reverse_proxy 127.0.0.1:18081
-}
-```
-
-完成后可将飞书边栏插件运行地址配置为：
-- `https://login.larkdocvar.garyzheng.com`
+仓库也包含 GitHub Actions 部署工作流。使用前请在仓库 Secrets 中配置 SSH Key、目标主机、部署目录、端口和 `.env` 内容等信息。
 
 ## 常用命令
 
 ```bash
-# 本地开发（自动装依赖）
-npm run dev
-
-# 仅构建前端
-npm run build
-
-# Docker
+npm run dev          # 本地开发，启动前端和后端
+npm run dev:raw      # 直接并行运行前端和后端
+npm run build        # 构建前端
+npm run preview      # 预览前端构建结果
+npm run start        # 启动后端服务
 npm run docker:build
 npm run docker:up
 npm run docker:logs
 npm run docker:down
 ```
+
+## 注意事项
+
+- 不要提交真实飞书应用密钥、OAuth token、会话 cookie 或生产环境 `.env`。
+- 模板变量名称建议与多维表格字段名称保持一致，可减少手动绑定。
+- 图片变量依赖附件字段中的可访问 URL，生成前请确认附件字段数据完整。
+- 生产环境应使用 HTTPS、真实域名和稳定的 OAuth 回调地址。
