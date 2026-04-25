@@ -1,6 +1,18 @@
-# 飞书边栏插件：云文档变量替换生成器
+# larkdocvar-login
 
-一个带飞书 OAuth 登录的多维表格边栏插件，用于从模板云文档中提取 `{{变量}}`，自动匹配多维表格字段，批量生成新文档，并将生成文档链接回写到表格。
+![类型](https://img.shields.io/badge/%E7%B1%BB%E5%9E%8B-%E9%A3%9E%E4%B9%A6%E8%BE%B9%E6%A0%8F%E6%8F%92%E4%BB%B6-2563eb?style=flat-square)
+![技术栈](https://img.shields.io/badge/%E6%8A%80%E6%9C%AF%E6%A0%88-React%20Express-0f766e?style=flat-square)
+![状态](https://img.shields.io/badge/%E7%8A%B6%E6%80%81-%E5%8F%AF%E9%83%A8%E7%BD%B2-16a34a?style=flat-square)
+![README](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-brightgreen?style=flat-square)
+
+飞书插件：带 OAuth 登录的多维表格边栏插件，用于按云文档模板批量生成文档并将链接回写到表格。
+
+## 仓库定位
+
+- 分类：飞书多维表格边栏插件 / 云文档模板生成工具。
+- 面向对象：需要从飞书云文档模板提取变量、批量套用多维表格记录并生成新文档的业务团队。
+- 运行宿主：飞书多维表格边栏 iframe 插件，配套 Express 后端处理 OAuth、文档 API 和持久化。
+- 与边栏插件合集的区别：本仓库是单一可部署插件应用，包含前端、后端、Docker 和部署脚本；插件合集仓库只集中管理多个独立子插件。
 
 ## 功能特性
 
