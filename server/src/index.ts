@@ -19,7 +19,13 @@ import {
   saveOrUpdateConfig,
 } from './storage';
 import type { SavedConfigRow } from './storage';
-import { requireAuth, peekSessionForRequest, resolveSessionTokenFromRequest } from './auth';
+import {
+  requireAuth,
+  peekSessionForRequest,
+  resolveSessionTokenFromRequest,
+  isAllowedTenant,
+  UNAUTHORIZED_TENANT_MESSAGE,
+} from './auth';
 
 dotenv.config();
 
@@ -369,6 +375,7 @@ app.get('/api/auth/feishu/callback', async (request, response) => {
       en_name?: string;
       email?: string;
       avatar_url?: string;
+      tenant_key?: string;
     };
 
     if (!userInfo.open_id) {
@@ -376,6 +383,18 @@ app.get('/api/auth/feishu/callback', async (request, response) => {
         ok: false,
         error: '飞书获取用户信息返回无效：缺少 open_id。',
       });
+      return;
+    }
+
+    // Tenant allowlist check: second line of defense after Feishu admin's
+    // application access scope. Logs the actual tenant_key on first encounter
+    // so operators can copy it into FEISHU_ALLOWED_TENANT_KEYS.
+    if (!isAllowedTenant(userInfo.tenant_key)) {
+      // eslint-disable-next-line no-console
+      console.log(
+        `[auth] login denied for tenant_key=${userInfo.tenant_key} open_id=${userInfo.open_id}`,
+      );
+      response.status(403).send(UNAUTHORIZED_TENANT_MESSAGE);
       return;
     }
 

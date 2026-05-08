@@ -2377,25 +2377,94 @@ export default function App() {
 
   if (!authSession.isAuthenticated) {
     return (
-      <div className="min-h-screen bg-[#f5f6f7] dark:bg-[#131022] text-[#1f2329] dark:text-gray-100 flex items-center justify-center px-5">
-        <div className="w-full max-w-sm">
+      <div
+        className="min-h-screen flex items-center justify-center px-6 py-8 text-[#12243a]"
+        style={{
+          background: "linear-gradient(180deg, #f4f7fa 0%, #fafbfc 100%)",
+          fontFamily:
+            'Inter, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", Arial, sans-serif',
+        }}
+      >
+        <main
+          className="relative flex flex-col items-center w-full"
+          style={{
+            maxWidth: 420,
+            padding: "40px 32px",
+            background: "#ffffff",
+            border: "1px solid #e5e9f0",
+            borderRadius: 16,
+            boxShadow:
+              "0 1px 3px rgba(15, 31, 51, 0.04), 0 8px 24px rgba(15, 31, 51, 0.04)",
+          }}
+        >
           {authError ? (
-            <div className="mb-3 rounded-[10px] bg-[#fff1f0] text-[#f54a45] px-3 py-2 text-[13px] border border-[#ffd6d3]">
+            <div className="mb-4 w-full rounded-[10px] bg-[#fff1f0] text-[#f54a45] px-3 py-2 text-[13px] border border-[#ffd6d3]">
               登录检查失败：{authError}
             </div>
           ) : null}
+          <img
+            src="/fbif-logo.webp"
+            alt="FBIF"
+            width={120}
+            height={120}
+            style={{ display: "block", objectFit: "contain", marginBottom: 20 }}
+          />
           <button
             type="button"
             onClick={() => {
               markAuthPending();
               window.location.href = "/api/auth/feishu/login";
             }}
-            className="w-full h-12 rounded-full border border-[#d8dce3] bg-white dark:bg-[#1c1833] dark:border-gray-700 text-[#1f2329] dark:text-gray-100 text-[16px] font-medium hover:bg-[#fbfcfe] dark:hover:bg-[#232033] transition-colors flex items-center justify-center gap-2"
+            className="w-full flex items-center justify-center text-white"
+            style={{
+              height: 52,
+              gap: 12,
+              padding: "0 18px",
+              border: 0,
+              borderRadius: 10,
+              background: "#255f89",
+              fontSize: 15,
+              fontWeight: 600,
+              lineHeight: 1,
+              cursor: "pointer",
+              boxShadow: "0 1px 2px rgba(37, 95, 137, 0.18)",
+              transition:
+                "transform 140ms ease, background-color 140ms ease, box-shadow 140ms ease",
+              whiteSpace: "nowrap",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "#1f5278";
+              e.currentTarget.style.boxShadow = "0 2px 5px rgba(37, 95, 137, 0.18)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "#255f89";
+              e.currentTarget.style.boxShadow = "0 1px 2px rgba(37, 95, 137, 0.18)";
+            }}
+            onMouseDown={(e) => {
+              e.currentTarget.style.background = "#194562";
+            }}
+            onMouseUp={(e) => {
+              e.currentTarget.style.background = "#1f5278";
+            }}
           >
-            <FeishuMark className="w-5 h-5" />
-            <span>FBIF 登录</span>
+            <span
+              style={{
+                width: 28,
+                height: 28,
+                flex: "0 0 auto",
+                display: "grid",
+                placeItems: "center",
+                borderRadius: "999px",
+                background: "#ffffff",
+                boxShadow:
+                  "0 1px 2px rgba(15, 31, 51, 0.1), inset 0 0 0 1px rgba(15, 31, 51, 0.04)",
+              }}
+            >
+              <FeishuMark className="w-5 h-5" />
+            </span>
+            <span>使用 FBIF 飞书登录</span>
           </button>
-        </div>
+        </main>
       </div>
     );
   }

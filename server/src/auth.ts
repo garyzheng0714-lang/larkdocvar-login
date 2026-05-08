@@ -32,6 +32,20 @@ export type AuthProfile = {
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'larkdocvar_session';
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const UNAUTHORIZED_MESSAGE = '未登录或会话已过期，请重新登录。';
+export const UNAUTHORIZED_TENANT_MESSAGE = '您的飞书账号不在 FBIF 授权范围内，请用 FBIF 账号登录或联系管理员。';
+
+/**
+ * Verify a Feishu tenant_key against FEISHU_ALLOWED_TENANT_KEYS allowlist.
+ * Empty/unset env var means no restriction (development-friendly).
+ * In production, set this to FBIF + partner tenant_keys.
+ */
+export function isAllowedTenant(tenantKey: string | undefined | null): boolean {
+  const allowed = (process.env.FEISHU_ALLOWED_TENANT_KEYS || '').trim();
+  if (!allowed) return true;
+  if (!tenantKey) return false;
+  const list = allowed.split(',').map((s) => s.trim()).filter(Boolean);
+  return list.includes(tenantKey);
+}
 
 const sessionRefreshInflight = new Map<string, Promise<AuthSessionRow>>();
 
