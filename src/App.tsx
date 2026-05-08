@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FeishuLoginCard } from "./components/FeishuLoginCard";
 import { FieldType, ITable, bitable } from "@lark-base-open/js-sdk";
 import { ChevronsUpDown, Check, ChevronDown, ChevronsRight, AlertCircle, CheckCircle, Info, Loader2, RefreshCw, Search, X, ExternalLink, Rocket, ImageIcon, Plus, Trash2, Type, Hash, CalendarDays, Sigma, Paperclip, Link2, ListFilter, FileText } from "lucide-react";
 
@@ -551,21 +552,6 @@ function formatDateTimeDisplay(input: string): string {
   const minute = pad(date.getMinutes());
   const second = pad(date.getSeconds());
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
-}
-
-function FeishuMark({ className = "w-5 h-5" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 1024 1024"
-      className={className}
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <path d="M891.306667 340.821333c4.906667 0 9.728 0.298667 14.634666 0.853334a409.941333 409.941333 0 0 1 108.8 30.037333c10.112 4.522667 12.629333 8.192 3.968 17.322667a351.146667 351.146667 0 0 0-61.013333 89.984c-16.810667 35.328-35.072 69.845333-52.266667 105.002666A225.28 225.28 0 0 1 853.333333 653.44c-53.632 48.512-116.181333 68.992-187.562666 59.093333-81.92-11.306667-159.445333-38.954667-232.704-75.477333a141.738667 141.738667 0 0 1-10.496-5.461333 5.376 5.376 0 0 1-1.706667-7.338667 5.333333 5.333333 0 0 1 2.005333-1.877333l5.12-2.730667c59.264-31.658667 108.842667-75.861333 156.544-122.282667 20.181333-19.541333 39.466667-40.021333 59.904-59.306666a344.96 344.96 0 0 1 160.170667-85.802667c13.184-3.242667 26.538667-5.802667 39.808-8.661333h0.554667l28.245333-2.56" fill="#133C9A" />
-      <path d="M317.653333 913.834667c-8.96-0.512-31.146667-3.584-33.877333-3.968a536.576 536.576 0 0 1-165.077333-48.256c-30.208-14.08-59.221333-30.72-88.32-46.933334-19.2-10.666667-27.818667-27.306667-27.690667-49.92 0.597333-83.370667 0.597333-166.741333 0-250.154666C2.432 461.013333 0.725333 407.381333 0 353.706667c0-4.736 0.725333-9.514667 2.176-13.909334 3.328-9.728 9.984-10.24 16.554667-3.925333 7.594667 7.296 13.653333 16.213333 21.205333 23.381333 67.285333 66.432 138.752 127.189333 218.752 177.237334a1207.765333 1207.765333 0 0 0 140.458667 77.397333c77.738667 35.328 157.525333 66.474667 241.066666 86.186667 73.898667 17.493333 145.621333 6.485333 205.482667-40.362667 18.261333-15.616 27.264-27.050667 48.896-55.893333-9.642667 25.642667-22.186667 50.090667-37.376 72.874666-13.866667 21.973333-45.312 51.2-69.162667 74.112-36.266667 35.114667-83.754667 63.573333-128.298666 87.552-48.554667 26.154667-99.029333 47.104-152.96 58.496-27.648 6.954667-67.584 14.848-81.322667 15.573334-2.432-0.128-10.666667 1.706667-14.848 1.408-35.541333 2.645333-57.472 3.669333-92.885333 0h-0.085334z" fill="#3370FF" />
-      <path d="M165.12 110.506667a52.48 52.48 0 0 1 7.424 0c152.661333 0 304.128 2.474667 456.618667 2.474666 0.298667 0 0.597333 0 0.725333 0.213334 14.208 12.373333 27.306667 25.770667 39.296 40.192 34.432 34.218667 60.16 93.610667 77.653333 129.706666 8.789333 25.045333 21.973333 48.896 28.16 76.8v0.469334c-15.573333 5.034667-30.72 11.178667-45.312 18.517333-44.202667 22.357333-64.213333 38.741333-100.821333 74.752-19.968 19.498667-36.992 37.077333-63.488 62.08-9.6 9.344-19.498667 18.346667-29.738667 26.922667-7.04-12.416-125.738667-244.608-364.245333-427.306667" fill="#00D6B9" />
-    </svg>
-  );
 }
 
 function formatWarnings(warnings: string[] | undefined): string {
@@ -2377,95 +2363,10 @@ export default function App() {
 
   if (!authSession.isAuthenticated) {
     return (
-      <div
-        className="min-h-screen flex items-center justify-center px-6 py-8 text-[#12243a]"
-        style={{
-          background: "linear-gradient(180deg, #f4f7fa 0%, #fafbfc 100%)",
-          fontFamily:
-            'Inter, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", Arial, sans-serif',
-        }}
-      >
-        <main
-          className="relative flex flex-col items-center w-full"
-          style={{
-            maxWidth: 420,
-            padding: "40px 32px",
-            background: "#ffffff",
-            border: "1px solid #e5e9f0",
-            borderRadius: 16,
-            boxShadow:
-              "0 1px 3px rgba(15, 31, 51, 0.04), 0 8px 24px rgba(15, 31, 51, 0.04)",
-          }}
-        >
-          {authError ? (
-            <div className="mb-4 w-full rounded-[10px] bg-[#fff1f0] text-[#f54a45] px-3 py-2 text-[13px] border border-[#ffd6d3]">
-              登录检查失败：{authError}
-            </div>
-          ) : null}
-          <img
-            src="/fbif-logo.webp"
-            alt="FBIF"
-            width={120}
-            height={120}
-            style={{ display: "block", objectFit: "contain", marginBottom: 20 }}
-          />
-          <button
-            type="button"
-            onClick={() => {
-              markAuthPending();
-              window.location.href = "/api/auth/feishu/login";
-            }}
-            className="w-full flex items-center justify-center text-white"
-            style={{
-              height: 52,
-              gap: 12,
-              padding: "0 18px",
-              border: 0,
-              borderRadius: 10,
-              background: "#255f89",
-              fontSize: 15,
-              fontWeight: 600,
-              lineHeight: 1,
-              cursor: "pointer",
-              boxShadow: "0 1px 2px rgba(37, 95, 137, 0.18)",
-              transition:
-                "transform 140ms ease, background-color 140ms ease, box-shadow 140ms ease",
-              whiteSpace: "nowrap",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = "#1f5278";
-              e.currentTarget.style.boxShadow = "0 2px 5px rgba(37, 95, 137, 0.18)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "#255f89";
-              e.currentTarget.style.boxShadow = "0 1px 2px rgba(37, 95, 137, 0.18)";
-            }}
-            onMouseDown={(e) => {
-              e.currentTarget.style.background = "#194562";
-            }}
-            onMouseUp={(e) => {
-              e.currentTarget.style.background = "#1f5278";
-            }}
-          >
-            <span
-              style={{
-                width: 28,
-                height: 28,
-                flex: "0 0 auto",
-                display: "grid",
-                placeItems: "center",
-                borderRadius: "999px",
-                background: "#ffffff",
-                boxShadow:
-                  "0 1px 2px rgba(15, 31, 51, 0.1), inset 0 0 0 1px rgba(15, 31, 51, 0.04)",
-              }}
-            >
-              <FeishuMark className="w-5 h-5" />
-            </span>
-            <span>使用 FBIF 飞书登录</span>
-          </button>
-        </main>
-      </div>
+      <FeishuLoginCard
+        authError={authError}
+        onBeforeLogin={() => markAuthPending()}
+      />
     );
   }
 
