@@ -1118,6 +1118,17 @@ export default function App() {
     };
   }, [checkAuthSession]);
 
+  // Keep OAuth session warm and refresh backend-side tokens periodically.
+  useEffect(() => {
+    if (!authSession.isAuthenticated) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void checkAuthSession({ silent: true });
+    }, 10 * 60 * 1000);
+    return () => window.clearInterval(timer);
+  }, [authSession.isAuthenticated, checkAuthSession]);
+
   // Short polling window after clicking login, to support embedded OAuth dialogs
   // that do not fully reload the plugin page after authorization completes.
   useEffect(() => {
@@ -2382,7 +2393,7 @@ export default function App() {
             className="w-full h-12 rounded-full border border-[#d8dce3] bg-white dark:bg-[#1c1833] dark:border-gray-700 text-[#1f2329] dark:text-gray-100 text-[16px] font-medium hover:bg-[#fbfcfe] dark:hover:bg-[#232033] transition-colors flex items-center justify-center gap-2"
           >
             <FeishuMark className="w-5 h-5" />
-            <span>飞书登录</span>
+            <span>FBIF 登录</span>
           </button>
         </div>
       </div>

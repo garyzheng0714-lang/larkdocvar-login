@@ -1,11 +1,4 @@
-import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import pg from 'pg';
 
 interface UserRow {
   open_id: string;
@@ -30,17 +23,13 @@ interface AuthSessionRow {
 }
 
 interface SavedConfigRow {
-  id: number;
+  id: string;
   open_id: string;
   config_name: string;
   payload_json: string;
   created_at: string;
   updated_at: string;
 }
-
-// ---------------------------------------------------------------------------
-// Schema bootstrap
-// ---------------------------------------------------------------------------
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS users (
@@ -49,114 +38,154 @@ CREATE TABLE IF NOT EXISTS users (
   en_name     TEXT,
   email       TEXT,
   avatar_url  TEXT,
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
   token               TEXT PRIMARY KEY,
-  open_id             TEXT NOT NULL,
+  open_id             TEXT NOT NULL REFERENCES users(open_id) ON DELETE CASCADE,
   access_token        TEXT NOT NULL,
   refresh_token       TEXT NOT NULL DEFAULT '',
   token_type          TEXT NOT NULL DEFAULT 'Bearer',
-  expires_at          TEXT NOT NULL,
-  refresh_expires_at  TEXT NOT NULL DEFAULT '',
-  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (open_id) REFERENCES users(open_id)
+  expires_at          TIMESTAMPTZ NOT NULL,
+  refresh_expires_at  TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_open_id ON auth_sessions(open_id);
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at);
 
 CREATE TABLE IF NOT EXISTS saved_configs (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  open_id       TEXT NOT NULL,
+  id            BIGSERIAL PRIMARY KEY,
+  open_id       TEXT NOT NULL REFERENCES users(open_id) ON DELETE CASCADE,
   config_name   TEXT NOT NULL,
   payload_json  TEXT NOT NULL DEFAULT '{}',
-  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (open_id) REFERENCES users(open_id)
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(open_id, config_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_saved_configs_open_id ON saved_configs(open_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_configs_user_name ON saved_configs(open_id, config_name);
+CREATE INDEX IF NOT EXISTS idx_saved_configs_updated_at ON saved_configs(updated_at DESC);
 `;
 
-// ---------------------------------------------------------------------------
-// Database singleton
-// ---------------------------------------------------------------------------
+let pool: pg.Pool | null = null;
+let initPromise: Promise<pg.Pool> | null = null;
 
-let db: Database.Database | null = null;
-
-function getDefaultDbPath(): string {
-  const serverDir = path.dirname(fileURLToPath(import.meta.url));
-  return path.resolve(serverDir, '../../data/app.db');
+function toIsoString(value: unknown): string {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (typeof value === 'string' && value.trim()) {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return new Date(value).toISOString();
+  }
+  return new Date().toISOString();
 }
 
-/**
- * Initialise (or return existing) SQLite database.
- * Safe to call multiple times – only the first call creates the file and runs
- * schema migrations.
- */
-function initDatabase(dbPath?: string): Database.Database {
-  if (db) {
-    return db;
+function mapUserRow(row: Record<string, unknown>): UserRow {
+  return {
+    open_id: String(row.open_id || ''),
+    name: String(row.name || ''),
+    en_name: row.en_name === null || row.en_name === undefined ? null : String(row.en_name),
+    email: row.email === null || row.email === undefined ? null : String(row.email),
+    avatar_url: row.avatar_url === null || row.avatar_url === undefined ? null : String(row.avatar_url),
+    created_at: toIsoString(row.created_at),
+    updated_at: toIsoString(row.updated_at),
+  };
+}
+
+function mapSessionRow(row: Record<string, unknown>): AuthSessionRow {
+  return {
+    token: String(row.token || ''),
+    open_id: String(row.open_id || ''),
+    access_token: String(row.access_token || ''),
+    refresh_token: String(row.refresh_token || ''),
+    token_type: String(row.token_type || 'Bearer'),
+    expires_at: toIsoString(row.expires_at),
+    refresh_expires_at: row.refresh_expires_at ? toIsoString(row.refresh_expires_at) : '',
+    created_at: toIsoString(row.created_at),
+    updated_at: toIsoString(row.updated_at),
+  };
+}
+
+function mapConfigRow(row: Record<string, unknown>): SavedConfigRow {
+  return {
+    id: String(row.id || ''),
+    open_id: String(row.open_id || ''),
+    config_name: String(row.config_name || ''),
+    payload_json: String(row.payload_json || '{}'),
+    created_at: toIsoString(row.created_at),
+    updated_at: toIsoString(row.updated_at),
+  };
+}
+
+async function initDatabase(): Promise<pg.Pool> {
+  if (initPromise) {
+    return initPromise;
   }
 
-  const resolvedPath = dbPath ?? getDefaultDbPath();
-  mkdirSync(path.dirname(resolvedPath), { recursive: true });
+  const connectionString = (process.env.DATABASE_URL || '').trim();
+  if (!connectionString) {
+    throw new Error('DATABASE_URL 未配置，无法连接 PostgreSQL。');
+  }
 
-  db = new Database(resolvedPath);
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
-  db.exec(SCHEMA_SQL);
+  pool = new pg.Pool({ connectionString });
 
-  return db;
+  initPromise = (async () => {
+    const database = pool as pg.Pool;
+    await database.query('SELECT 1');
+    await database.query(SCHEMA_SQL);
+    return database;
+  })().catch(async (error) => {
+    initPromise = null;
+    if (pool) {
+      await pool.end().catch(() => undefined);
+      pool = null;
+    }
+    throw error;
+  });
+
+  return initPromise;
 }
 
-// ---------------------------------------------------------------------------
-// Users
-// ---------------------------------------------------------------------------
-
-function upsertUser(user: {
+async function upsertUser(user: {
   openId: string;
   name: string;
   enName?: string | null;
   email?: string | null;
   avatarUrl?: string | null;
-}): UserRow {
-  const database = initDatabase();
-  const stmt = database.prepare(`
-    INSERT INTO users (open_id, name, en_name, email, avatar_url, updated_at)
-    VALUES (@open_id, @name, @en_name, @email, @avatar_url, datetime('now'))
-    ON CONFLICT(open_id) DO UPDATE SET
-      name       = excluded.name,
-      en_name    = excluded.en_name,
-      email      = excluded.email,
-      avatar_url = excluded.avatar_url,
-      updated_at = datetime('now')
-    RETURNING *
-  `);
-  return stmt.get({
-    open_id: user.openId,
-    name: user.name,
-    en_name: user.enName ?? null,
-    email: user.email ?? null,
-    avatar_url: user.avatarUrl ?? null,
-  }) as UserRow;
+}): Promise<UserRow> {
+  const db = await initDatabase();
+  const { rows } = await db.query(
+    `INSERT INTO users (open_id, name, en_name, email, avatar_url, updated_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
+     ON CONFLICT(open_id) DO UPDATE SET
+       name       = EXCLUDED.name,
+       en_name    = EXCLUDED.en_name,
+       email      = EXCLUDED.email,
+       avatar_url = EXCLUDED.avatar_url,
+       updated_at = NOW()
+     RETURNING *`,
+    [user.openId, user.name, user.enName ?? null, user.email ?? null, user.avatarUrl ?? null],
+  );
+  return mapUserRow(rows[0] as Record<string, unknown>);
 }
 
-function getUserByOpenId(openId: string): UserRow | undefined {
-  const database = initDatabase();
-  const stmt = database.prepare('SELECT * FROM users WHERE open_id = ?');
-  return stmt.get(openId) as UserRow | undefined;
+async function getUserByOpenId(openId: string): Promise<UserRow | undefined> {
+  const db = await initDatabase();
+  const { rows } = await db.query('SELECT * FROM users WHERE open_id = $1', [openId]);
+  if (!rows[0]) {
+    return undefined;
+  }
+  return mapUserRow(rows[0] as Record<string, unknown>);
 }
 
-// ---------------------------------------------------------------------------
-// Auth sessions
-// ---------------------------------------------------------------------------
-
-function upsertSession(session: {
+async function upsertSession(session: {
   token: string;
   openId: string;
   accessToken: string;
@@ -164,116 +193,133 @@ function upsertSession(session: {
   tokenType?: string;
   expiresAt: string;
   refreshExpiresAt?: string;
-}): AuthSessionRow {
-  const database = initDatabase();
-  const stmt = database.prepare(`
-    INSERT INTO auth_sessions (token, open_id, access_token, refresh_token, token_type, expires_at, refresh_expires_at, updated_at)
-    VALUES (@token, @open_id, @access_token, @refresh_token, @token_type, @expires_at, @refresh_expires_at, datetime('now'))
-    ON CONFLICT(token) DO UPDATE SET
-      access_token       = excluded.access_token,
-      refresh_token      = excluded.refresh_token,
-      token_type         = excluded.token_type,
-      expires_at         = excluded.expires_at,
-      refresh_expires_at = excluded.refresh_expires_at,
-      updated_at         = datetime('now')
-    RETURNING *
-  `);
-  return stmt.get({
-    token: session.token,
-    open_id: session.openId,
-    access_token: session.accessToken,
-    refresh_token: session.refreshToken ?? '',
-    token_type: session.tokenType ?? 'Bearer',
-    expires_at: session.expiresAt,
-    refresh_expires_at: session.refreshExpiresAt ?? '',
-  }) as AuthSessionRow;
+}): Promise<AuthSessionRow> {
+  const db = await initDatabase();
+  const { rows } = await db.query(
+    `INSERT INTO auth_sessions
+       (token, open_id, access_token, refresh_token, token_type, expires_at, refresh_expires_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::timestamptz, NOW())
+     ON CONFLICT(token) DO UPDATE SET
+       access_token       = EXCLUDED.access_token,
+       refresh_token      = EXCLUDED.refresh_token,
+       token_type         = EXCLUDED.token_type,
+       expires_at         = EXCLUDED.expires_at,
+       refresh_expires_at = EXCLUDED.refresh_expires_at,
+       updated_at         = NOW()
+     RETURNING *`,
+    [
+      session.token,
+      session.openId,
+      session.accessToken,
+      session.refreshToken ?? '',
+      session.tokenType ?? 'Bearer',
+      session.expiresAt,
+      session.refreshExpiresAt ?? '',
+    ],
+  );
+  return mapSessionRow(rows[0] as Record<string, unknown>);
 }
 
-function getSessionByToken(token: string): AuthSessionRow | undefined {
-  const database = initDatabase();
-  const stmt = database.prepare('SELECT * FROM auth_sessions WHERE token = ?');
-  return stmt.get(token) as AuthSessionRow | undefined;
+async function getSessionByToken(token: string): Promise<AuthSessionRow | undefined> {
+  const db = await initDatabase();
+  const { rows } = await db.query('SELECT * FROM auth_sessions WHERE token = $1', [token]);
+  if (!rows[0]) {
+    return undefined;
+  }
+  return mapSessionRow(rows[0] as Record<string, unknown>);
 }
 
-function updateSessionTokens(session: {
+async function updateSessionTokens(session: {
   token: string;
   accessToken: string;
   refreshToken: string;
   expiresAt: string;
   refreshExpiresAt: string;
-}): void {
-  const database = initDatabase();
-  const stmt = database.prepare(`
-    UPDATE auth_sessions
-    SET access_token = @access_token,
-        refresh_token = @refresh_token,
-        expires_at = @expires_at,
-        refresh_expires_at = @refresh_expires_at,
-        updated_at = datetime('now')
-    WHERE token = @token
-  `);
-  stmt.run({
-    token: session.token,
-    access_token: session.accessToken,
-    refresh_token: session.refreshToken,
-    expires_at: session.expiresAt,
-    refresh_expires_at: session.refreshExpiresAt,
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Saved configs
-// ---------------------------------------------------------------------------
-
-function listSavedConfigs(openId: string): SavedConfigRow[] {
-  const database = initDatabase();
-  const stmt = database.prepare(
-    'SELECT * FROM saved_configs WHERE open_id = ? ORDER BY updated_at DESC'
+}): Promise<AuthSessionRow | undefined> {
+  const db = await initDatabase();
+  const { rows } = await db.query(
+    `UPDATE auth_sessions
+     SET access_token = $2,
+         refresh_token = $3,
+         expires_at = $4,
+         refresh_expires_at = NULLIF($5, '')::timestamptz,
+         updated_at = NOW()
+     WHERE token = $1
+     RETURNING *`,
+    [session.token, session.accessToken, session.refreshToken, session.expiresAt, session.refreshExpiresAt],
   );
-  return stmt.all(openId) as SavedConfigRow[];
+
+  if (!rows[0]) {
+    return undefined;
+  }
+  return mapSessionRow(rows[0] as Record<string, unknown>);
 }
 
-function getSavedConfig(openId: string, configId: number): SavedConfigRow | undefined {
-  const database = initDatabase();
-  const stmt = database.prepare(
-    'SELECT * FROM saved_configs WHERE id = ? AND open_id = ?'
+async function deleteSessionByToken(token: string): Promise<boolean> {
+  const db = await initDatabase();
+  const result = await db.query('DELETE FROM auth_sessions WHERE token = $1', [token]);
+  return (result.rowCount ?? 0) > 0;
+}
+
+async function listSavedConfigs(openId: string): Promise<SavedConfigRow[]> {
+  const db = await initDatabase();
+  const { rows } = await db.query(
+    'SELECT * FROM saved_configs WHERE open_id = $1 ORDER BY updated_at DESC, id DESC',
+    [openId],
   );
-  return stmt.get(configId, openId) as SavedConfigRow | undefined;
+  return rows.map((row) => mapConfigRow(row as Record<string, unknown>));
 }
 
-function saveOrUpdateConfig(config: {
+async function getSavedConfig(openId: string, configId: string): Promise<SavedConfigRow | undefined> {
+  const db = await initDatabase();
+  const { rows } = await db.query(
+    'SELECT * FROM saved_configs WHERE id = $1::bigint AND open_id = $2',
+    [configId, openId],
+  );
+  if (!rows[0]) {
+    return undefined;
+  }
+  return mapConfigRow(rows[0] as Record<string, unknown>);
+}
+
+async function getSavedConfigByName(openId: string, configName: string): Promise<SavedConfigRow | undefined> {
+  const db = await initDatabase();
+  const { rows } = await db.query(
+    'SELECT * FROM saved_configs WHERE open_id = $1 AND config_name = $2',
+    [openId, configName],
+  );
+  if (!rows[0]) {
+    return undefined;
+  }
+  return mapConfigRow(rows[0] as Record<string, unknown>);
+}
+
+async function saveOrUpdateConfig(config: {
   openId: string;
   configName: string;
   payloadJson: string;
-}): SavedConfigRow {
-  const database = initDatabase();
-  const stmt = database.prepare(`
-    INSERT INTO saved_configs (open_id, config_name, payload_json, updated_at)
-    VALUES (@open_id, @config_name, @payload_json, datetime('now'))
-    ON CONFLICT(open_id, config_name) DO UPDATE SET
-      payload_json = excluded.payload_json,
-      updated_at   = datetime('now')
-    RETURNING *
-  `);
-  return stmt.get({
-    open_id: config.openId,
-    config_name: config.configName,
-    payload_json: config.payloadJson,
-  }) as SavedConfigRow;
-}
-
-function deleteSavedConfig(openId: string, configId: number): boolean {
-  const database = initDatabase();
-  const stmt = database.prepare(
-    'DELETE FROM saved_configs WHERE id = ? AND open_id = ?'
+}): Promise<SavedConfigRow> {
+  const db = await initDatabase();
+  const { rows } = await db.query(
+    `INSERT INTO saved_configs (open_id, config_name, payload_json, updated_at)
+     VALUES ($1, $2, $3, NOW())
+     ON CONFLICT(open_id, config_name) DO UPDATE SET
+       payload_json = EXCLUDED.payload_json,
+       updated_at = NOW()
+     RETURNING *`,
+    [config.openId, config.configName, config.payloadJson],
   );
-  const result = stmt.run(configId, openId);
-  return result.changes > 0;
+  return mapConfigRow(rows[0] as Record<string, unknown>);
 }
 
-// ---------------------------------------------------------------------------
-// Exports
-// ---------------------------------------------------------------------------
+async function deleteSavedConfig(openId: string, configId: string): Promise<boolean> {
+  const db = await initDatabase();
+  const result = await db.query(
+    'DELETE FROM saved_configs WHERE id = $1::bigint AND open_id = $2',
+    [configId, openId],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
 
 export {
   initDatabase,
@@ -282,8 +328,10 @@ export {
   upsertSession,
   getSessionByToken,
   updateSessionTokens,
+  deleteSessionByToken,
   listSavedConfigs,
   getSavedConfig,
+  getSavedConfigByName,
   saveOrUpdateConfig,
   deleteSavedConfig,
 };

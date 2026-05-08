@@ -1,6 +1,6 @@
 # 飞书边栏插件：云文档变量替换生成器
 
-支持从模板文档提取 `{{变量}}`，按多维表格字段自动绑定并批量生成文档，最后回写生成链接。
+支持从模板文档提取 `{{变量}}`，按多维表格字段自动绑定并批量生成文档，最后回写生成链接。用户会话与模板配置统一存储在 PostgreSQL。
 
 ## 快速上手（先看这个）
 
@@ -25,11 +25,12 @@
 cp .env.example .env
 ```
 
-2. 在 `.env` 填写飞书应用凭证
+2. 在 `.env` 填写 FBIF 飞书应用凭证与 PostgreSQL 连接
 
 ```bash
-FEISHU_APP_ID=cli_xxx
-FEISHU_APP_SECRET=xxx
+FEISHU_APP_ID=cli_fbif_xxx
+FEISHU_APP_SECRET=fbif_app_secret
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/larkdocvar
 PORT=3000
 ```
 
@@ -43,6 +44,10 @@ npm run dev
 - 前端运行地址（飞书边栏插件 URL）：`http://localhost:5173`
 - 后端 API：`http://localhost:3000`
 - 健康检查：`http://localhost:3000/api/health`
+
+PostgreSQL 说明：
+- 本地开发请先确保 `DATABASE_URL` 指向可用 PostgreSQL。
+- `docker compose up -d --build` 会自动拉起 `postgres` 服务（默认映射到 `127.0.0.1:15432`）。
 
 ### 登录版额外配置（新项目）
 
@@ -60,11 +65,13 @@ SESSION_COOKIE_SECURE=false
 SESSION_COOKIE_SAMESITE=lax
 SESSION_MAX_AGE_SECONDS=604800
 FRONTEND_POST_LOGIN_URL=http://localhost:5173
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/larkdocvar
 ```
 
 登录态说明：
 
 - 当前默认会话有效期是 `604800` 秒（7 天）。
+- 用户 access_token 到期后会自动使用 refresh_token 刷新，不需要手工重登。
 - 在飞书内嵌 WebView 场景里，7 天通常也是最稳妥的上限。
 - 如需跨站嵌入，可尝试 `SESSION_COOKIE_SAMESITE=none` 且同时启用 `SESSION_COOKIE_SECURE=true`（HTTPS 必须）。
 
@@ -72,13 +79,43 @@ FRONTEND_POST_LOGIN_URL=http://localhost:5173
 
 - 模板变量提取接口要求先登录，后端会使用登录用户的 OAuth token 读取模板。
 - 因此模板文档只需要给“实际使用插件的用户”阅读权限即可。
-- 仍然需要配置飞书应用凭证（`FEISHU_APP_ID / FEISHU_APP_SECRET`）用于登录与后续接口能力。
+- 仍然需要配置 FBIF 应用凭证（`FEISHU_APP_ID / FEISHU_APP_SECRET`）用于登录与后续接口能力。
 
 相关接口：
 - 登录跳转：`/api/auth/feishu/login`
 - 会话查询：`/api/auth/session`
 - 退出登录：`/api/auth/logout`
 - 配置存取：`/api/configs`
+
+## 一次性迁移（Bitable -> PostgreSQL）
+
+用于把旧版 Bitable 里的模板配置迁移到 PostgreSQL（只需要执行一次）。
+
+1. 在 `.env` 补齐以下变量：
+
+```bash
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/larkdocvar
+FEISHU_APP_ID=cli_fbif_xxx
+FEISHU_APP_SECRET=fbif_app_secret
+BITABLE_APP_TOKEN=your_legacy_bitable_app_token
+BITABLE_TABLE_ID=your_legacy_bitable_table_id
+```
+
+2. 先 dry-run 预览迁移量（不写库）：
+
+```bash
+DRY_RUN=true npm run migrate:bitable-to-pg
+```
+
+3. 确认后正式迁移：
+
+```bash
+npm run migrate:bitable-to-pg
+```
+
+说明：
+- 迁移按 `open_id + config_name` 去重，优先保留内容更完整（变量绑定更多）的版本，分数相同则保留更新时间更晚的版本。
+- 若 PostgreSQL 中不存在对应用户，会自动创建占位用户（`迁移用户-xxxxxx`）。
 
 ## Docker 本地运行
 

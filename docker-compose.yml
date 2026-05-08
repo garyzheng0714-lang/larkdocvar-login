@@ -17,6 +17,10 @@ services:
       SESSION_COOKIE_SAMESITE: ${SESSION_COOKIE_SAMESITE:-lax}
       SESSION_MAX_AGE_SECONDS: ${SESSION_MAX_AGE_SECONDS:-604800}
       FRONTEND_POST_LOGIN_URL: ${FRONTEND_POST_LOGIN_URL:-}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/larkdocvar}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "127.0.0.1:${HOST_PORT:-18081}:${CONTAINER_PORT:-3180}"
     healthcheck:
@@ -25,3 +29,22 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ${POSTGRES_CONTAINER_NAME:-larkdocvar-postgres}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-larkdocvar}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-15432}:5432"
+    volumes:
+      - ${POSTGRES_DATA_DIR:-./data/postgres}:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-larkdocvar}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
