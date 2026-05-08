@@ -1,6 +1,5 @@
 import axios from 'axios';
 import cors from 'cors';
-import crypto from 'node:crypto';
 import dotenv from 'dotenv';
 import express from 'express';
 import { existsSync } from 'node:fs';
@@ -10,8 +9,6 @@ import { z } from 'zod';
 import { FeishuTemplateService, GenerateInput } from './feishu';
 import {
   initDatabase,
-  upsertUser,
-  upsertSession,
   deleteSessionByToken,
   listSavedConfigs,
   getSavedConfig,
@@ -23,9 +20,8 @@ import {
   requireAuth,
   peekSessionForRequest,
   resolveSessionTokenFromRequest,
-  isAllowedTenant,
-  UNAUTHORIZED_TENANT_MESSAGE,
 } from './auth';
+import { registerOAuthRoutes } from './oauthRoutes';
 
 dotenv.config();
 
@@ -40,8 +36,6 @@ const appSecret = process.env.FEISHU_APP_SECRET || '';
 // Feishu OAuth2 configuration
 // ---------------------------------------------------------------------------
 
-const FEISHU_OAUTH_REDIRECT_URI = process.env.FEISHU_OAUTH_REDIRECT_URI || '';
-const FEISHU_OAUTH_SCOPE = process.env.FEISHU_OAUTH_SCOPE || 'contact:user.base:readonly';
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'larkdocvar_session';
 const SESSION_COOKIE_SECURE = process.env.SESSION_COOKIE_SECURE === 'true';
 const SESSION_MAX_AGE_SECONDS = Number(process.env.SESSION_MAX_AGE_SECONDS || 604800);
@@ -50,8 +44,6 @@ const SESSION_COOKIE_SAMESITE =
   SESSION_COOKIE_SAMESITE_RAW === 'strict' || SESSION_COOKIE_SAMESITE_RAW === 'none'
     ? SESSION_COOKIE_SAMESITE_RAW
     : 'lax';
-const FRONTEND_POST_LOGIN_URL = process.env.FRONTEND_POST_LOGIN_URL || '/';
-const EMBEDDED_AUTH_HASH_PARAM = process.env.EMBEDDED_AUTH_HASH_PARAM || 'session_token';
 
 const hasCredential = Boolean(appId && appSecret);
 const feishuService = hasCredential
@@ -186,16 +178,6 @@ const saveConfigSchema = z.object({
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 
-function appendHashParamToUrl(baseUrl: string, key: string, value: string): string {
-  const hashIndex = baseUrl.indexOf('#');
-  const beforeHash = hashIndex >= 0 ? baseUrl.slice(0, hashIndex) : baseUrl;
-  const rawHash = hashIndex >= 0 ? baseUrl.slice(hashIndex + 1) : '';
-  const hashParams = new URLSearchParams(rawHash);
-  hashParams.set(key, value);
-  const nextHash = hashParams.toString();
-  return nextHash ? `${beforeHash}#${nextHash}` : beforeHash;
-}
-
 function extractDocumentIdFromUrl(input: string): string {
   const trimmed = input.trim();
   try {
@@ -207,14 +189,6 @@ function extractDocumentIdFromUrl(input: string): string {
     if (match?.[1]) return match[1];
   }
   return '';
-}
-
-function extractOAuthTokenData(body: Record<string, unknown>): Record<string, unknown> {
-  const payload = body.data;
-  if (payload && typeof payload === 'object') {
-    return payload as Record<string, unknown>;
-  }
-  return body;
 }
 
 async function extractTemplateVariablesByUserToken(templateUrl: string, userAccessToken: string): Promise<{ documentId: string; templateTitle: string; variables: string[]; }> {
@@ -254,198 +228,10 @@ async function extractTemplateVariablesByUserToken(templateUrl: string, userAcce
 }
 
 // ---------------------------------------------------------------------------
-// Feishu OAuth2 routes
+// Feishu OAuth2 routes (button mode + QR mode)
 // ---------------------------------------------------------------------------
 
-/**
- * GET /api/auth/feishu/login
- * Redirects the browser to Feishu's OAuth authorize page.
- */
-app.get('/api/auth/feishu/login', (_request, response) => {
-  if (!appId || !FEISHU_OAUTH_REDIRECT_URI) {
-    response.status(500).json({
-      ok: false,
-      error: '服务未配置 FEISHU_APP_ID 或 FEISHU_OAUTH_REDIRECT_URI。',
-    });
-    return;
-  }
-
-  const params = new URLSearchParams({
-    app_id: appId,
-    redirect_uri: FEISHU_OAUTH_REDIRECT_URI,
-    response_type: 'code',
-    scope: FEISHU_OAUTH_SCOPE,
-    state: crypto.randomBytes(16).toString('hex'),
-  });
-
-  const authorizeUrl = `https://open.feishu.cn/open-apis/authen/v1/authorize?${params.toString()}`;
-  response.redirect(authorizeUrl);
-});
-
-/**
- * GET /api/auth/feishu/callback
- * Feishu redirects here after user authorizes.  Exchanges the code for tokens,
- * fetches user info, persists user + session, sets cookie, then redirects to
- * the frontend.
- */
-app.get('/api/auth/feishu/callback', async (request, response) => {
-  try {
-    const code = request.query.code as string | undefined;
-    if (!code) {
-      response.status(400).json({ ok: false, error: '缺少 code 参数。' });
-      return;
-    }
-    if (!appId || !appSecret || !FEISHU_OAUTH_REDIRECT_URI) {
-      response.status(500).json({
-        ok: false,
-        error: '服务未配置 FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_OAUTH_REDIRECT_URI。',
-      });
-      return;
-    }
-
-    // 1. Exchange authorization code for access token
-    //    Feishu v2 token endpoint returns flat format:
-    //    { code, access_token, refresh_token, token_type, expires_in, ... }
-    //    But we also handle envelope format { code, msg, data: { access_token, ... } }
-    //    in case Feishu changes the response shape.
-    const tokenResponse = await axios.post(
-      'https://open.feishu.cn/open-apis/authen/v2/oauth/token',
-      {
-        grant_type: 'authorization_code',
-        client_id: appId,
-        client_secret: appSecret,
-        code,
-        redirect_uri: FEISHU_OAUTH_REDIRECT_URI,
-      },
-      { headers: { 'Content-Type': 'application/json' } },
-    );
-
-    const tokenBody = tokenResponse.data as Record<string, unknown>;
-
-    // Check for Feishu-level error (code !== 0 means failure in both flat and envelope formats)
-    if (typeof tokenBody.code === 'number' && tokenBody.code !== 0) {
-      const errMsg = String(tokenBody.msg || tokenBody.message || 'token exchange failed');
-      response.status(500).json({
-        ok: false,
-        error: `飞书 OAuth token 交换失败：[code=${tokenBody.code}] ${errMsg}`,
-      });
-      return;
-    }
-
-    const tokenData = extractOAuthTokenData(tokenBody);
-
-    const oauthAccessToken = tokenData.access_token as string | undefined;
-    const oauthRefreshToken = (tokenData.refresh_token as string | undefined) ?? '';
-    const tokenType = (tokenData.token_type as string | undefined) ?? 'Bearer';
-    const expiresIn: number = Number(tokenData.expires_in) || 0;
-    const refreshExpiresIn: number = Number(tokenData.refresh_expires_in ?? tokenData.refresh_token_expires_in) || 0;
-
-    if (!oauthAccessToken) {
-      response.status(500).json({
-        ok: false,
-        error: '飞书 OAuth token 交换返回无效：缺少 access_token。',
-      });
-      return;
-    }
-
-    // 2. Fetch user info using the user access token
-    //    user_info endpoint uses standard Feishu envelope: { code, msg, data: { open_id, ... } }
-    const userInfoResponse = await axios.get(
-      'https://open.feishu.cn/open-apis/authen/v1/user_info',
-      { headers: { Authorization: `Bearer ${oauthAccessToken}` } },
-    );
-
-    const userInfoBody = userInfoResponse.data as Record<string, unknown>;
-
-    if (typeof userInfoBody.code === 'number' && userInfoBody.code !== 0) {
-      const errMsg = String(userInfoBody.msg || 'user_info request failed');
-      response.status(500).json({
-        ok: false,
-        error: `飞书获取用户信息失败：[code=${userInfoBody.code}] ${errMsg}`,
-      });
-      return;
-    }
-
-    // Extract user info: try envelope (data.*) first, then flat
-    const userInfo = (userInfoBody.data && typeof userInfoBody.data === 'object'
-      ? userInfoBody.data
-      : userInfoBody) as {
-      open_id?: string;
-      name?: string;
-      en_name?: string;
-      email?: string;
-      avatar_url?: string;
-      tenant_key?: string;
-    };
-
-    if (!userInfo.open_id) {
-      response.status(500).json({
-        ok: false,
-        error: '飞书获取用户信息返回无效：缺少 open_id。',
-      });
-      return;
-    }
-
-    // Tenant allowlist check: second line of defense after Feishu admin's
-    // application access scope. Logs the actual tenant_key on first encounter
-    // so operators can copy it into FEISHU_ALLOWED_TENANT_KEYS.
-    if (!isAllowedTenant(userInfo.tenant_key)) {
-      // eslint-disable-next-line no-console
-      console.log(
-        `[auth] login denied for tenant_key=${userInfo.tenant_key} open_id=${userInfo.open_id}`,
-      );
-      response.status(403).send(UNAUTHORIZED_TENANT_MESSAGE);
-      return;
-    }
-
-    // 3. Persist user
-    await upsertUser({
-      openId: userInfo.open_id,
-      name: userInfo.name ?? '',
-      enName: userInfo.en_name ?? null,
-      email: userInfo.email ?? null,
-      avatarUrl: userInfo.avatar_url ?? null,
-    });
-
-    // 4. Create session
-    const sessionToken = crypto.randomBytes(32).toString('hex');
-    const now = Date.now();
-    const expiresAt = expiresIn > 0
-      ? new Date(now + expiresIn * 1000).toISOString()
-      : new Date(now + 7200 * 1000).toISOString(); // fallback 2h
-    const refreshExpiresAt = refreshExpiresIn > 0
-      ? new Date(now + refreshExpiresIn * 1000).toISOString()
-      : '';
-
-    await upsertSession({
-      token: sessionToken,
-      openId: userInfo.open_id,
-      accessToken: oauthAccessToken,
-      refreshToken: oauthRefreshToken,
-      tokenType,
-      expiresAt,
-      refreshExpiresAt,
-    });
-
-    // 5. Set session cookie and redirect to frontend
-    response.cookie(SESSION_COOKIE_NAME, sessionToken, {
-      httpOnly: true,
-      secure: SESSION_COOKIE_SECURE,
-      sameSite: SESSION_COOKIE_SAMESITE,
-      maxAge: SESSION_MAX_AGE_SECONDS * 1000, // express expects milliseconds
-      path: '/',
-    });
-
-    response.redirect(appendHashParamToUrl(FRONTEND_POST_LOGIN_URL, EMBEDDED_AUTH_HASH_PARAM, sessionToken));
-  } catch (error) {
-    // eslint-disable-next-line no-console
-    console.error('Feishu OAuth callback error:', error);
-    response.status(500).json({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-});
+registerOAuthRoutes(app);
 
 /**
  * GET /api/auth/session

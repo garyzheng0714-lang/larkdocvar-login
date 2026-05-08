@@ -91,6 +91,116 @@ export function resolveSessionTokenFromRequest(request: express.Request): string
 }
 
 // ---------------------------------------------------------------------------
+// OAuth state cookie helpers (CSRF protection for authorize -> callback flow)
+// ---------------------------------------------------------------------------
+
+const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
+const OAUTH_STATE_COOKIE_PATH = '/api/auth/feishu';
+
+export function setOAuthStateCookie(
+  response: express.Response,
+  name: string,
+  value: string,
+): void {
+  response.cookie(name, value, {
+    httpOnly: true,
+    secure: (process.env.SESSION_COOKIE_SECURE || 'false').toLowerCase() === 'true',
+    sameSite: 'lax',
+    path: OAUTH_STATE_COOKIE_PATH,
+    maxAge: OAUTH_STATE_TTL_MS,
+  });
+}
+
+/**
+ * Verifies the state cookie matches `expected` and clears it. Returns true on
+ * match. Always clears the cookie (single-use).
+ */
+export function consumeOAuthStateCookie(
+  request: express.Request,
+  response: express.Response,
+  name: string,
+  expected: string | undefined,
+): boolean {
+  const cookies = parseCookies(request.headers.cookie);
+  const stored = (cookies[name] || '').trim();
+  response.clearCookie(name, { path: OAUTH_STATE_COOKIE_PATH });
+  if (!stored || !expected) return false;
+  return stored === expected;
+}
+
+// ---------------------------------------------------------------------------
+// Feishu v1 OAuth helpers (used by the QR-code login flow)
+//   passport.feishu.cn issues codes that must be exchanged via the v1 endpoint
+//   with an app_access_token. The v2 endpoint does NOT accept passport codes.
+// ---------------------------------------------------------------------------
+
+export async function getAppAccessToken(): Promise<string> {
+  const appId = process.env.FEISHU_APP_ID || '';
+  const appSecret = process.env.FEISHU_APP_SECRET || '';
+  if (!appId || !appSecret) {
+    throw new Error('服务未配置 FEISHU_APP_ID / FEISHU_APP_SECRET。');
+  }
+
+  const resp = await axios.post(
+    'https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal',
+    { app_id: appId, app_secret: appSecret },
+    { headers: { 'Content-Type': 'application/json' }, timeout: 20000 },
+  );
+  const body = resp.data as { code?: number; msg?: string; app_access_token?: string };
+  if (typeof body.code === 'number' && body.code !== 0) {
+    throw new Error(`获取 app_access_token 失败：[code=${body.code}] ${body.msg || ''}`);
+  }
+  if (!body.app_access_token) {
+    throw new Error('app_access_token 接口未返回 token。');
+  }
+  return body.app_access_token;
+}
+
+export type OAuthV1TokenResult = {
+  accessToken: string;
+  refreshToken: string;
+  expiresIn: number;
+  refreshExpiresIn: number;
+  tokenType: string;
+};
+
+export async function exchangeCodeV1(
+  code: string,
+  appAccessToken: string,
+): Promise<OAuthV1TokenResult> {
+  const resp = await axios.post(
+    'https://open.feishu.cn/open-apis/authen/v1/access_token',
+    { grant_type: 'authorization_code', code },
+    {
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${appAccessToken}`,
+      },
+      timeout: 20000,
+    },
+  );
+  const body = resp.data as Record<string, unknown>;
+  if (typeof body.code === 'number' && body.code !== 0) {
+    throw new Error(`v1 access_token 接口失败：[code=${body.code}] ${body.msg || ''}`);
+  }
+  const data = (body.data && typeof body.data === 'object'
+    ? body.data
+    : body) as Record<string, unknown>;
+  const accessToken = data.access_token as string | undefined;
+  if (!accessToken) {
+    throw new Error('v1 access_token 接口未返回 access_token。');
+  }
+  return {
+    accessToken,
+    refreshToken: (data.refresh_token as string | undefined) ?? '',
+    expiresIn: Number(data.expires_in) || 0,
+    refreshExpiresIn:
+      Number(data.refresh_expires_in ?? data.refresh_token_expires_in) || 0,
+    tokenType: (data.token_type as string | undefined) ?? 'Bearer',
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Token refresh
 // ---------------------------------------------------------------------------
 
