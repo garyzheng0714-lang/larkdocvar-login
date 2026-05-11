@@ -36,12 +36,11 @@ export const UNAUTHORIZED_TENANT_MESSAGE = '您的飞书账号不在 FBIF 授权
 
 /**
  * Verify a Feishu tenant_key against FEISHU_ALLOWED_TENANT_KEYS allowlist.
- * Empty/unset env var means no restriction (development-friendly).
- * In production, set this to FBIF + partner tenant_keys.
+ * Empty/unset env var is allowed only outside production.
  */
 export function isAllowedTenant(tenantKey: string | undefined | null): boolean {
   const allowed = (process.env.FEISHU_ALLOWED_TENANT_KEYS || '').trim();
-  if (!allowed) return true;
+  if (!allowed) return process.env.NODE_ENV !== 'production';
   if (!tenantKey) return false;
   const list = allowed.split(',').map((s) => s.trim()).filter(Boolean);
   return list.includes(tenantKey);
@@ -66,28 +65,9 @@ function parseCookies(header: string | undefined): Record<string, string> {
   return cookies;
 }
 
-function parseBearerToken(header: string | string[] | undefined): string {
-  const raw = Array.isArray(header) ? header[0] : header;
-  if (!raw) return '';
-  const match = raw.match(/^Bearer\s+(.+)$/i);
-  return match?.[1]?.trim() || '';
-}
-
 export function resolveSessionTokenFromRequest(request: express.Request): string {
   const cookies = parseCookies(request.headers.cookie);
-  const cookieToken = (cookies[SESSION_COOKIE_NAME] || '').trim();
-  if (cookieToken) return cookieToken;
-
-  const headerToken = (request.header('X-Session-Token') || '').trim();
-  if (headerToken) return headerToken;
-
-  const bearerToken = parseBearerToken(request.headers.authorization);
-  if (bearerToken) return bearerToken;
-
-  const queryToken = typeof request.query.session_token === 'string'
-    ? request.query.session_token.trim()
-    : '';
-  return queryToken;
+  return (cookies[SESSION_COOKIE_NAME] || '').trim();
 }
 
 // ---------------------------------------------------------------------------

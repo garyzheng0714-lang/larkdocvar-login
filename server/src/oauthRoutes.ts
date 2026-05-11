@@ -32,8 +32,6 @@ const SESSION_COOKIE_SAMESITE: 'lax' | 'strict' | 'none' =
     ? (SESSION_COOKIE_SAMESITE_RAW as 'strict' | 'none')
     : 'lax';
 const FRONTEND_POST_LOGIN_URL = process.env.FRONTEND_POST_LOGIN_URL || '/';
-const EMBEDDED_AUTH_HASH_PARAM =
-  process.env.EMBEDDED_AUTH_HASH_PARAM || 'session_token';
 
 const OAUTH_BUTTON_STATE_COOKIE = 'feishu_oauth_state';
 const OAUTH_QR_STATE_COOKIE = 'feishu_qr_state';
@@ -43,22 +41,26 @@ const QR_REDIRECT_URI = REDIRECT_URI.replace(/\/callback$/, '/qr-callback');
 // Helpers
 // ---------------------------------------------------------------------------
 
-function appendHashParamToUrl(baseUrl: string, key: string, value: string): string {
-  const hashIndex = baseUrl.indexOf('#');
-  const beforeHash = hashIndex >= 0 ? baseUrl.slice(0, hashIndex) : baseUrl;
-  const rawHash = hashIndex >= 0 ? baseUrl.slice(hashIndex + 1) : '';
-  const hashParams = new URLSearchParams(rawHash);
-  hashParams.set(key, value);
-  const nextHash = hashParams.toString();
-  return nextHash ? `${beforeHash}#${nextHash}` : beforeHash;
-}
-
 function extractOAuthTokenData(body: Record<string, unknown>): Record<string, unknown> {
   const payload = body.data;
   if (payload && typeof payload === 'object') {
     return payload as Record<string, unknown>;
   }
   return body;
+}
+
+function safeOAuthErrorMessage(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const body = error.response?.data as { code?: unknown; msg?: unknown; message?: unknown } | undefined;
+    const code = body?.code !== undefined ? `[code=${String(body.code)}] ` : '';
+    const msg = String(body?.msg || body?.message || error.message || 'request failed');
+    const status = error.response?.status ? `HTTP ${error.response.status} ` : '';
+    return `${status}${code}${msg}`.trim();
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
 }
 
 type FeishuOAuthTokens = {
@@ -157,9 +159,7 @@ async function finalizeFeishuLogin(
     path: '/',
   });
 
-  response.redirect(
-    appendHashParamToUrl(FRONTEND_POST_LOGIN_URL, EMBEDDED_AUTH_HASH_PARAM, sessionToken),
-  );
+  response.redirect(FRONTEND_POST_LOGIN_URL);
 }
 
 // ---------------------------------------------------------------------------
@@ -253,10 +253,10 @@ export function registerOAuthRoutes(app: express.Express): void {
       });
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.error('Feishu OAuth callback error:', error);
+      console.error('Feishu OAuth callback error:', safeOAuthErrorMessage(error));
       response.status(500).json({
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: '飞书登录失败，请稍后重试。',
       });
     }
   });
@@ -314,10 +314,10 @@ export function registerOAuthRoutes(app: express.Express): void {
       await finalizeFeishuLogin(response, tokens);
     } catch (error) {
       // eslint-disable-next-line no-console
-      console.error('Feishu QR callback error:', error);
+      console.error('Feishu QR callback error:', safeOAuthErrorMessage(error));
       response.status(500).json({
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: '飞书扫码登录失败，请稍后重试。',
       });
     }
   });

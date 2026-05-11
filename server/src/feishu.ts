@@ -1,9 +1,50 @@
 import axios, { AxiosError, AxiosInstance, Method } from 'axios';
 import FormData from 'form-data';
+import type { LookupAddress } from 'node:dns';
+import dns from 'node:dns/promises';
+import https from 'node:https';
+import net, { type LookupFunction } from 'node:net';
+import sharp from 'sharp';
 
 const FEISHU_OPEN_API = 'https://open.feishu.cn/open-apis';
 const RETRYABLE_HTTP_STATUS = new Set([408, 429, 500, 502, 503, 504]);
 const RETRYABLE_FEISHU_CODES = new Set([99991400, 1061045, 1063006, 1254290, 1254291]);
+const MAX_IMAGE_DOWNLOAD_BYTES = 20 * 1024 * 1024;
+const MAX_IMAGE_DOWNLOAD_REDIRECTS = 3;
+const MAX_IMAGE_INPUT_PIXELS = 36_000_000;
+const ALLOWED_UPLOAD_IMAGE_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+]);
+const ALLOWED_DECODED_IMAGE_FORMATS = new Set([
+  'png',
+  'jpeg',
+  'webp',
+  'gif',
+]);
+const DEFAULT_IMAGE_DOWNLOAD_ALLOWED_HOSTS = [
+  'feishu.cn',
+  'feishuapp.cn',
+  'feishucdn.com',
+  'larksuite.com',
+  'larksuitecdn.com',
+  'larkoffice.com',
+  'bytecdn.cn',
+  'bytegoofy.com',
+  'byteimg.com',
+  'byteoversea.com',
+  'bytescm.com',
+  'bytedance.net',
+  'pstatp.com',
+];
+const IMAGE_DOWNLOAD_ALLOWED_HOSTS = (
+  process.env.FEISHU_IMAGE_DOWNLOAD_ALLOWED_HOSTS || DEFAULT_IMAGE_DOWNLOAD_ALLOWED_HOSTS.join(',')
+)
+  .split(',')
+  .map((host) => host.trim().toLowerCase().replace(/^\./, '').replace(/\.$/, ''))
+  .filter(Boolean);
 const UPDATABLE_TEXT_KEYS = new Set([
   'page',
   'text',
@@ -23,7 +64,7 @@ const UPDATABLE_TEXT_KEYS = new Set([
   'todo'
 ]);
 
-type PermissionMode = 'internet_readable' | 'internet_editable' | 'tenant_readable' | 'tenant_editable' | 'closed';
+type PermissionMode = 'tenant_readable' | 'tenant_editable' | 'closed';
 type OwnerMemberType = 'userid' | 'openid' | 'email';
 
 interface FeishuEnvelope<T = unknown> {
@@ -176,6 +217,11 @@ interface SearchUsersPage {
   page_token?: string;
 }
 
+interface VerifiedImageDownloadTarget {
+  url: URL;
+  lookup: LookupFunction;
+}
+
 interface FeishuClientOptions {
   appId: string;
   appSecret: string;
@@ -236,6 +282,199 @@ function isRetryableError(error: unknown): boolean {
 function sanitizeTitle(title: string): string {
   const cleaned = title.replace(/[\\/:*?"<>|\[\]]/g, '-').replace(/\s+/g, ' ').trim();
   return cleaned.slice(0, 180) || '文档副本';
+}
+
+function ipv4ToNumber(address: string): number {
+  return address
+    .split('.')
+    .reduce((acc, item) => (acc << 8) + Number(item), 0) >>> 0;
+}
+
+function isIpv4InRange(address: string, base: string, bits: number): boolean {
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return (ipv4ToNumber(address) & mask) === (ipv4ToNumber(base) & mask);
+}
+
+function isBlockedIpAddress(address: string): boolean {
+  const family = net.isIP(address);
+  if (family === 4) {
+    return [
+      ['0.0.0.0', 8],
+      ['10.0.0.0', 8],
+      ['100.64.0.0', 10],
+      ['127.0.0.0', 8],
+      ['169.254.0.0', 16],
+      ['172.16.0.0', 12],
+      ['192.0.0.0', 24],
+      ['192.0.2.0', 24],
+      ['192.168.0.0', 16],
+      ['198.18.0.0', 15],
+      ['198.51.100.0', 24],
+      ['203.0.113.0', 24],
+      ['224.0.0.0', 4],
+      ['240.0.0.0', 4],
+    ].some(([base, bits]) => isIpv4InRange(address, String(base), Number(bits)));
+  }
+
+  if (family === 6) {
+    const normalized = address.toLowerCase();
+    if (normalized.startsWith('::ffff:')) {
+      const mapped = normalized.slice('::ffff:'.length);
+      if (net.isIP(mapped) === 4) {
+        return isBlockedIpAddress(mapped);
+      }
+      const parts = mapped.split(':');
+      if (parts.length === 2 && parts.every((part) => /^[0-9a-f]{1,4}$/i.test(part))) {
+        const first = Number.parseInt(parts[0], 16);
+        const second = Number.parseInt(parts[1], 16);
+        if (Number.isFinite(first) && Number.isFinite(second)) {
+          return isBlockedIpAddress(
+            [
+              (first >> 8) & 0xff,
+              first & 0xff,
+              (second >> 8) & 0xff,
+              second & 0xff,
+            ].join('.'),
+          );
+        }
+      }
+    }
+    return (
+      normalized === '::' ||
+      normalized === '::1' ||
+      normalized.startsWith('fc') ||
+      normalized.startsWith('fd') ||
+      /^fe[89ab][0-9a-f]?:/i.test(normalized) ||
+      normalized.startsWith('ff') ||
+      normalized.startsWith('2001:db8:')
+    );
+  }
+
+  return true;
+}
+
+function isAllowedImageHost(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/\.$/, '');
+  return IMAGE_DOWNLOAD_ALLOWED_HOSTS.some(
+    (allowed) => normalized === allowed || normalized.endsWith(`.${allowed}`),
+  );
+}
+
+function buildPinnedLookup(expectedHostname: string, addresses: LookupAddress[]): LookupFunction {
+  const normalizedHost = expectedHostname.toLowerCase().replace(/\.$/, '');
+  return ((hostname: string, options: unknown, callback?: unknown) => {
+    const cb = typeof options === 'function' ? options : callback;
+    if (typeof cb !== 'function') {
+      throw new Error('lookup callback is required');
+    }
+
+    if (hostname.toLowerCase().replace(/\.$/, '') !== normalizedHost) {
+      cb(new Error('图片下载域名与校验域名不一致。'));
+      return;
+    }
+
+    const opts = typeof options === 'object' && options !== null ? options as { family?: number; all?: boolean } : {};
+    const requestedFamily = typeof options === 'number' ? options : opts.family || 0;
+    const candidates = requestedFamily
+      ? addresses.filter((item) => item.family === requestedFamily)
+      : addresses;
+
+    if (candidates.length === 0) {
+      cb(new Error('图片链接没有可用的已校验解析地址。'));
+      return;
+    }
+
+    if (opts.all) {
+      cb(null, candidates);
+      return;
+    }
+
+    cb(null, candidates[0].address, candidates[0].family);
+  }) as LookupFunction;
+}
+
+async function validateImageDownloadUrl(rawUrl: string): Promise<VerifiedImageDownloadTarget> {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error('图片链接格式不合法。');
+  }
+
+  if (url.protocol !== 'https:') {
+    throw new Error('图片链接只允许 HTTPS。');
+  }
+  if (url.username || url.password) {
+    throw new Error('图片链接不能包含用户名或密码。');
+  }
+  if (!isAllowedImageHost(url.hostname)) {
+    throw new Error(`图片链接域名不在允许范围内：${url.hostname}`);
+  }
+
+  const literalIpFamily = net.isIP(url.hostname);
+  if (literalIpFamily) {
+    if (isBlockedIpAddress(url.hostname)) {
+      throw new Error('图片链接不能指向内网或保留 IP。');
+    }
+    return {
+      url,
+      lookup: buildPinnedLookup(url.hostname, [{ address: url.hostname, family: literalIpFamily as 4 | 6 }]),
+    };
+  }
+
+  const addresses = await dns.lookup(url.hostname, { all: true });
+  if (addresses.length === 0) {
+    throw new Error('图片链接域名解析失败。');
+  }
+  for (const item of addresses) {
+    if (isBlockedIpAddress(item.address)) {
+      throw new Error('图片链接域名解析到内网或保留 IP。');
+    }
+  }
+
+  return {
+    url,
+    lookup: buildPinnedLookup(url.hostname, addresses),
+  };
+}
+
+function normalizeContentType(contentType: unknown): string {
+  const raw = Array.isArray(contentType) ? contentType[0] : contentType;
+  return String(raw || 'image/png').split(';')[0].trim().toLowerCase();
+}
+
+function imageFormatToUploadInfo(format: string | undefined): { contentType: string; extension: string } {
+  const normalized = String(format || '').toLowerCase();
+  if (!ALLOWED_DECODED_IMAGE_FORMATS.has(normalized)) {
+    throw new Error('图片真实格式不支持。');
+  }
+  if (normalized === 'jpeg') {
+    return { contentType: 'image/jpeg', extension: 'jpg' };
+  }
+  return { contentType: `image/${normalized}`, extension: normalized };
+}
+
+async function prepareImageForUpload(
+  image: { buffer: Buffer; contentType: string },
+  targetWidth: number,
+): Promise<{ buffer: Buffer; contentType: string; extension: string }> {
+  const width = Number.isFinite(targetWidth) ? Math.max(0, Math.min(2000, Math.floor(targetWidth))) : 0;
+  const metadata = await sharp(image.buffer, { limitInputPixels: MAX_IMAGE_INPUT_PIXELS }).metadata();
+  const uploadInfo = imageFormatToUploadInfo(metadata.format);
+  const original = {
+    buffer: image.buffer,
+    ...uploadInfo,
+  };
+  if (width <= 0) {
+    return original;
+  }
+
+  const resized = await sharp(image.buffer, { limitInputPixels: MAX_IMAGE_INPUT_PIXELS })
+    .rotate()
+    .resize({ width, withoutEnlargement: true })
+    .png()
+    .toBuffer();
+  return { buffer: resized, contentType: 'image/png', extension: 'png' };
 }
 
 function replacePlaceholders(input: string, variables: Record<string, string>): string {
@@ -304,38 +543,140 @@ function getTextElements(block: Record<string, unknown>): unknown[] | null {
   return null;
 }
 
-function replaceElements(elements: unknown[], variables: Record<string, string>): { changed: boolean; elements: unknown[] } {
-  let changed = false;
-  const nextElements = elements.map((element) => {
-    const current = element as Record<string, any>;
-    if (current?.text_run?.content && typeof current.text_run.content === 'string') {
-      const replaced = replacePlaceholders(current.text_run.content, variables);
-      if (replaced !== current.text_run.content) {
-        changed = true;
-        return {
-          ...current,
-          text_run: {
-            ...current.text_run,
-            content: replaced
-          }
-        };
+function hasOwnVariable(variables: Record<string, string>, name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(variables, name);
+}
+
+function replaceKnownPlaceholders(input: string, variables: Record<string, string>): string {
+  return input.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, rawName: string) => {
+    const name = rawName.trim();
+    return hasOwnVariable(variables, name) ? variables[name] ?? '' : match;
+  });
+}
+
+function isTextRunElement(element: unknown): element is Record<string, any> & { text_run: { content: string } } {
+  const current = element as Record<string, any>;
+  return typeof current?.text_run?.content === 'string';
+}
+
+function cloneTextRunElement(element: Record<string, any>, content: string): Record<string, any> {
+  return {
+    ...element,
+    text_run: {
+      ...element.text_run,
+      content,
+    },
+  };
+}
+
+function replaceTextRunGroup(
+  group: Array<Record<string, any> & { text_run: { content: string } }>,
+  variables: Record<string, string>,
+): { changed: boolean; elements: unknown[] } {
+  const segments = group.map((element, index) => ({
+    element,
+    index,
+    content: element.text_run.content,
+    start: 0,
+    end: 0,
+  }));
+
+  let cursor = 0;
+  for (const segment of segments) {
+    segment.start = cursor;
+    cursor += segment.content.length;
+    segment.end = cursor;
+  }
+
+  const combined = segments.map((segment) => segment.content).join('');
+  const output: unknown[] = [];
+  const appendOriginalRange = (start: number, end: number) => {
+    if (end <= start) return;
+    for (const segment of segments) {
+      const from = Math.max(start, segment.start);
+      const to = Math.min(end, segment.end);
+      if (to <= from) continue;
+      const content = segment.content.slice(from - segment.start, to - segment.start);
+      if (content) {
+        output.push(cloneTextRunElement(segment.element, content));
       }
     }
+  };
+
+  const findSourceElement = (offset: number): Record<string, any> => {
+    return segments.find((segment) => offset >= segment.start && offset < segment.end)?.element ?? group[0];
+  };
+
+  let changed = false;
+  let lastIndex = 0;
+  const pattern = /\{\{\s*([^{}]+?)\s*\}\}/g;
+  let match: RegExpExecArray | null = null;
+  while ((match = pattern.exec(combined)) !== null) {
+    const name = match[1]?.trim() || '';
+    if (!hasOwnVariable(variables, name)) {
+      continue;
+    }
+
+    changed = true;
+    appendOriginalRange(lastIndex, match.index);
+    const replacement = variables[name] ?? '';
+    if (replacement) {
+      output.push(cloneTextRunElement(findSourceElement(match.index), replacement));
+    }
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (!changed) {
+    return { changed: false, elements: group };
+  }
+
+  appendOriginalRange(lastIndex, combined.length);
+  if (output.length === 0) {
+    output.push(cloneTextRunElement(group[0], ''));
+  }
+  return { changed: true, elements: output };
+}
+
+function replaceElements(elements: unknown[], variables: Record<string, string>): { changed: boolean; elements: unknown[] } {
+  let changed = false;
+  const nextElements: unknown[] = [];
+  let textRunGroup: Array<Record<string, any> & { text_run: { content: string } }> = [];
+
+  const flushTextRunGroup = () => {
+    if (textRunGroup.length === 0) return;
+    const replaced = replaceTextRunGroup(textRunGroup, variables);
+    if (replaced.changed) {
+      changed = true;
+    }
+    nextElements.push(...replaced.elements);
+    textRunGroup = [];
+  };
+
+  for (const element of elements) {
+    const current = element as Record<string, any>;
+    if (isTextRunElement(current)) {
+      textRunGroup.push(current);
+      continue;
+    }
     if (current?.equation?.content && typeof current.equation.content === 'string') {
-      const replaced = replacePlaceholders(current.equation.content, variables);
+      flushTextRunGroup();
+      const replaced = replaceKnownPlaceholders(current.equation.content, variables);
       if (replaced !== current.equation.content) {
         changed = true;
-        return {
+        nextElements.push({
           ...current,
           equation: {
             ...current.equation,
             content: replaced
           }
-        };
+        });
+        continue;
       }
     }
-    return current;
-  });
+    flushTextRunGroup();
+    nextElements.push(current);
+  }
+  flushTextRunGroup();
   return { changed, elements: nextElements };
 }
 
@@ -534,15 +875,39 @@ export class FeishuTemplateService {
     return requests.length;
   }
 
-  private async downloadImage(url: string): Promise<{ buffer: Buffer; contentType: string }> {
-    const response = await axios.get(url, {
+  private async downloadImage(url: string, redirectCount = 0): Promise<{ buffer: Buffer; contentType: string }> {
+    const target = await validateImageDownloadUrl(url);
+    const response = await axios.get(target.url.toString(), {
       responseType: 'arraybuffer',
       timeout: 30000,
-      maxContentLength: 20 * 1024 * 1024
+      maxContentLength: MAX_IMAGE_DOWNLOAD_BYTES,
+      maxBodyLength: MAX_IMAGE_DOWNLOAD_BYTES,
+      maxRedirects: 0,
+      proxy: false,
+      httpsAgent: new https.Agent({ lookup: target.lookup }),
+      validateStatus: (status) => (status >= 200 && status < 300) || (status >= 300 && status < 400),
     });
+
+    if (response.status >= 300 && response.status < 400) {
+      if (redirectCount >= MAX_IMAGE_DOWNLOAD_REDIRECTS) {
+        throw new Error('图片下载重定向次数过多。');
+      }
+      const location = response.headers.location;
+      if (!location) {
+        throw new Error('图片下载重定向缺少 Location。');
+      }
+      const redirectUrl = new URL(String(location), target.url);
+      return this.downloadImage(redirectUrl.toString(), redirectCount + 1);
+    }
+
+    const contentType = normalizeContentType(response.headers['content-type']);
+    if (!ALLOWED_UPLOAD_IMAGE_TYPES.has(contentType)) {
+      throw new Error(`图片链接返回的格式不支持：${contentType || 'unknown'}`);
+    }
+
     return {
       buffer: Buffer.from(response.data),
-      contentType: (response.headers['content-type'] as string) || 'image/png'
+      contentType
     };
   }
 
@@ -551,7 +916,8 @@ export class FeishuTemplateService {
     parentBlockId: string,
     insertIndex: number,
     imageBuffer: Buffer,
-    fileName: string
+    fileName: string,
+    contentType: string
   ): Promise<string> {
     const token = await this.getTenantAccessToken();
 
@@ -570,7 +936,7 @@ export class FeishuTemplateService {
     form.append('parent_type', 'docx_image');
     form.append('parent_node', imageBlockId);
     form.append('size', String(imageBuffer.length));
-    form.append('file', imageBuffer, { filename: fileName, contentType: 'image/png' });
+    form.append('file', imageBuffer, { filename: fileName, contentType });
 
     const uploadResponse = await this.client.post<{ code: number; data?: { file_token?: string }; msg?: string }>(
       '/drive/v1/medias/upload_all',
@@ -581,6 +947,7 @@ export class FeishuTemplateService {
           ...form.getHeaders()
         },
         maxContentLength: 25 * 1024 * 1024,
+        maxBodyLength: 25 * 1024 * 1024,
         timeout: 60000
       }
     );
@@ -600,95 +967,138 @@ export class FeishuTemplateService {
   private async replaceImageVariablesInDocument(
     documentId: string,
     imageVariables: Record<string, { urls: string[]; width: number }>
-  ): Promise<number> {
+  ): Promise<{ insertedCount: number; warnings: string[] }> {
     const variableNames = Object.keys(imageVariables);
     if (variableNames.length === 0) {
-      return 0;
+      return { insertedCount: 0, warnings: [] };
     }
 
-    const blocks = await this.listAllBlocks(documentId);
+    let blocks = await this.listAllBlocks(documentId);
     let insertedCount = 0;
+    const warnings: string[] = [];
 
     for (const varName of variableNames) {
       const imageInfo = imageVariables[varName];
       if (!imageInfo.urls.length) continue;
 
-      const placeholderLoose = new RegExp(`\\{\\{\\s*${escapeRegExp(varName)}\\s*\\}\\}`, 'g');
+      let matchedAny = false;
+      let processedMatches = 0;
+      const maxMatchesPerVariable = 20;
 
-      for (const block of blocks) {
-        const blockId = block.block_id as string | undefined;
-        const parentId = block.parent_id as string | undefined;
-        if (!blockId || !parentId) continue;
+      while (processedMatches < maxMatchesPerVariable) {
+        const placeholderPattern = new RegExp(`\\{\\{\\s*${escapeRegExp(varName)}\\s*\\}\\}`);
+        let matchedBlock: { block: Record<string, unknown>; blockId: string; parentId: string; elements: unknown[] } | null = null;
 
-        const elements = getTextElements(block);
-        if (!elements) continue;
+        for (const block of blocks) {
+          const blockId = block.block_id as string | undefined;
+          const parentId = block.parent_id as string | undefined;
+          if (!blockId || !parentId) continue;
 
-        const blockText = elements
-          .map((el: any) => el?.text_run?.content || '')
-          .join('');
+          const elements = getTextElements(block);
+          if (!elements) continue;
 
-        if (!placeholderLoose.test(blockText)) continue;
-        placeholderLoose.lastIndex = 0;
+          const blockText = elements
+            .map((el: any) => el?.text_run?.content || '')
+            .join('');
 
+          if (placeholderPattern.test(blockText)) {
+            matchedBlock = { block, blockId, parentId, elements };
+            break;
+          }
+        }
+
+        if (!matchedBlock) {
+          break;
+        }
+
+        matchedAny = true;
+        processedMatches++;
+
+        const { blockId, parentId, elements } = matchedBlock;
         const parentBlock = blocks.find((b) => (b.block_id as string) === parentId);
         const parentChildren = (parentBlock?.children as string[]) || [];
         const blockIndex = parentChildren.indexOf(blockId);
         const insertAt = blockIndex >= 0 ? blockIndex : -1;
+        let insertedForBlock = 0;
 
         for (let i = 0; i < imageInfo.urls.length; i++) {
           try {
-            const { buffer } = await this.downloadImage(imageInfo.urls[i]);
-            const ext = imageInfo.urls[i].match(/\.(png|jpg|jpeg|gif|webp|bmp)/i)?.[1] || 'png';
-            const fileName = `${varName}_${i + 1}.${ext}`;
+            const image = await this.downloadImage(imageInfo.urls[i]);
+            const prepared = await prepareImageForUpload(image, imageInfo.width);
+            const fileName = `${sanitizeTitle(varName)}_${i + 1}.${prepared.extension}`;
             await this.uploadImageToDocxBlock(
               documentId,
               parentId,
               insertAt >= 0 ? insertAt + 1 + i : -1,
-              buffer,
-              fileName
+              prepared.buffer,
+              fileName,
+              prepared.contentType
             );
             insertedCount++;
+            insertedForBlock++;
           } catch (error) {
-            console.error(`插入图片失败 (${varName}[${i}]):`, error);
+            logInternalError(`image-insert variable=${varName} index=${i + 1}`, error);
+            warnings.push(`变量「${varName}」第 ${i + 1} 张图片插入失败，请检查图片是否可访问或格式是否支持。`);
           }
         }
 
-        try {
-          await this.request('DELETE', `/docx/v1/documents/${documentId}/blocks/${parentId}/children/batch_delete`, {
-            data: { start_index: blockIndex, end_index: blockIndex + 1 }
-          });
-        } catch {
-          const emptyElements = elements.map((el: any) => {
-            if (el?.text_run?.content) {
-              return { ...el, text_run: { ...el.text_run, content: el.text_run.content.replace(placeholderLoose, '') } };
-            }
-            return el;
-          });
-          await this.request('PATCH', `/docx/v1/documents/${documentId}/blocks/batch_update`, {
-            data: { requests: [{ block_id: blockId, update_text_elements: { elements: emptyElements } }] }
-          }).catch(() => {});
+        if (insertedForBlock === 0) {
+          warnings.push(`变量「${varName}」没有成功插入图片，已保留原占位符。`);
+          break;
         }
 
-        break;
+        if (blockIndex >= 0) {
+          try {
+            await this.request('DELETE', `/docx/v1/documents/${documentId}/blocks/${parentId}/children/batch_delete`, {
+              data: { start_index: blockIndex, end_index: blockIndex + 1 }
+            });
+          } catch (deleteError) {
+            logInternalError(`image-placeholder-delete variable=${varName}`, deleteError);
+            warnings.push(`变量「${varName}」图片已插入，但原占位块未能自动删除。`);
+            const replaced = replaceElements(elements, { [varName]: '' });
+            if (replaced.changed) {
+              try {
+                await this.request('PATCH', `/docx/v1/documents/${documentId}/blocks/batch_update`, {
+                  data: { requests: [{ block_id: blockId, update_text_elements: { elements: replaced.elements } }] }
+                });
+              } catch (patchError) {
+                logInternalError(`image-placeholder-patch variable=${varName}`, patchError);
+                warnings.push(`变量「${varName}」原占位符清理失败。`);
+              }
+            }
+          }
+        } else {
+          const replaced = replaceElements(elements, { [varName]: '' });
+          if (replaced.changed) {
+            try {
+              await this.request('PATCH', `/docx/v1/documents/${documentId}/blocks/batch_update`, {
+                data: { requests: [{ block_id: blockId, update_text_elements: { elements: replaced.elements } }] }
+              });
+            } catch (patchError) {
+              logInternalError(`image-placeholder-patch variable=${varName}`, patchError);
+              warnings.push(`变量「${varName}」原占位符清理失败。`);
+            }
+          }
+        }
+
+        blocks = await this.listAllBlocks(documentId);
+      }
+
+      if (!matchedAny) {
+        warnings.push(`变量「${varName}」未找到图片占位符，已跳过图片插入。`);
+      } else if (processedMatches >= maxMatchesPerVariable) {
+        warnings.push(`变量「${varName}」图片占位符数量过多，已停止继续处理。`);
       }
     }
 
-    return insertedCount;
+    return { insertedCount, warnings };
   }
 
   private async updateDocumentPermission(documentId: string, permissionMode: PermissionMode): Promise<void> {
     let externalAccessEntity: 'open' | 'closed' = 'closed';
-    let linkShareEntity: 'anyone_readable' | 'anyone_editable' | 'tenant_readable' | 'tenant_editable' | 'closed' = 'closed';
+    let linkShareEntity: 'tenant_readable' | 'tenant_editable' | 'closed' = 'closed';
 
     switch (permissionMode) {
-      case 'internet_readable':
-        externalAccessEntity = 'open';
-        linkShareEntity = 'anyone_readable';
-        break;
-      case 'internet_editable':
-        externalAccessEntity = 'open';
-        linkShareEntity = 'anyone_editable';
-        break;
       case 'tenant_readable':
         externalAccessEntity = 'closed';
         linkShareEntity = 'tenant_readable';
@@ -938,7 +1348,7 @@ export class FeishuTemplateService {
   // Pre-warms the cache asynchronously so the first user query doesn't hang
   public prewarmDirectoryCache() {
     if (!this.userDirectoryCache || this.userDirectoryCache.expiresAt < Date.now()) {
-      this.getDirectoryUsers().catch(err => console.error("Failed to prewarm user cache:", err));
+      this.getDirectoryUsers().catch(err => console.error("Failed to prewarm user cache:", toErrorMessage(err)));
     }
   }
 
@@ -1039,23 +1449,28 @@ export class FeishuTemplateService {
         let insertedImages = 0;
         if (record.imageVariables && Object.keys(record.imageVariables).length > 0) {
           try {
-            insertedImages = await this.replaceImageVariablesInDocument(copied.token, record.imageVariables);
+            const imageResult = await this.replaceImageVariablesInDocument(copied.token, record.imageVariables);
+            insertedImages = imageResult.insertedCount;
+            warnings.push(...imageResult.warnings);
           } catch (error) {
-            warnings.push(`图片插入部分失败：${toErrorMessage(error)}`);
+            logInternalError(`image-replace record=${record.recordId}`, error);
+            warnings.push('图片插入部分失败，请检查图片是否可访问或格式是否支持。');
           }
         }
 
         try {
           await this.updateDocumentPermission(copied.token, input.permissionMode);
         } catch (error) {
-          warnings.push(`权限设置失败：${toErrorMessage(error)}`);
+          logInternalError(`permission-update document=${copied.token}`, error);
+          warnings.push('权限设置失败，请稍后重试或联系管理员。');
         }
 
         if (input.ownerTransfer?.memberId) {
           try {
             await this.transferDocumentOwner(copied.token, input.ownerTransfer);
           } catch (error) {
-            warnings.push(`所有者转交失败：${toErrorMessage(error)}`);
+            logInternalError(`owner-transfer document=${copied.token}`, error);
+            warnings.push('所有者转交失败，请稍后重试或联系管理员。');
           }
         }
 
@@ -1063,7 +1478,8 @@ export class FeishuTemplateService {
           try {
             await this.addDocumentCollaborators(copied.token, input.collaborators);
           } catch (error) {
-            warnings.push(`协作者权限设置失败：${toErrorMessage(error)}`);
+            logInternalError(`collaborator-permission document=${copied.token}`, error);
+            warnings.push('协作者权限设置失败，请稍后重试或联系管理员。');
           }
         }
 
@@ -1077,10 +1493,11 @@ export class FeishuTemplateService {
           warnings
         });
       } catch (error) {
+        logInternalError(`generate-record record=${record.recordId}`, error);
         results.push({
           recordId: record.recordId,
           status: 'failed',
-          error: toErrorMessage(error),
+          error: '生成失败，请稍后重试。',
           warnings
         });
       }
@@ -1102,4 +1519,15 @@ function toErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function logInternalError(context: string, error: unknown): void {
+  // eslint-disable-next-line no-console
+  console.error(`[${context}]`, toErrorMessage(error));
+}
+
 export type { CollaboratorInput, GenerateInput, GenerateResult, OwnerMemberType, OwnerTransferInput, PermissionMode, SearchUserResult };
+
+export const __test__ = {
+  isBlockedIpAddress,
+  isAllowedImageHost,
+  replaceElements,
+};

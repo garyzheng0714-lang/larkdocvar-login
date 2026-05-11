@@ -1,5 +1,5 @@
 import axios from 'axios';
-import cors from 'cors';
+import cors, { CorsOptions } from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
 import { existsSync } from 'node:fs';
@@ -31,6 +31,9 @@ const host = process.env.HOST || '0.0.0.0';
 
 const appId = process.env.FEISHU_APP_ID || '';
 const appSecret = process.env.FEISHU_APP_SECRET || '';
+const GENERATE_RECORD_BATCH_LIMIT = 10;
+const GENERATE_IMAGE_URL_LIMIT_PER_VARIABLE = 5;
+const INTERNAL_ERROR_MESSAGE = '服务暂时不可用，请稍后重试。';
 
 // ---------------------------------------------------------------------------
 // Feishu OAuth2 configuration
@@ -52,6 +55,97 @@ const feishuService = hasCredential
       appSecret
     })
   : null;
+
+function buildAllowedCorsOrigins(): Set<string> {
+  const origins = new Set(
+    (process.env.CORS_ALLOWED_ORIGINS || '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  );
+
+  const postLoginUrl = process.env.FRONTEND_POST_LOGIN_URL || '';
+  try {
+    if (postLoginUrl.startsWith('http://') || postLoginUrl.startsWith('https://')) {
+      origins.add(new URL(postLoginUrl).origin);
+    }
+  } catch {
+    // Ignore invalid optional frontend URLs; same-origin requests do not need CORS.
+  }
+
+  if (process.env.NODE_ENV !== 'production') {
+    origins.add('http://localhost:5173');
+    origins.add('http://127.0.0.1:5173');
+  }
+
+  return origins;
+}
+
+const corsAllowedOrigins = buildAllowedCorsOrigins();
+const corsOptions: CorsOptions = {
+  credentials: true,
+  origin(origin, callback) {
+    if (!origin || corsAllowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(null, false);
+  },
+};
+
+function getRequestOrigin(request: express.Request): string {
+  const forwardedProto = String(request.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const forwardedHost = String(request.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const protocol = forwardedProto || request.protocol || 'http';
+  const host = forwardedHost || request.headers.host || '';
+  return host ? `${protocol}://${host}` : '';
+}
+
+function isAllowedBrowserOrigin(origin: string, request: express.Request): boolean {
+  return corsAllowedOrigins.has(origin) || origin === getRequestOrigin(request);
+}
+
+function enforceMutationOrigin(request: express.Request, response: express.Response, next: express.NextFunction): void {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+    next();
+    return;
+  }
+
+  const origin = typeof request.headers.origin === 'string' ? request.headers.origin : '';
+  if (origin) {
+    if (!isAllowedBrowserOrigin(origin, request)) {
+      response.status(403).json({ ok: false, error: '请求来源不被允许。' });
+      return;
+    }
+    next();
+    return;
+  }
+
+  const referer = typeof request.headers.referer === 'string' ? request.headers.referer : '';
+  if (!referer) {
+    response.status(403).json({ ok: false, error: '请求来源不被允许。' });
+    return;
+  }
+
+  try {
+    const refererOrigin = new URL(referer).origin;
+    if (!isAllowedBrowserOrigin(refererOrigin, request)) {
+      response.status(403).json({ ok: false, error: '请求来源不被允许。' });
+      return;
+    }
+  } catch {
+    response.status(403).json({ ok: false, error: '请求来源不被允许。' });
+    return;
+  }
+
+  next();
+}
+
+function sendInternalError(response: express.Response, context: string, error: unknown): void {
+  // eslint-disable-next-line no-console
+  console.error(`[${context}]`, error instanceof Error ? error.message : String(error));
+  response.status(500).json({ ok: false, error: INTERNAL_ERROR_MESSAGE });
+}
 
 function parsePayload(payloadJson: string): Record<string, unknown> {
   try {
@@ -137,7 +231,7 @@ const generateSchema = z.object({
         imageVariables: z.record(
           z.string(),
           z.object({
-            urls: z.array(z.string().min(1)).min(1),
+            urls: z.array(z.string().min(1)).min(1).max(GENERATE_IMAGE_URL_LIMIT_PER_VARIABLE),
             width: z.number().int().min(0).max(2000).default(400)
           })
         ).optional(),
@@ -145,10 +239,10 @@ const generateSchema = z.object({
       })
     )
     .min(1)
-    .max(200),
+    .max(GENERATE_RECORD_BATCH_LIMIT),
   options: z
     .object({
-      permissionMode: z.enum(['internet_readable', 'internet_editable', 'tenant_readable', 'tenant_editable', 'closed']).optional(),
+      permissionMode: z.enum(['tenant_readable', 'tenant_editable', 'closed']).optional(),
       ownerTransfer: z
         .object({
           memberType: z.enum(['userid', 'openid', 'email']),
@@ -159,6 +253,7 @@ const generateSchema = z.object({
           oldOwnerPerm: z.enum(['view', 'edit', 'full_access']).optional()
         })
         .optional(),
+      ownerTransferEnabled: z.boolean().optional(),
       collaborators: z.array(
         z.object({
           memberType: z.enum(['openid', 'email', 'userid']),
@@ -175,7 +270,8 @@ const saveConfigSchema = z.object({
   payload: z.record(z.string(), z.unknown()),
 });
 
-app.use(cors());
+app.use(cors(corsOptions));
+app.use(enforceMutationOrigin);
 app.use(express.json({ limit: '2mb' }));
 
 function extractDocumentIdFromUrl(input: string): string {
@@ -191,38 +287,66 @@ function extractDocumentIdFromUrl(input: string): string {
   return '';
 }
 
-async function extractTemplateVariablesByUserToken(templateUrl: string, userAccessToken: string): Promise<{ documentId: string; templateTitle: string; variables: string[]; }> {
+class TemplateReadAccessError extends Error {
+  constructor() {
+    super('当前账号无权读取模板文档，或模板链接无效。');
+  }
+}
+
+function throwIfFeishuReadDenied(body: { code?: number; msg?: string }): void {
+  if (typeof body.code === 'number' && body.code !== 0) {
+    throw new TemplateReadAccessError();
+  }
+}
+
+async function readTemplateByUserToken(templateUrl: string, userAccessToken: string): Promise<{ documentId: string; templateTitle: string; content: string }> {
   const documentId = extractDocumentIdFromUrl(templateUrl);
   if (!documentId) {
-    throw new Error('无法从模板链接中解析 document_id，请确认链接格式。');
+    throw new TemplateReadAccessError();
   }
 
-  const [docInfoResp, rawResp] = await Promise.all([
-    axios.get(`https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}`, {
-      headers: { Authorization: `Bearer ${userAccessToken}` },
-    }),
-    axios.get(`https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/raw_content`, {
-      headers: { Authorization: `Bearer ${userAccessToken}` },
-    }),
-  ]);
+  try {
+    const [docInfoResp, rawResp] = await Promise.all([
+      axios.get(`https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}`, {
+        headers: { Authorization: `Bearer ${userAccessToken}` },
+        timeout: 20000,
+      }),
+      axios.get(`https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/raw_content`, {
+        headers: { Authorization: `Bearer ${userAccessToken}` },
+        timeout: 20000,
+      }),
+    ]);
 
-  const docInfoBody = docInfoResp.data as { code?: number; msg?: string; data?: { document?: { title?: string } } };
-  if (typeof docInfoBody.code === 'number' && docInfoBody.code !== 0) {
-    throw new Error(`读取文档标题失败：[code=${docInfoBody.code}] ${docInfoBody.msg || '未知错误'}`);
+    const docInfoBody = docInfoResp.data as { code?: number; msg?: string; data?: { document?: { title?: string } } };
+    throwIfFeishuReadDenied(docInfoBody);
+
+    const rawBody = rawResp.data as { code?: number; msg?: string; data?: { content?: string } };
+    throwIfFeishuReadDenied(rawBody);
+
+    return {
+      documentId,
+      templateTitle: docInfoBody.data?.document?.title?.trim() || '模板文档',
+      content: rawBody.data?.content ?? '',
+    };
+  } catch (error) {
+    if (error instanceof TemplateReadAccessError) {
+      throw error;
+    }
+    if (axios.isAxiosError(error)) {
+      throw new TemplateReadAccessError();
+    }
+    throw error;
   }
+}
 
-  const rawBody = rawResp.data as { code?: number; msg?: string; data?: { content?: string } };
-  if (typeof rawBody.code === 'number' && rawBody.code !== 0) {
-    throw new Error(`读取文档内容失败：[code=${rawBody.code}] ${rawBody.msg || '未知错误'}`);
-  }
-
-  const content = rawBody.data?.content ?? '';
+async function extractTemplateVariablesByUserToken(templateUrl: string, userAccessToken: string): Promise<{ documentId: string; templateTitle: string; variables: string[]; }> {
+  const { documentId, templateTitle, content } = await readTemplateByUserToken(templateUrl, userAccessToken);
   const matches = content.match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
   const variables = Array.from(new Set(matches.map((m) => m.replace(/^\{\{\s*/, '').replace(/\s*\}\}$/, '').trim()).filter(Boolean)));
 
   return {
     documentId,
-    templateTitle: docInfoBody.data?.document?.title?.trim() || '模板文档',
+    templateTitle,
     variables,
   };
 }
@@ -238,21 +362,25 @@ registerOAuthRoutes(app);
  * Returns the current login state and user profile from the persisted session.
  */
 app.get('/api/auth/session', async (request, response) => {
-  const peek = await peekSessionForRequest(request);
-  if (!peek) {
-    response.json({ ok: true, loggedIn: false });
-    return;
+  try {
+    const peek = await peekSessionForRequest(request);
+    if (!peek) {
+      response.json({ ok: true, loggedIn: false });
+      return;
+    }
+
+    response.cookie(SESSION_COOKIE_NAME, peek.sessionToken, {
+      httpOnly: true,
+      secure: SESSION_COOKIE_SECURE,
+      sameSite: SESSION_COOKIE_SAMESITE,
+      maxAge: SESSION_MAX_AGE_SECONDS * 1000,
+      path: '/',
+    });
+
+    response.json({ ok: true, loggedIn: true, user: peek.profile });
+  } catch (error) {
+    sendInternalError(response, 'auth-session', error);
   }
-
-  response.cookie(SESSION_COOKIE_NAME, peek.sessionToken, {
-    httpOnly: true,
-    secure: SESSION_COOKIE_SECURE,
-    sameSite: SESSION_COOKIE_SAMESITE,
-    maxAge: SESSION_MAX_AGE_SECONDS * 1000,
-    path: '/',
-  });
-
-  response.json({ ok: true, loggedIn: true, user: peek.profile });
 });
 
 /**
@@ -337,7 +465,7 @@ app.get('/api/configs', async (request, response) => {
       })),
     });
   } catch (error) {
-    response.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    sendInternalError(response, 'list-configs', error);
   }
 });
 
@@ -380,7 +508,72 @@ app.get('/api/templates/saved', async (request, response) => {
     }));
     response.json({ ok: true, templates });
   } catch (error) {
-    response.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    sendInternalError(response, 'list-saved-templates', error);
+  }
+});
+
+app.get('/api/configs/auto', async (request, response) => {
+  const ctx = await requireAuth(request, response);
+  if (!ctx) return;
+
+  const templateUrl = String(request.query.templateUrl || '').trim();
+  const tableId = String(request.query.tableId || '').trim();
+  const docId = extractDocumentIdFromUrl(templateUrl);
+  if (!docId) {
+    response.status(400).json({ ok: false, error: '无效的模板链接。' });
+    return;
+  }
+
+  try {
+    const configName = buildTemplateConfigName(docId, tableId);
+    const row = await getSavedConfigByName(ctx.openId, configName);
+    if (!row) {
+      response.json({ ok: true, found: false });
+      return;
+    }
+    response.json({
+      ok: true,
+      found: true,
+      config: toApiConfig(row),
+    });
+  } catch (error) {
+    sendInternalError(response, 'get-auto-config', error);
+  }
+});
+
+app.post('/api/configs/auto', async (request, response) => {
+  const ctx = await requireAuth(request, response);
+  if (!ctx) return;
+
+  const body = request.body as { templateUrl?: string; tableId?: string; payload?: Record<string, unknown> };
+  const templateUrl = String(body.templateUrl || '').trim();
+  const tableId = String(body.tableId || '').trim();
+  const docId = extractDocumentIdFromUrl(templateUrl);
+  if (!docId) {
+    response.status(400).json({ ok: false, error: '无效的模板链接。' });
+    return;
+  }
+
+  const payload = body.payload || {};
+  const payloadJson = JSON.stringify(payload);
+
+  try {
+    const row = await saveOrUpdateConfig({
+      openId: ctx.openId,
+      configName: buildTemplateConfigName(docId, tableId),
+      payloadJson,
+    });
+    response.json({
+      ok: true,
+      config: {
+        id: row.id,
+        configName: row.config_name,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      },
+    });
+  } catch (error) {
+    sendInternalError(response, 'save-auto-config', error);
   }
 });
 
@@ -406,7 +599,7 @@ app.get('/api/configs/:id', async (request, response) => {
     }
     response.json({ ok: true, config: toApiConfig(row) });
   } catch (error) {
-    response.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    sendInternalError(response, 'get-config', error);
   }
 });
 
@@ -445,72 +638,7 @@ app.post('/api/configs', async (request, response) => {
       },
     });
   } catch (error) {
-    response.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-app.get('/api/configs/auto', async (request, response) => {
-  const ctx = await requireAuth(request, response);
-  if (!ctx) return;
-
-  const templateUrl = String(request.query.templateUrl || '').trim();
-  const tableId = String(request.query.tableId || '').trim();
-  const docId = extractDocumentIdFromUrl(templateUrl);
-  if (!docId) {
-    response.status(400).json({ ok: false, error: '无效的模板链接。' });
-    return;
-  }
-
-  try {
-    const configName = buildTemplateConfigName(docId, tableId);
-    const row = await getSavedConfigByName(ctx.openId, configName);
-    if (!row) {
-      response.json({ ok: true, found: false });
-      return;
-    }
-    response.json({
-      ok: true,
-      found: true,
-      config: toApiConfig(row),
-    });
-  } catch (error) {
-    response.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
-  }
-});
-
-app.post('/api/configs/auto', async (request, response) => {
-  const ctx = await requireAuth(request, response);
-  if (!ctx) return;
-
-  const body = request.body as { templateUrl?: string; tableId?: string; payload?: Record<string, unknown> };
-  const templateUrl = String(body.templateUrl || '').trim();
-  const tableId = String(body.tableId || '').trim();
-  const docId = extractDocumentIdFromUrl(templateUrl);
-  if (!docId) {
-    response.status(400).json({ ok: false, error: '无效的模板链接。' });
-    return;
-  }
-
-  const payload = body.payload || {};
-  const payloadJson = JSON.stringify(payload);
-
-  try {
-    const row = await saveOrUpdateConfig({
-      openId: ctx.openId,
-      configName: buildTemplateConfigName(docId, tableId),
-      payloadJson,
-    });
-    response.json({
-      ok: true,
-      config: {
-        id: row.id,
-        configName: row.config_name,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-      },
-    });
-  } catch (error) {
-    response.status(500).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    sendInternalError(response, 'save-config', error);
   }
 });
 
@@ -547,10 +675,11 @@ app.post('/api/template/variables', async (request, response) => {
       ...result
     });
   } catch (error) {
-    response.status(500).json({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error)
-    });
+    if (error instanceof TemplateReadAccessError) {
+      response.status(403).json({ ok: false, error: error.message });
+      return;
+    }
+    sendInternalError(response, 'extract-template-variables', error);
   }
 });
 
@@ -563,6 +692,9 @@ app.get('/api/users/search', async (request, response) => {
       });
       return;
     }
+    const ctx = await requireAuth(request, response);
+    if (!ctx) return;
+
     const parsed = searchUsersSchema.safeParse({
       q: request.query.q,
       limit: request.query.limit
@@ -582,10 +714,7 @@ app.get('/api/users/search', async (request, response) => {
       users
     });
   } catch (error) {
-    response.status(500).json({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error)
-    });
+    sendInternalError(response, 'search-users', error);
   }
 });
 
@@ -610,18 +739,21 @@ app.post('/api/documents/generate', async (request, response) => {
     const ctx = await requireAuth(request, response);
     if (!ctx) return;
 
+    try {
+      await readTemplateByUserToken(parsed.data.templateUrl, ctx.accessToken);
+    } catch (error) {
+      if (error instanceof TemplateReadAccessError) {
+        response.status(403).json({ ok: false, error: error.message });
+        return;
+      }
+      throw error;
+    }
+
     const payload: GenerateInput = {
       templateUrl: parsed.data.templateUrl,
       records: parsed.data.records,
-      permissionMode: parsed.data.options?.permissionMode ?? 'internet_readable',
-      ownerTransfer: parsed.data.options?.ownerTransfer ?? {
-        memberType: 'openid',
-        memberId: ctx.openId,
-        needNotification: false,
-        removeOldOwner: false,
-        stayPut: false,
-        oldOwnerPerm: 'full_access'
-      },
+      permissionMode: parsed.data.options?.permissionMode ?? 'tenant_readable',
+      ownerTransfer: parsed.data.options?.ownerTransferEnabled === false ? undefined : parsed.data.options?.ownerTransfer,
       collaborators: parsed.data.options?.collaborators
     };
     const results = await feishuService.generateDocuments(payload);
@@ -630,10 +762,7 @@ app.post('/api/documents/generate', async (request, response) => {
       results
     });
   } catch (error) {
-    response.status(500).json({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error)
-    });
+    sendInternalError(response, 'generate-documents', error);
   }
 });
 
@@ -642,8 +771,22 @@ const distDir = path.resolve(serverDir, '../../dist');
 const indexHtml = path.join(distDir, 'index.html');
 
 if (existsSync(indexHtml)) {
-  app.use(express.static(distDir));
+  const assetsDir = path.join(distDir, 'assets');
+  app.use(express.static(distDir, {
+    setHeaders(response, filePath) {
+      if (path.basename(filePath) === 'index.html') {
+        response.setHeader('Cache-Control', 'no-cache');
+        return;
+      }
+      if (filePath.startsWith(`${assetsDir}${path.sep}`)) {
+        response.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        return;
+      }
+      response.setHeader('Cache-Control', 'no-cache');
+    },
+  }));
   app.get(/^\/(?!api(?:\/|$)).*/, (_request, response) => {
+    response.setHeader('Cache-Control', 'no-cache');
     response.sendFile(indexHtml);
   });
 }

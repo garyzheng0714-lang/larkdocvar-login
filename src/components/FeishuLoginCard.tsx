@@ -239,7 +239,7 @@ function QRView({ onSwitchToOAuth }: { onSwitchToOAuth: () => void }) {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error("feishu qr init failed:", err);
-      setErrorMsg((err as Error).message || "QR init failed");
+      setErrorMsg("二维码加载失败，请稍后重试。");
       setStatus("error");
     }
   }, [cleanup]);
@@ -305,7 +305,7 @@ function QRView({ onSwitchToOAuth }: { onSwitchToOAuth: () => void }) {
               textAlign: "center",
             }}
           >
-            {status === "loading" ? "加载二维码中…" : `加载失败：${errorMsg}`}
+            {status === "loading" ? "加载二维码中…" : errorMsg}
             {status === "error" && (
               <button
                 type="button"

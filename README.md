@@ -13,7 +13,7 @@
 
 补充说明（最容易困惑的两点）：
 
-- 文档所有权和默认权限已固定为自动策略，不需要手动配置。
+- 文档所有权和默认权限已固定为自动策略，默认生成后仅租户内可阅读，不需要手动配置。
 - 模板变量提取按“当前登录用户”身份读取模板文档；只要该用户有阅读权限即可，不需要额外把飞书应用加到模板协作者里。
 - 生成流程建议始终按“提取变量 -> 检查映射 -> 开始生成”顺序，避免漏填。
 
@@ -74,6 +74,7 @@ DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/larkdocvar
 - 用户 access_token 到期后会自动使用 refresh_token 刷新，不需要手工重登。
 - 在飞书内嵌 WebView 场景里，7 天通常也是最稳妥的上限。
 - 如需跨站嵌入，可尝试 `SESSION_COOKIE_SAMESITE=none` 且同时启用 `SESSION_COOKIE_SECURE=true`（HTTPS 必须）。
+- 会话只通过 httpOnly Cookie 传递，不会写入 URL 或浏览器本地存储。
 
 模板权限说明（重要）：
 
