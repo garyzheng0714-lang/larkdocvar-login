@@ -81,6 +81,37 @@ interface SavedTemplatesResponse {
   sync?: SyncStatusInfo;
 }
 
+interface ManagedDocxTemplateItem {
+  templateId: string;
+  name: string;
+  status: "active" | "deleted";
+  activeVersionId: string;
+  versionCount?: number;
+  variables?: string[];
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string;
+  versions?: Array<{
+    versionId: string;
+    versionNumber: number;
+    fileName: string;
+    sha256: string;
+    size: number;
+    variables: string[];
+    createdAt: string;
+  }>;
+}
+
+interface ManagedDocxTemplatesResponse {
+  ok: true;
+  templates: ManagedDocxTemplateItem[];
+}
+
+interface ManagedDocxTemplateResponse {
+  ok: true;
+  template: ManagedDocxTemplateItem;
+}
+
 interface SyncStatusInfo {
   ok: boolean;
   source: "bitable" | "disabled";
@@ -128,6 +159,27 @@ interface GenerateApiResult {
 interface GenerateResponse {
   ok: true;
   results: GenerateApiResult[];
+}
+
+interface DocxBatchRecordResult {
+  recordId: string;
+  ok: boolean;
+  document?: {
+    id?: string;
+    title?: string;
+    fileName?: string;
+  };
+  download?: {
+    url?: string;
+  };
+  error?: string;
+  missingVariables?: string[];
+  unusedVariables?: string[];
+}
+
+interface DocxBatchResponse {
+  ok: true;
+  records: DocxBatchRecordResult[];
 }
 
 interface OwnerCandidate {
@@ -308,6 +360,51 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
     throw new Error(payload?.error ?? payload?.message ?? "接口返回异常");
   }
   return payload as T;
+}
+
+function getManagedDocxTemplateVariables(item: ManagedDocxTemplateItem): string[] {
+  const versions = item.versions ?? [];
+  const activeVersion = item.versions?.find((version) => version.versionId === item.activeVersionId);
+  return item.variables ?? activeVersion?.variables ?? versions[versions.length - 1]?.variables ?? [];
+}
+
+function getManagedDocxTemplateVersionCount(item: ManagedDocxTemplateItem): number {
+  return item.versionCount ?? item.versions?.length ?? 0;
+}
+
+function formatDocxBatchError(item: DocxBatchRecordResult): string {
+  if (item.error) return item.error;
+  if (item.missingVariables?.length) {
+    return `缺少变量：${item.missingVariables.join("、")}`;
+  }
+  return "Docx 生成失败。";
+}
+
+function toDocxGenerateApiResult(
+  item: DocxBatchRecordResult,
+  localWarnings: string[] = [],
+): GenerateApiResult {
+  const downloadUrl = item.download?.url || "";
+  const remoteWarnings = item.unusedVariables?.length
+    ? [`未使用变量：${item.unusedVariables.join("、")}`]
+    : [];
+  const warnings = [...localWarnings, ...remoteWarnings];
+  if (!item.ok || !downloadUrl) {
+    return {
+      recordId: item.recordId,
+      status: "failed",
+      error: item.ok ? "生成成功但缺少下载链接。" : formatDocxBatchError(item),
+      warnings,
+    };
+  }
+  return {
+    recordId: item.recordId,
+    status: "success",
+    docUrl: downloadUrl,
+    documentId: item.document?.id,
+    documentTitle: item.document?.title || item.document?.fileName,
+    warnings,
+  };
 }
 
 async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -901,6 +998,14 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
   const [savedTemplates, setSavedTemplates] = useState<SavedTemplateItem[]>([]);
   const [savedTemplatesLoading, setSavedTemplatesLoading] = useState(false);
   const [selectedTemplateLoadingId, setSelectedTemplateLoadingId] = useState<string | null>(null);
+  const [managedDocxTemplates, setManagedDocxTemplates] = useState<ManagedDocxTemplateItem[]>([]);
+  const [managedDocxTemplatesLoading, setManagedDocxTemplatesLoading] = useState(false);
+  const [managedTemplateIdInput, setManagedTemplateIdInput] = useState("fbiftemp_20260512_001");
+  const [managedTemplateNameInput, setManagedTemplateNameInput] = useState("");
+  const [managedTemplateUrlInput, setManagedTemplateUrlInput] = useState("");
+  const [managedTemplateSaving, setManagedTemplateSaving] = useState(false);
+  const [managedTemplateDeletingId, setManagedTemplateDeletingId] = useState<string | null>(null);
+  const [selectedManagedTemplateId, setSelectedManagedTemplateId] = useState("");
   const [autoConfigLoading, setAutoConfigLoading] = useState(false);
   const [lastAutoLoadedTemplateId, setLastAutoLoadedTemplateId] = useState("");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -1215,6 +1320,121 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
     }
   }, [authSession.isAuthenticated, table?.id]);
 
+  const refreshManagedDocxTemplates = useCallback(async () => {
+    if (!authSession.isAuthenticated) {
+      setManagedDocxTemplates([]);
+      return;
+    }
+    setManagedDocxTemplatesLoading(true);
+    try {
+      const response = await apiFetch("/api/v1/document-templates", { cache: "no-store" });
+      const payload = await parseJsonResponse<ManagedDocxTemplatesResponse>(response);
+      setManagedDocxTemplates(payload.templates || []);
+    } catch (error) {
+      setNotice({
+        type: "info",
+        text: `Docx 模板库读取失败：${toErrorMessage(error)}（不影响使用云文档模板）`,
+      });
+    } finally {
+      setManagedDocxTemplatesLoading(false);
+    }
+  }, [authSession.isAuthenticated]);
+
+  const applyManagedDocxTemplate = useCallback((item: ManagedDocxTemplateItem) => {
+    const templateVariables = getManagedDocxTemplateVariables(item);
+    setSelectedManagedTemplateId(item.templateId);
+    setTemplateUrl("");
+    setTemplateTitle(item.name || item.templateId);
+    setVariables(templateVariables);
+    setBindings(autoBindVariables(templateVariables, fields));
+    setLinkConfigs({});
+    setAttachmentConfigs({});
+    setResults([]);
+    setCurrentStep("configure");
+    setLastAutoLoadedTemplateId("");
+
+    if (!outputFieldId) {
+      const existedOutput = outputFieldCandidates.find(
+        (field) => field.name === OUTPUT_FIELD_BASE_NAME,
+      );
+      if (existedOutput) {
+        setOutputFieldId(existedOutput.id);
+      }
+    }
+  }, [fields, outputFieldId, outputFieldCandidates]);
+
+  const handleUploadManagedDocxTemplate = useCallback(async () => {
+    const url = managedTemplateUrlInput.trim();
+    const templateId = managedTemplateIdInput.trim();
+    const name = managedTemplateNameInput.trim();
+    if (!url) {
+      setNotice({ type: "error", text: "请先填写 Docx 模板下载链接。" });
+      return;
+    }
+    setManagedTemplateSaving(true);
+    try {
+      const response = await apiFetch("/api/v1/document-templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          templateId: templateId || undefined,
+          name: name || undefined,
+          url,
+        }),
+      });
+      const payload = await parseJsonResponse<ManagedDocxTemplateResponse>(response);
+      const template = payload.template;
+      setManagedDocxTemplates((prev) => [
+        template,
+        ...prev.filter((item) => item.templateId !== template.templateId),
+      ]);
+      applyManagedDocxTemplate(template);
+      setManagedTemplateUrlInput("");
+      setManagedTemplateIdInput("");
+      setNotice({
+        type: "success",
+        text: `Docx 模板已保存，模板编号：${template.templateId}`,
+      });
+    } catch (error) {
+      setNotice({ type: "error", text: `Docx 模板保存失败：${toErrorMessage(error)}` });
+    } finally {
+      setManagedTemplateSaving(false);
+    }
+  }, [
+    managedTemplateUrlInput,
+    managedTemplateIdInput,
+    managedTemplateNameInput,
+    applyManagedDocxTemplate,
+  ]);
+
+  const handleDeleteManagedDocxTemplate = useCallback(async (item: ManagedDocxTemplateItem) => {
+    const confirmed = window.confirm(`确定删除模板「${item.name || item.templateId}」吗？删除后不能继续用这个模板编号生成。`);
+    if (!confirmed) return;
+    setManagedTemplateDeletingId(item.templateId);
+    try {
+      const response = await apiFetch(`/api/v1/document-templates/${encodeURIComponent(item.templateId)}`, {
+        method: "DELETE",
+      });
+      await parseJsonResponse<ManagedDocxTemplateResponse>(response);
+      setManagedDocxTemplates((prev) => prev.filter((template) => template.templateId !== item.templateId));
+      if (selectedManagedTemplateId === item.templateId) {
+        setSelectedManagedTemplateId("");
+        setTemplateTitle("");
+        setVariables([]);
+        setBindings({});
+        setLinkConfigs({});
+        setAttachmentConfigs({});
+        setResults([]);
+        setCurrentStep("extract");
+      }
+      setNotice({ type: "success", text: "Docx 模板已删除。" });
+    } catch (error) {
+      setNotice({ type: "error", text: `Docx 模板删除失败：${toErrorMessage(error)}` });
+    } finally {
+      setManagedTemplateDeletingId(null);
+    }
+  }, [selectedManagedTemplateId]);
+
   const applySavedPayload = useCallback((config: SavedConfigPayload) => {
     const normalizedBindings: Record<string, string> = {};
     const decodedLinkConfigs: Record<string, LinkFieldConfig> = {};
@@ -1258,7 +1478,10 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
       ...explicitLinkConfigs,
     };
 
-    if (typeof config.templateUrl === "string") setTemplateUrl(config.templateUrl);
+    if (typeof config.templateUrl === "string") {
+      setSelectedManagedTemplateId("");
+      setTemplateUrl(config.templateUrl);
+    }
     if (typeof config.templateTitle === "string" && config.templateTitle.trim()) {
       setTemplateTitle(config.templateTitle);
     }
@@ -1369,7 +1592,16 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
   }, [authSession.isAuthenticated, refreshSavedTemplates]);
 
   useEffect(() => {
+    if (!authSession.isAuthenticated) {
+      setManagedDocxTemplates([]);
+      return;
+    }
+    void refreshManagedDocxTemplates();
+  }, [authSession.isAuthenticated, refreshManagedDocxTemplates]);
+
+  useEffect(() => {
     if (!authSession.isAuthenticated) return;
+    if (selectedManagedTemplateId) return;
     if (selectedTemplateLoadingId !== null) return;
     const docId = extractDocumentIdFromUrl(templateUrl);
     if (!docId || docId === lastAutoLoadedTemplateId) return;
@@ -1399,10 +1631,11 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
     };
 
     void load();
-  }, [authSession.isAuthenticated, templateUrl, lastAutoLoadedTemplateId, applySavedPayload, selectedTemplateLoadingId, table?.id]);
+  }, [authSession.isAuthenticated, templateUrl, lastAutoLoadedTemplateId, applySavedPayload, selectedTemplateLoadingId, selectedManagedTemplateId, table?.id]);
 
   useEffect(() => {
     if (!authSession.isAuthenticated) return;
+    if (selectedManagedTemplateId) return;
     const docId = extractDocumentIdFromUrl(templateUrl);
     if (!docId) return;
     if (skipAutoSaveRef.current) return;
@@ -1472,7 +1705,7 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
     return () => {
       if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current);
     };
-  }, [authSession.isAuthenticated, templateUrl, templateTitle, bindings, linkConfigs, attachmentConfigs, outputFieldId, titleFieldId, collaborators, advancedSettings, ownerTransferTargetUser, table?.id]);
+  }, [authSession.isAuthenticated, templateUrl, templateTitle, bindings, linkConfigs, attachmentConfigs, outputFieldId, titleFieldId, collaborators, advancedSettings, ownerTransferTargetUser, selectedManagedTemplateId, table?.id]);
 
   const loadAllUsers = useCallback(async (): Promise<OwnerCandidate[]> => {
     if (allUsersCache !== null) return allUsersCache;
@@ -1854,6 +2087,7 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
       body: JSON.stringify({ templateUrl: trimmed }),
     });
     const payload = await parseJsonResponse<TemplateVariablesResponse>(response);
+    setSelectedManagedTemplateId("");
     setTemplateUrl(trimmed);
     setVariables(payload.variables);
     setTemplateTitle(payload.templateTitle);
@@ -2123,7 +2357,8 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
         setNotice({ type: "error", text: "当前表尚未就绪，请稍后重试。" });
         return;
       }
-      if (!templateUrl.trim()) {
+      const usesManagedDocxTemplate = Boolean(selectedManagedTemplateId);
+      if (!usesManagedDocxTemplate && !templateUrl.trim()) {
         setNotice({ type: "error", text: "请先填写模板文档链接。" });
         return;
       }
@@ -2257,7 +2492,7 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
           setGenerateProgress((prev) => ({
             ...prev,
             total: totalRecords,
-            phase: `云端生成中 (${batchLabel})...`,
+            phase: `${usesManagedDocxTemplate ? "Docx 生成中" : "云端生成中"} (${batchLabel})...`,
             completed: Math.max(
               prev.completed,
               Math.min(totalRecords, cloudBase),
@@ -2265,29 +2500,57 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
           }));
 
           try {
-            const response = await apiFetch("/api/documents/generate", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                templateUrl: templateUrl.trim(),
-                records: batch.map(({ warnings: _warnings, ...record }) => record),
-                options: {
-                  permissionMode: "tenant_readable",
-                  ownerTransferEnabled: advancedSettings.ownerTransferEnabled,
-                  ownerTransfer,
-                  collaborators: collaboratorPayload.length > 0 ? collaboratorPayload : undefined,
-                },
-              }),
-            });
-            const payload = await parseJsonResponse<GenerateResponse>(response);
-            generatedResults.push(
-              ...payload.results.map((item) => {
-                const localWarnings = localWarningsByRecord.get(item.recordId) ?? [];
-                return localWarnings.length > 0
-                  ? { ...item, warnings: [...localWarnings, ...(item.warnings ?? [])] }
-                  : item;
-              }),
-            );
+            if (usesManagedDocxTemplate) {
+              const response = await apiFetch("/api/v1/document-renders/batch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  template: {
+                    format: "docx",
+                    templateId: selectedManagedTemplateId,
+                    title: templateTitle,
+                  },
+                  records: batch.map(({ recordId, variables: textVariables, imageVariables, title }) => {
+                    return {
+                      recordId,
+                      variables: textVariables,
+                      imageVariables,
+                      output: title ? { fileName: title } : undefined,
+                    };
+                  }),
+                }),
+              });
+              const payload = await parseJsonResponse<DocxBatchResponse>(response);
+              generatedResults.push(
+                ...payload.records.map((item) =>
+                  toDocxGenerateApiResult(item, localWarningsByRecord.get(item.recordId) ?? []),
+                ),
+              );
+            } else {
+              const response = await apiFetch("/api/documents/generate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  templateUrl: templateUrl.trim(),
+                  records: batch.map(({ warnings: _warnings, ...record }) => record),
+                  options: {
+                    permissionMode: "tenant_readable",
+                    ownerTransferEnabled: advancedSettings.ownerTransferEnabled,
+                    ownerTransfer,
+                    collaborators: collaboratorPayload.length > 0 ? collaboratorPayload : undefined,
+                  },
+                }),
+              });
+              const payload = await parseJsonResponse<GenerateResponse>(response);
+              generatedResults.push(
+                ...payload.results.map((item) => {
+                  const localWarnings = localWarningsByRecord.get(item.recordId) ?? [];
+                  return localWarnings.length > 0
+                    ? { ...item, warnings: [...localWarnings, ...(item.warnings ?? [])] }
+                    : item;
+                }),
+              );
+            }
           } catch (error) {
             const message = toErrorMessage(error);
             generatedResults.push(
@@ -2366,6 +2629,7 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
       table,
       templateUrl,
       templateTitle,
+      selectedManagedTemplateId,
       selectedRecordIds,
       ensureOutputField,
       collectVariablesForRecords,
@@ -2384,7 +2648,7 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
         setNotice({ type: "error", text: "当前表尚未就绪，请稍后重试。" });
         return;
       }
-      if (!templateUrl.trim()) {
+      if (!selectedManagedTemplateId && !templateUrl.trim()) {
         setNotice({ type: "error", text: "请先填写模板文档链接。" });
         return;
       }
@@ -2399,7 +2663,7 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
       }
       void executeGenerate(generateMode);
     },
-    [table, templateUrl, templateTitle, hasUnboundVariables, executeGenerate],
+    [table, templateUrl, templateTitle, selectedManagedTemplateId, hasUnboundVariables, executeGenerate],
   );
 
   const outputOptions = useMemo(
@@ -2567,6 +2831,139 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
             ) : null}
           </div>
 
+          <div className="mb-4 rounded-[10px] border border-[#ebedf0] dark:border-gray-700 bg-white dark:bg-[#1c1833]">
+            <div className="flex items-center justify-between gap-2 border-b border-[#ebedf0] dark:border-gray-700 px-3 py-2.5">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-[13px] font-medium text-[#1f2329] dark:text-gray-100">
+                  <FileText className="w-[14px] h-[14px] text-[#3370ff]" />
+                  <span>服务器 Docx 模板库</span>
+                </div>
+                {selectedManagedTemplateId ? (
+                  <div className="mt-0.5 truncate text-[11px] text-[#8f959e]" title={selectedManagedTemplateId}>
+                    当前模板编号：{selectedManagedTemplateId}
+                  </div>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => void refreshManagedDocxTemplates()}
+                disabled={managedDocxTemplatesLoading}
+                className="h-7 shrink-0 inline-flex items-center gap-1 px-2 text-[12px] text-[#3370ff] hover:bg-[#f0f4ff] dark:hover:bg-blue-900/20 rounded-[6px] transition-colors disabled:opacity-50"
+              >
+                {managedDocxTemplatesLoading ? (
+                  <Loader2 className="w-[13px] h-[13px] icon-spin-smooth" />
+                ) : (
+                  <RefreshCw className="w-[13px] h-[13px]" />
+                )}
+                <span>刷新</span>
+              </button>
+            </div>
+
+            <div className="px-3 py-3 space-y-2.5">
+              <div className="grid grid-cols-1 gap-2">
+                <input
+                  className="w-full h-9 px-2.5 bg-[#fbfcff] dark:bg-[#151225] border border-[#dee0e3] dark:border-gray-700 rounded-[8px] text-[13px] focus:ring-2 focus:ring-[#3370ff]/30 focus:border-[#3370ff] transition-all outline-none placeholder-[#8f959e]"
+                  placeholder="模板编号，例如 fbiftemp_20260512_001"
+                  value={managedTemplateIdInput}
+                  onChange={(e) => setManagedTemplateIdInput(e.target.value)}
+                />
+                <input
+                  className="w-full h-9 px-2.5 bg-[#fbfcff] dark:bg-[#151225] border border-[#dee0e3] dark:border-gray-700 rounded-[8px] text-[13px] focus:ring-2 focus:ring-[#3370ff]/30 focus:border-[#3370ff] transition-all outline-none placeholder-[#8f959e]"
+                  placeholder="模板名称，例如 通用合同模板"
+                  value={managedTemplateNameInput}
+                  onChange={(e) => setManagedTemplateNameInput(e.target.value)}
+                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    className="w-full h-9 px-2.5 bg-[#fbfcff] dark:bg-[#151225] border border-[#dee0e3] dark:border-gray-700 rounded-[8px] text-[13px] focus:ring-2 focus:ring-[#3370ff]/30 focus:border-[#3370ff] transition-all outline-none placeholder-[#8f959e]"
+                    placeholder="Docx 模板 HTTPS 下载链接"
+                    type="url"
+                    value={managedTemplateUrlInput}
+                    onChange={(e) => setManagedTemplateUrlInput(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleUploadManagedDocxTemplate()}
+                    disabled={managedTemplateSaving || !managedTemplateUrlInput.trim()}
+                    className="h-9 px-3 bg-[#3370ff] hover:bg-[#285bd4] text-white text-[13px] font-medium rounded-[8px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5 shrink-0"
+                  >
+                    {managedTemplateSaving ? (
+                      <Loader2 className="w-[14px] h-[14px] icon-spin-smooth" />
+                    ) : (
+                      <Plus className="w-[14px] h-[14px]" />
+                    )}
+                    <span>保存</span>
+                  </button>
+                </div>
+              </div>
+
+              {managedDocxTemplatesLoading ? (
+                <div className="rounded-[8px] border border-[#ebedf0] dark:border-gray-700 bg-[#f7f9fc] dark:bg-[#151225] px-3 py-2.5 text-[12px] text-[#8f959e]">
+                  正在读取模板库...
+                </div>
+              ) : managedDocxTemplates.length === 0 ? (
+                <div className="rounded-[8px] border border-dashed border-[#cfd5dd] dark:border-gray-700 bg-[#f7f9fc] dark:bg-[#151225] px-3 py-3 text-center text-[12px] text-[#8f959e]">
+                  暂无服务器模板
+                </div>
+              ) : (
+                <div className="max-h-48 overflow-y-auto space-y-2 pr-0.5">
+                  {managedDocxTemplates.map((item) => {
+                    const itemVariables = getManagedDocxTemplateVariables(item);
+                    const selected = selectedManagedTemplateId === item.templateId;
+                    return (
+                      <div
+                        key={item.templateId}
+                        className={`rounded-[8px] border px-2.5 py-2 transition-colors ${
+                          selected
+                            ? "border-[#3370ff] bg-[#f0f4ff] dark:bg-blue-900/20"
+                            : "border-[#ebedf0] bg-[#fbfcff] dark:border-gray-700 dark:bg-[#151225]"
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              applyManagedDocxTemplate(item);
+                              setNotice({ type: "success", text: `已选择 Docx 模板：${item.templateId}` });
+                            }}
+                            className="min-w-0 flex-1 text-left"
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <div className="truncate text-[13px] font-medium text-[#1f2329] dark:text-gray-100">
+                                {item.name || item.templateId}
+                              </div>
+                              {selected ? <Check className="w-[14px] h-[14px] text-[#3370ff] shrink-0" /> : null}
+                            </div>
+                            <div className="mt-0.5 truncate text-[11px] text-[#8f959e]" title={item.templateId}>
+                              {item.templateId} · {getManagedDocxTemplateVersionCount(item)} 个版本
+                            </div>
+                            <div className="mt-1 max-h-8 overflow-hidden text-[11px] leading-4 text-[#6b7480] dark:text-gray-400">
+                              {itemVariables.length > 0 ? itemVariables.join("、") : "无变量"}
+                            </div>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteManagedDocxTemplate(item)}
+                            disabled={managedTemplateDeletingId === item.templateId}
+                            className="h-7 w-7 shrink-0 inline-flex items-center justify-center rounded-[6px] text-[#8f959e] hover:bg-[#fff1f0] hover:text-[#f54a45] dark:hover:bg-red-900/20 disabled:opacity-50"
+                            title="删除模板"
+                          >
+                            {managedTemplateDeletingId === item.templateId ? (
+                              <Loader2 className="w-[14px] h-[14px] icon-spin-smooth" />
+                            ) : (
+                              <Trash2 className="w-[14px] h-[14px]" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mb-2 text-[12px] font-medium text-[#5f6670] dark:text-gray-300">或使用飞书云文档模板链接</div>
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
               <div className="relative group flex-1">
@@ -2577,6 +2974,7 @@ export default function App({ initialAuthUser = null }: SidebarAppProps) {
                   value={templateUrl}
                   onChange={(e) => {
                     setTemplateUrl(e.target.value);
+                    setSelectedManagedTemplateId("");
                     if (templateTitle) {
                       setTemplateTitle("");
                       setVariables([]);

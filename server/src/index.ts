@@ -1,12 +1,19 @@
+import './env';
 import axios from 'axios';
 import cors, { CorsOptions } from 'cors';
-import dotenv from 'dotenv';
 import express from 'express';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { FeishuTemplateService, GenerateInput } from './feishu';
+import { createDocumentRenderRouter } from './documentRenderApi';
+import { createDocumentRenderBatchRouter } from './documentRenderBatchApi';
+import { createDocumentRenderJobRouter } from './documentRenderJobApi';
+import { createDocumentTemplateRouter } from './documentTemplateApi';
+import { DocumentTemplateService } from './documentTemplateService';
+import { requireDocumentRenderApiKey } from './documentRenderApiKeyGuard';
+import { createMutationOriginGuard } from './browserOriginGuard';
 import {
   initDatabase,
   deleteSessionByToken,
@@ -22,8 +29,6 @@ import {
   resolveSessionTokenFromRequest,
 } from './auth';
 import { registerOAuthRoutes } from './oauthRoutes';
-
-dotenv.config();
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -49,6 +54,8 @@ const SESSION_COOKIE_SAMESITE =
     : 'lax';
 
 const hasCredential = Boolean(appId && appSecret);
+const hasDatabaseUrl = Boolean((process.env.DATABASE_URL || '').trim());
+const documentTemplateService = new DocumentTemplateService();
 const feishuService = hasCredential
   ? new FeishuTemplateService({
       appId,
@@ -92,54 +99,13 @@ const corsOptions: CorsOptions = {
     callback(null, false);
   },
 };
-
-function getRequestOrigin(request: express.Request): string {
-  const forwardedProto = String(request.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-  const forwardedHost = String(request.headers['x-forwarded-host'] || '').split(',')[0].trim();
-  const protocol = forwardedProto || request.protocol || 'http';
-  const host = forwardedHost || request.headers.host || '';
-  return host ? `${protocol}://${host}` : '';
-}
-
-function isAllowedBrowserOrigin(origin: string, request: express.Request): boolean {
-  return corsAllowedOrigins.has(origin) || origin === getRequestOrigin(request);
-}
-
-function enforceMutationOrigin(request: express.Request, response: express.Response, next: express.NextFunction): void {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
-    next();
-    return;
-  }
-
-  const origin = typeof request.headers.origin === 'string' ? request.headers.origin : '';
-  if (origin) {
-    if (!isAllowedBrowserOrigin(origin, request)) {
-      response.status(403).json({ ok: false, error: '请求来源不被允许。' });
-      return;
-    }
-    next();
-    return;
-  }
-
-  const referer = typeof request.headers.referer === 'string' ? request.headers.referer : '';
-  if (!referer) {
-    response.status(403).json({ ok: false, error: '请求来源不被允许。' });
-    return;
-  }
-
-  try {
-    const refererOrigin = new URL(referer).origin;
-    if (!isAllowedBrowserOrigin(refererOrigin, request)) {
-      response.status(403).json({ ok: false, error: '请求来源不被允许。' });
-      return;
-    }
-  } catch {
-    response.status(403).json({ ok: false, error: '请求来源不被允许。' });
-    return;
-  }
-
-  next();
-}
+const enforceMutationOrigin = createMutationOriginGuard({
+  allowedOrigins: corsAllowedOrigins,
+});
+const enforceDocumentRenderBrowserOrigin = createMutationOriginGuard({
+  allowedOrigins: corsAllowedOrigins,
+  requireOriginOrReferer: false,
+});
 
 function sendInternalError(response: express.Response, context: string, error: unknown): void {
   // eslint-disable-next-line no-console
@@ -271,6 +237,10 @@ const saveConfigSchema = z.object({
 });
 
 app.use(cors(corsOptions));
+app.use('/api/v1/document-templates', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentTemplateRouter(documentTemplateService));
+app.use('/api/v1/document-render-jobs', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentRenderJobRouter({ templateResolver: documentTemplateService }));
+app.use('/api/v1/document-renders', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentRenderBatchRouter({ templateResolver: documentTemplateService }));
+app.use('/api/v1/document-renders', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentRenderRouter({ templateResolver: documentTemplateService }));
 app.use(enforceMutationOrigin);
 app.use(express.json({ limit: '2mb' }));
 
@@ -645,7 +615,8 @@ app.post('/api/configs', async (request, response) => {
 app.get('/api/health', (_request, response) => {
   response.json({
     ok: true,
-    configured: hasCredential
+    configured: hasCredential,
+    databaseConfigured: hasDatabaseUrl
   });
 });
 
@@ -792,7 +763,9 @@ if (existsSync(indexHtml)) {
 }
 
 async function bootstrap(): Promise<void> {
-  await initDatabase();
+  if (process.env.NODE_ENV === 'production' || hasDatabaseUrl) {
+    await initDatabase();
+  }
   app.listen(port, host, () => {
     // eslint-disable-next-line no-console
     console.log(`Feishu template service started on http://${host}:${port}`);

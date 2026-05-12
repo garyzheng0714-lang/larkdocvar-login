@@ -1,13 +1,11 @@
 import axios from 'axios';
-import dotenv from 'dotenv';
+import '../env';
 import {
   initDatabase,
   getUserByOpenId,
   upsertUser,
   saveOrUpdateConfig,
 } from '../storage';
-
-dotenv.config();
 
 const FEISHU_OPEN_API = 'https://open.feishu.cn/open-apis';
 

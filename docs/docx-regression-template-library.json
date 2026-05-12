@@ -1,0 +1,25 @@
+{
+  "description": "Docx API milestone 1 regression template library. Each entry must be covered by server/src/documentRenderApi.test.ts.",
+  "templates": [
+    { "name": "合同-基础段落", "category": "contract", "covers": ["body", "multi-variable"], "expectedVariables": ["客户名称", "金额"] },
+    { "name": "合同-加粗标题", "category": "contract", "covers": ["body", "bold-style"], "expectedVariables": ["项目名称", "日期"] },
+    { "name": "报价单-双列表格", "category": "quote", "covers": ["table", "multi-row"], "expectedVariables": ["客户名称", "金额"] },
+    { "name": "报价单-带边框表格", "category": "quote", "covers": ["table", "table-border"], "expectedVariables": ["项目名称", "金额"] },
+    { "name": "邀请函-居中文案", "category": "invitation", "covers": ["body", "paragraph-alignment"], "expectedVariables": ["客户名称", "项目名称", "日期"] },
+    { "name": "通知-编号列表", "category": "notice", "covers": ["numbered-list", "body"], "expectedVariables": ["客户名称", "金额"] },
+    { "name": "页眉页脚-全局变量", "category": "header-footer", "covers": ["header", "footer", "body"], "expectedVariables": ["项目名称", "客户名称", "日期"] },
+    { "name": "页眉-拆分变量", "category": "header-footer", "covers": ["header", "split-run"], "expectedVariables": ["金额", "客户名称"] },
+    { "name": "页脚-多变量", "category": "header-footer", "covers": ["footer", "multi-variable"], "expectedVariables": ["项目名称", "客户名称", "日期"] },
+    { "name": "正文-同段多变量", "category": "body", "covers": ["body", "same-paragraph"], "expectedVariables": ["客户名称", "日期", "金额"] },
+    { "name": "正文-同变量重复", "category": "body", "covers": ["repeated-variable"], "expectedVariables": ["客户名称"] },
+    { "name": "正文-变量含空格", "category": "body", "covers": ["placeholder-whitespace"], "expectedVariables": ["客户名称", "金额"] },
+    { "name": "正文-特殊字符样式", "category": "body", "covers": ["color-style", "multi-run"], "expectedVariables": ["客户名称", "项目名称"] },
+    { "name": "表格-三列表头", "category": "table", "covers": ["table", "header-row"], "expectedVariables": ["客户名称", "项目名称", "金额"] },
+    { "name": "表格-单元格多段落", "category": "table", "covers": ["table", "multi-paragraph-cell"], "expectedVariables": ["客户名称", "项目名称", "金额"] },
+    { "name": "段落-拆分文本节点", "category": "body", "covers": ["split-run"], "expectedVariables": ["项目名称", "金额"] },
+    { "name": "段落-日期字段", "category": "body", "covers": ["date-variable"], "expectedVariables": ["日期", "客户名称"] },
+    { "name": "确认函-混合表格页脚", "category": "confirmation", "covers": ["body", "table", "footer"], "expectedVariables": ["客户名称", "项目名称", "金额", "日期"] },
+    { "name": "报价单-页眉表格", "category": "quote", "covers": ["header", "table"], "expectedVariables": ["金额", "客户名称", "项目名称"] },
+    { "name": "验收单-完整混合", "category": "acceptance", "covers": ["body", "table", "header", "footer", "style"], "expectedVariables": ["项目名称", "客户名称", "金额", "日期"] }
+  ]
+}

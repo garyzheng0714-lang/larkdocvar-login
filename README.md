@@ -4,18 +4,60 @@
 
 ## 快速上手（先看这个）
 
-新手建议直接按下面 4 步走，一次就能跑通：
+新手建议优先使用服务器 Docx 模板库。模板上传一次后会得到模板编号，后续批量生成只用这个编号，不需要反复下载原始模板链接。
+
+方式 A：服务器 Docx 模板库
 
 1. 登录插件（右上角显示你的账号即成功）。
+2. 在“服务器 Docx 模板库”里填写模板编号、模板名称和 Docx 下载链接，点击“保存”。
+3. 选择刚保存的模板，检查“变量映射”是否正确。
+4. 点击“全部生成”或“生成选中项”，系统会自动生成 Docx 下载链接并写回表格。
+
+方式 B：飞书云文档模板
+
+1. 登录插件。
 2. 粘贴模板文档链接，点击“提取变量”。
-3. 检查“变量映射”是否正确（字段越多越建议用搜索）。
-4. 点击“全部生成”或“生成选中项”，系统会自动回写文档链接到表格。
+3. 检查“变量映射”是否正确。
+4. 点击“全部生成”或“生成选中项”，系统会自动回写生成的飞书文档链接。
 
 补充说明（最容易困惑的两点）：
 
 - 文档所有权和默认权限已固定为自动策略，默认生成后仅租户内可阅读，不需要手动配置。
 - 模板变量提取按“当前登录用户”身份读取模板文档；只要该用户有阅读权限即可，不需要额外把飞书应用加到模板协作者里。
 - 生成流程建议始终按“提取变量 -> 检查映射 -> 开始生成”顺序，避免漏填。
+
+## API 接入：传模板和变量生成文档
+
+业务系统推荐流程是“先上传模板得到 `templateId`，后续生成只传 `templateId` 和变量”。如果服务端设置了 `DOCUMENT_RENDER_API_KEY`，调用方需要传 `Authorization: Bearer ...` 或 `x-api-key`。已登录侧边栏用户可以继续通过登录会话调用同一组接口。
+
+接入方优先看 API 参考文档：
+
+- 飞书云文档版：[Docx API 接入文档](https://www.feishu.cn/docx/GMc4diq86oTS9SxQ8txcDPYenZ2)
+- 仓库内版本：[docs/docx-api-integration.md](docs/docx-api-integration.md)
+
+仓库内配套文档：
+
+- 架构与存储边界：[docs/docx-api-architecture.md](docs/docx-api-architecture.md)
+- 运维与故障排查：[docs/docx-operator-runbook.md](docs/docx-operator-runbook.md)
+- 阶段交接：[docs/handoff.md](docs/handoff.md)
+
+接口目录：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `POST` | `/api/v1/document-templates` | 1. 上传模板。 |
+| `GET` | `/api/v1/document-templates` | 2. 查询模板列表。 |
+| `GET` | `/api/v1/document-templates/:templateId` | 3. 查询模板详情。 |
+| `GET` | `/api/v1/document-templates/:templateId/versions` | 4. 查询版本列表。 |
+| `POST` | `/api/v1/document-templates/:templateId/versions` | 5. 新增模板版本。 |
+| `DELETE` | `/api/v1/document-templates/:templateId` | 6. 删除模板；`purge=true` 会清理对象存储。 |
+| `POST` | `/api/v1/document-renders` | 7. 生成单份文档。 |
+| `POST` | `/api/v1/document-renders/batch` | 8. 同步批量生成，最多 100 条。 |
+| `POST` | `/api/v1/document-render-jobs` | 9. 提交异步批量任务，最多 500 条。 |
+| `GET` | `/api/v1/document-render-jobs/:jobId` | 10. 查询任务进度。 |
+| `GET` | `/api/v1/document-render-jobs/:jobId/results` | 11. 查询任务结果。 |
+
+对象存储、环境变量、OSS/TOS 预检和常见故障统一放在 [Docx API 运维手册](docs/docx-operator-runbook.md)，避免 README 和 API 文档重复维护。
 
 ## 本地开发（尽量少动手）
 
