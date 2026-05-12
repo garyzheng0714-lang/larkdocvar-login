@@ -6,3 +6,8 @@ tmp
 .env.*
 !.env.example
 npm-debug.log*
+
+# Local dev artifacts
+.claude/
+.playwright-mcp/
+v2-*.png
