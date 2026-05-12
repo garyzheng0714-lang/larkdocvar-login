@@ -31,7 +31,8 @@ export function PrimaryScreen({
   function setMapping(varName: string, fieldId: string) {
     setState((s) => ({ ...s, mapping: { ...s.mapping, [varName]: fieldId } }));
   }
-  const unmappedCount = tpl ? tpl.variables!.filter((v) => !mapping[v.name]).length : 0;
+  const tplVars = tpl?.variables ?? [];
+  const unmappedCount = tpl ? tplVars.filter((v) => !mapping[v.name]).length : 0;
   const canGenerate = !!tpl && unmappedCount === 0;
 
   return (
@@ -76,13 +77,13 @@ export function PrimaryScreen({
             <div className="block">
               <div className="block-head">
                 <span className="block-title">字段映射</span>
-                <span className="block-count">{tpl.variables!.length}</span>
+                <span className="block-count">{tplVars.length}</span>
                 <button
                   className="ghost-link"
                   type="button"
                   onClick={() => {
                     const m: Record<string, string> = {};
-                    tpl.variables!.forEach((v) => {
+                    tplVars.forEach((v) => {
                       if (v.suggested) m[v.name] = v.suggested;
                     });
                     setState((s) => ({ ...s, mapping: m }));
@@ -92,7 +93,7 @@ export function PrimaryScreen({
                 </button>
               </div>
               <div className="map-table">
-                {tpl.variables!.map((v) => (
+                {tplVars.map((v) => (
                   <MapRow
                     key={v.name}
                     variable={v}
@@ -115,7 +116,7 @@ export function PrimaryScreen({
               <FileNameEditor
                 value={fileNameTpl}
                 onChange={(v) => setState((s) => ({ ...s, fileNameTpl: v }))}
-                variables={tpl.variables!.filter((v) => v.kind === 'text').map((v) => v.name)}
+                variables={tplVars.filter((v) => v.kind === 'text').map((v) => v.name)}
               />
             </div>
 
@@ -347,12 +348,14 @@ function FileNameEditor({ value, onChange, variables }: FileNameEditorProps) {
     );
   }
   function removeVarAt(idx: number) {
-    onChange(
-      parts
-        .filter((_, i) => i !== idx)
-        .map((p) => (p.kind === 'var' ? `{{${p.name}}}` : p.text))
-        .join(''),
-    );
+    const joined = parts
+      .filter((_, i) => i !== idx)
+      .map((p) => (p.kind === 'var' ? `{{${p.name}}}` : p.text))
+      .join('');
+    // strip an orphan leading separator (`-`, `_`, whitespace, common CJK dividers)
+    // and collapse a trailing one likewise
+    const cleaned = joined.replace(/^[\s\-_、,，]+/, '').replace(/[\s\-_、,，]+$/, '');
+    onChange(cleaned);
   }
 
   return (

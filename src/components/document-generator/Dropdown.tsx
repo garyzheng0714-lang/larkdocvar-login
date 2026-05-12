@@ -43,14 +43,19 @@ export function Dropdown({ open, onClose, children, align = 'left', width, trigg
       }
     };
     const onScroll = () => onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
     const t = window.setTimeout(() => document.addEventListener('mousedown', h), 0);
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onScroll);
+    document.addEventListener('keydown', onKey);
     return () => {
       window.clearTimeout(t);
       document.removeEventListener('mousedown', h);
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onScroll);
+      document.removeEventListener('keydown', onKey);
     };
   }, [open, onClose, triggerRef]);
 

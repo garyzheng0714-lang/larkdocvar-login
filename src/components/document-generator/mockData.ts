@@ -32,13 +32,13 @@ export const TEMPLATES: Template[] = [
       { name: '客户 Logo', kind: 'image', suggested: 'f_logo' },
     ],
   },
-  { id: 'tpl_002', name: '入职欢迎信', varCount: 5, updatedAt: '4 月 28 日', category: '通知类', kind: 'doc' },
-  { id: 'tpl_003', name: '月度销售报表', varCount: 12, updatedAt: '5 月 1 日', category: '报表类', kind: 'sheet' },
-  { id: 'tpl_004', name: '在职证明', varCount: 4, updatedAt: '3 月 21 日', category: '证明类', kind: 'doc', hasLogo: true },
-  { id: 'tpl_005', name: '保密协议 (NDA)', varCount: 5, updatedAt: '5 月 8 日', category: '合同类', kind: 'doc' },
-  { id: 'tpl_006', name: '采购订单', varCount: 9, updatedAt: '4 月 12 日', category: '报表类', kind: 'sheet' },
-  { id: 'tpl_007', name: '会议通知', varCount: 6, updatedAt: '4 月 30 日', category: '通知类', kind: 'doc' },
-  { id: 'tpl_008', name: '收入证明', varCount: 5, updatedAt: '3 月 18 日', category: '证明类', kind: 'doc' },
+  { id: 'tpl_002', name: '入职欢迎信', varCount: 5, updatedAt: '4 月 28 日', category: '通知类', kind: 'doc', variables: [] },
+  { id: 'tpl_003', name: '月度销售报表', varCount: 12, updatedAt: '5 月 1 日', category: '报表类', kind: 'sheet', variables: [] },
+  { id: 'tpl_004', name: '在职证明', varCount: 4, updatedAt: '3 月 21 日', category: '证明类', kind: 'doc', hasLogo: true, variables: [] },
+  { id: 'tpl_005', name: '保密协议 (NDA)', varCount: 5, updatedAt: '5 月 8 日', category: '合同类', kind: 'doc', variables: [] },
+  { id: 'tpl_006', name: '采购订单', varCount: 9, updatedAt: '4 月 12 日', category: '报表类', kind: 'sheet', variables: [] },
+  { id: 'tpl_007', name: '会议通知', varCount: 6, updatedAt: '4 月 30 日', category: '通知类', kind: 'doc', variables: [] },
+  { id: 'tpl_008', name: '收入证明', varCount: 5, updatedAt: '3 月 18 日', category: '证明类', kind: 'doc', variables: [] },
 ];
 
 export const CATEGORIES = ['全部', '合同类', '通知类', '报表类', '证明类'];

@@ -11,3 +11,4 @@ npm-debug.log*
 .claude/
 .playwright-mcp/
 v2-*.png
+redteam/

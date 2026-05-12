@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Icon } from './icons';
 import type { Template } from './types';
 
@@ -27,12 +27,19 @@ export function PickerScreen({
   const [selectedId, setSelectedId] = useState<string | undefined>(initialSelectedId);
 
   const list = useMemo(() => {
+    if (tab === '个人') return [] as Template[];
     return templates.filter(
       (t) =>
         (category === '全部' || t.category === category) &&
         (!query || t.name.includes(query)),
     );
-  }, [templates, category, query]);
+  }, [tab, templates, category, query]);
+
+  useEffect(() => {
+    if (selectedId && !list.some((t) => t.id === selectedId)) {
+      setSelectedId(undefined);
+    }
+  }, [list, selectedId]);
 
   return (
     <div className="screen picker-screen">

@@ -126,14 +126,14 @@ export function DocumentGeneratorApp({
               position: 'absolute',
               left: 12,
               right: 12,
-              bottom: 76,
+              top: 56,
               padding: '8px 10px',
               background: '#fbeae8',
               color: '#c44a3d',
               borderRadius: 6,
               fontSize: 12,
               lineHeight: 1.5,
-              boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.10)',
               zIndex: 4,
               pointerEvents: 'none',
             }}
@@ -156,6 +156,7 @@ export function DocumentGeneratorApp({
                   ...s,
                   template: tpl,
                   mapping: buildDefaultMapping(tpl, fields),
+                  customText: {},
                   fileNameTpl: tpl.variables?.[0]
                     ? `{{${tpl.variables[0].name}}}-${tpl.name}`
                     : tpl.name || '文档',

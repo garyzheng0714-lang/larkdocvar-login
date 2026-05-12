@@ -264,6 +264,14 @@ export default function App() {
   }, [clearAuthPendingFlag]);
 
   useEffect(() => {
+    try {
+      if (new URLSearchParams(window.location.search).get("mock") === "1") {
+        setAuthLoading(false);
+        return;
+      }
+    } catch {
+      // ignore — proceed to real auth check
+    }
     void checkAuthSession();
   }, [checkAuthSession]);
 
