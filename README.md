@@ -1,103 +1,115 @@
-# 飞书边栏插件：云文档变量替换生成器
+# larkdocvar-login
 
-支持从模板文档提取 `{{变量}}`，按多维表格字段自动绑定并批量生成文档，最后回写生成链接。用户会话与模板配置统一存储在 PostgreSQL。
+![类型](https://img.shields.io/badge/%E7%B1%BB%E5%9E%8B-%E9%A3%9E%E4%B9%A6%E8%BE%B9%E6%A0%8F%E6%8F%92%E4%BB%B6-2563eb?style=flat-square)
+![技术栈](https://img.shields.io/badge/%E6%8A%80%E6%9C%AF%E6%A0%88-React%20Express-0f766e?style=flat-square)
+![状态](https://img.shields.io/badge/%E7%8A%B6%E6%80%81-%E5%8F%AF%E9%83%A8%E7%BD%B2-16a34a?style=flat-square)
+![README](https://img.shields.io/badge/README-%E4%B8%AD%E6%96%87-brightgreen?style=flat-square)
 
-## 快速上手（先看这个）
+飞书插件：带 OAuth 登录的多维表格边栏插件，用于按云文档模板批量生成文档并将链接回写到表格。
 
-新手建议优先使用服务器 Docx 模板库。模板上传一次后会得到模板编号，后续批量生成只用这个编号，不需要反复下载原始模板链接。
+## 仓库定位
 
-方式 A：服务器 Docx 模板库
+- 分类：飞书多维表格边栏插件 / 云文档模板生成工具。
+- 面向对象：需要从飞书云文档模板提取变量、批量套用多维表格记录并生成新文档的业务团队。
+- 运行宿主：飞书多维表格边栏 iframe 插件，配套 Express 后端处理 OAuth、文档 API 和持久化。
+- 与边栏插件合集的区别：本仓库是单一可部署插件应用，包含前端、后端、Docker 和部署脚本；插件合集仓库只集中管理多个独立子插件。
 
-1. 登录插件（右上角显示你的账号即成功）。
-2. 在“服务器 Docx 模板库”里填写模板编号、模板名称和 Docx 下载链接，点击“保存”。
-3. 选择刚保存的模板，检查“变量映射”是否正确。
-4. 点击“全部生成”或“生成选中项”，系统会自动生成 Docx 下载链接并写回表格。
+## 功能特性
 
-方式 B：飞书云文档模板
+- 飞书 OAuth 登录和会话保持
+- 从飞书云文档 / Wiki 模板中提取 `{{变量}}`
+- 自动匹配多维表格字段，并支持手动调整绑定
+- 支持文本变量、链接字段和附件图片变量
+- 批量生成全部记录或选中记录
+- 自动创建 / 写回“生成文档链接”字段
+- 支持协作者配置和文档所有权相关高级选项
+- 支持模板配置历史和自动恢复
+- 可选将用户配置同步到飞书多维表格
+- 提供本地开发、Docker、本地预览和远程部署脚本
 
-1. 登录插件。
+## 技术栈
+
+- 前端：React、Vite、Tailwind CSS、lucide-react、`@lark-base-open/js-sdk`
+- 后端：Express、TypeScript、tsx、Zod、Axios
+- 存储：SQLite（`better-sqlite3`）
+- 飞书能力：OAuth、云文档、Wiki、多维表格、用户目录
+- 部署：Docker、Docker Compose、GitHub Actions
+
+## 项目结构
+
+```text
+.
+├── src/                         # React 边栏插件前端
+├── server/
+│   └── src/
+│       ├── index.ts             # Express API 和 OAuth 会话
+│       ├── feishu.ts            # 飞书文档 / 用户相关 API
+│       ├── storage.ts           # SQLite 持久化
+│       └── bitableConfigSync.ts # 可选的多维表格配置同步
+├── scripts/
+│   ├── dev-up.sh                # 本地开发启动脚本
+│   └── deploy-aliyun-docker.sh  # Docker 远程部署脚本
+├── Dockerfile
+├── docker-compose.yml
+├── .env.example
+└── README.md
+```
+
+## 快速上手
+
+插件内的基本流程：
+
+1. 登录插件，右上角显示账号即表示成功。
 2. 粘贴模板文档链接，点击“提取变量”。
-3. 检查“变量映射”是否正确。
-4. 点击“全部生成”或“生成选中项”，系统会自动回写生成的飞书文档链接。
+3. 检查变量映射，必要时手动调整字段绑定。
+4. 点击“全部生成”或“生成选中项”。
+5. 系统生成文档并将链接写回多维表格。
 
-补充说明（最容易困惑的两点）：
+模板权限说明：
 
-- 文档所有权和默认权限已固定为自动策略，默认生成后仅租户内可阅读，不需要手动配置。
-- 模板变量提取按“当前登录用户”身份读取模板文档；只要该用户有阅读权限即可，不需要额外把飞书应用加到模板协作者里。
-- 生成流程建议始终按“提取变量 -> 检查映射 -> 开始生成”顺序，避免漏填。
+- 模板变量提取使用当前登录用户的 OAuth token。
+- 模板文档需要对实际使用插件的用户开放阅读权限。
+- 飞书应用仍需要配置凭证，用于登录、文档和后续 API 能力。
 
-## API 接入：传模板和变量生成文档
+## 本地开发
 
-业务系统推荐流程是“先上传模板得到 `templateId`，后续生成只传 `templateId` 和变量”。如果服务端设置了 `DOCUMENT_RENDER_API_KEY`，调用方需要传 `Authorization: Bearer ...` 或 `x-api-key`。已登录侧边栏用户可以继续通过登录会话调用同一组接口。
-
-接入方优先看 API 参考文档：
-
-- 飞书云文档版：[Docx API 接入文档](https://www.feishu.cn/docx/GMc4diq86oTS9SxQ8txcDPYenZ2)
-- 仓库内版本：[docs/docx-api-integration.md](docs/docx-api-integration.md)
-
-仓库内配套文档：
-
-- 架构与存储边界：[docs/docx-api-architecture.md](docs/docx-api-architecture.md)
-- 运维与故障排查：[docs/docx-operator-runbook.md](docs/docx-operator-runbook.md)
-- 阶段交接：[docs/handoff.md](docs/handoff.md)
-
-接口目录：
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| `POST` | `/api/v1/document-templates` | 1. 上传模板。 |
-| `GET` | `/api/v1/document-templates` | 2. 查询模板列表。 |
-| `GET` | `/api/v1/document-templates/:templateId` | 3. 查询模板详情。 |
-| `GET` | `/api/v1/document-templates/:templateId/versions` | 4. 查询版本列表。 |
-| `POST` | `/api/v1/document-templates/:templateId/versions` | 5. 新增模板版本。 |
-| `DELETE` | `/api/v1/document-templates/:templateId` | 6. 删除模板；`purge=true` 会清理对象存储。 |
-| `POST` | `/api/v1/document-renders` | 7. 生成单份文档。 |
-| `POST` | `/api/v1/document-renders/batch` | 8. 同步批量生成，最多 100 条。 |
-| `POST` | `/api/v1/document-render-jobs` | 9. 提交异步批量任务，最多 500 条。 |
-| `GET` | `/api/v1/document-render-jobs/:jobId` | 10. 查询任务进度。 |
-| `GET` | `/api/v1/document-render-jobs/:jobId/results` | 11. 查询任务结果。 |
-
-对象存储、环境变量、OSS/TOS 预检和常见故障统一放在 [Docx API 运维手册](docs/docx-operator-runbook.md)，避免 README 和 API 文档重复维护。
-
-## 本地开发（尽量少动手）
-
-1. 首次配置环境变量
+复制环境变量模板：
 
 ```bash
 cp .env.example .env
 ```
 
-2. 在 `.env` 填写 FBIF 飞书应用凭证与 PostgreSQL 连接
+填写飞书应用配置：
 
 ```bash
-FEISHU_APP_ID=cli_fbif_xxx
-FEISHU_APP_SECRET=fbif_app_secret
-DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/larkdocvar
+FEISHU_APP_ID=cli_xxx
+FEISHU_APP_SECRET=xxx
 PORT=3000
+HOST=0.0.0.0
 ```
 
-3. 启动（会自动检测依赖，缺失时自动执行 `npm install`）
+启动开发环境：
 
 ```bash
+npm install
 npm run dev
 ```
 
 默认地址：
-- 前端运行地址（飞书边栏插件 URL）：`http://localhost:5173`
+
+- 前端插件地址：`http://localhost:5173`
 - 后端 API：`http://localhost:3000`
 - 健康检查：`http://localhost:3000/api/health`
 
-PostgreSQL 说明：
-- 本地开发请先确保 `DATABASE_URL` 指向可用 PostgreSQL。
-- `docker compose up -d --build` 会自动拉起 `postgres` 服务（默认映射到 `127.0.0.1:15432`）。
+## 飞书 OAuth 配置
 
-### 登录版额外配置（新项目）
+在飞书开放平台应用中添加 OAuth 回调地址：
 
-登录版需要飞书 OAuth 回调地址，请在飞书开放平台应用配置中添加：
+```text
+http://localhost:3000/api/auth/feishu/callback
+```
 
-- 回调地址：`http://localhost:3000/api/auth/feishu/callback`
-
-并在 `.env` 中确认以下变量：
+本地 `.env` 中确认：
 
 ```bash
 FEISHU_OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/feishu/callback
@@ -107,155 +119,95 @@ SESSION_COOKIE_SECURE=false
 SESSION_COOKIE_SAMESITE=lax
 SESSION_MAX_AGE_SECONDS=604800
 FRONTEND_POST_LOGIN_URL=http://localhost:5173
-DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/larkdocvar
 ```
 
-登录态说明：
+会话说明：
 
-- 当前默认会话有效期是 `604800` 秒（7 天）。
-- 用户 access_token 到期后会自动使用 refresh_token 刷新，不需要手工重登。
-- 在飞书内嵌 WebView 场景里，7 天通常也是最稳妥的上限。
-- 如需跨站嵌入，可尝试 `SESSION_COOKIE_SAMESITE=none` 且同时启用 `SESSION_COOKIE_SECURE=true`（HTTPS 必须）。
-- 会话只通过 httpOnly Cookie 传递，不会写入 URL 或浏览器本地存储。
+- 默认会话有效期为 7 天。
+- 本地开发通常使用 `SESSION_COOKIE_SAMESITE=lax`。
+- 跨站嵌入或 HTTPS 部署时，可按实际场景调整 SameSite 和 Secure 设置。
 
-模板权限说明（重要）：
+## 可选：多维表格配置同步
 
-- 模板变量提取接口要求先登录，后端会使用登录用户的 OAuth token 读取模板。
-- 因此模板文档只需要给“实际使用插件的用户”阅读权限即可。
-- 仍然需要配置 FBIF 应用凭证（`FEISHU_APP_ID / FEISHU_APP_SECRET`）用于登录与后续接口能力。
-
-相关接口：
-- 登录跳转：`/api/auth/feishu/login`
-- 会话查询：`/api/auth/session`
-- 退出登录：`/api/auth/logout`
-- 配置存取：`/api/configs`
-
-## 一次性迁移（Bitable -> PostgreSQL）
-
-用于把旧版 Bitable 里的模板配置迁移到 PostgreSQL（只需要执行一次）。
-
-1. 在 `.env` 补齐以下变量：
+后端可将用户模板配置同步到飞书多维表格。需要在 `.env` 中配置：
 
 ```bash
-DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/larkdocvar
-FEISHU_APP_ID=cli_fbif_xxx
-FEISHU_APP_SECRET=fbif_app_secret
-BITABLE_APP_TOKEN=your_legacy_bitable_app_token
-BITABLE_TABLE_ID=your_legacy_bitable_table_id
-```
-
-2. 先 dry-run 预览迁移量（不写库）：
-
-```bash
-DRY_RUN=true npm run migrate:bitable-to-pg
-```
-
-3. 确认后正式迁移：
-
-```bash
-npm run migrate:bitable-to-pg
+BITABLE_SYNC_ENABLED=true
+BITABLE_APP_TOKEN=base_app_token
+BITABLE_TABLE_ID=table_id
+BITABLE_SYNC_COOLDOWN_MS=60000
 ```
 
 说明：
-- 迁移按 `open_id + config_name` 去重，优先保留内容更完整（变量绑定更多）的版本，分数相同则保留更新时间更晚的版本。
-- 若 PostgreSQL 中不存在对应用户，会自动创建占位用户（`迁移用户-xxxxxx`）。
+
+- `BITABLE_SYNC_ENABLED=false` 可关闭同步。
+- `BITABLE_SYNC_COOLDOWN_MS` 用于限制频繁写入。
+- 应使用部署环境自己的多维表格 App Token 和表 ID。
+
+## API 概览
+
+常用接口：
+
+- `GET /api/health`：健康检查
+- `GET /api/auth/feishu/login`：跳转飞书登录
+- `GET /api/auth/feishu/callback`：OAuth 回调
+- `GET /api/auth/session`：查询当前会话
+- `POST /api/auth/logout`：退出登录
+- `POST /api/template/variables`：提取模板变量
+- `POST /api/documents/generate`：批量生成文档
+- `GET /api/templates/saved`：模板配置历史
+- `GET /api/configs/auto`：自动恢复配置
+- `GET /api/users/search`：搜索用户，用于协作者和所有权配置
 
 ## Docker 本地运行
 
-1. 准备 `.env`
-
 ```bash
 cp .env.example .env
-```
-
-2. 启动容器
-
-```bash
 docker compose up -d --build
 ```
 
-3. 访问
+默认地址：
 
-- 插件地址：`http://127.0.0.1:18081`
-- 健康检查：`http://127.0.0.1:18081/api/health`
+- 插件入口：`http://127.0.0.1:18080`
+- 健康检查：`http://127.0.0.1:18080/api/health`
 
-说明：
-- 容器内部服务端口默认 `3180`（变量：`CONTAINER_PORT`）
-- 宿主机端口默认 `18081`
-- `docker-compose.yml` 默认绑定 `127.0.0.1`，避免直接暴露公网和端口冲突
+端口相关变量：
 
-## 阿里云 ECS 一键部署（Docker）
+- `HOST_PORT`：宿主机映射端口
+- `CONTAINER_PORT`：容器内部服务端口
 
-仓库内已提供脚本：`scripts/deploy-aliyun-docker.sh`
+## 部署
 
-示例：
+仓库提供 Docker 远程部署脚本：
 
 ```bash
 ./scripts/deploy-aliyun-docker.sh \
-  --alias aliyun-prod \
+  --alias your-ssh-alias \
   --app-dir /opt/larkdocvar-login \
   --host-port 18081
 ```
 
-脚本行为：
-- 打包当前项目并上传到 ECS
-- 发布到 `/opt/larkdocvar-login/releases/<sha-time>`
-- 复用/生成 `.env`
-- 检查 `HOST_PORT` 冲突（被其他服务占用会中止）
-- `docker compose up -d --build` 滚动更新
-- 健康检查 `/api/health`
+脚本会打包当前项目、上传到服务器、复用或生成 `.env`、检查端口冲突、执行 `docker compose up -d --build`，并访问 `/api/health` 做健康检查。
 
-## GitHub Actions 自动部署
-
-已提供工作流：`.github/workflows/deploy-aliyun-docker.yml`
-
-触发方式：
-- push 到 `main`
-- 手动执行 `workflow_dispatch`
-
-至少配置以下仓库 Secrets：
-- `ALIYUN_SSH_KEY`（推荐）或 `ALIYUN_SSH_KEY_B64`
-
-推荐同时配置：
-- `ALIYUN_HOST`（默认 `112.124.103.65`）
-- `ALIYUN_USER`（默认 `root`）
-- `APP_DIR`（默认 `/opt/larkdocvar-login`）
-- `APP_NAME`（默认 `larkdocvar-login`）
-- `HOST_PORT`（默认 `18081`）
-- `CONTAINER_PORT`（默认 `3180`）
-- `APP_ENV_B64`（base64 编码后的 `.env` 内容，用于首次部署）
-
-## 域名接入（后续 DNS）
-
-目标域名：`login.larkdocvar.garyzheng.com`
-
-推荐接入方式：
-1. DNS 将该域名解析到 ECS 公网 IP
-2. 在服务器 Caddy/Nginx 反代到 `127.0.0.1:18081`
-
-Caddy 示例：
-
-```caddyfile
-login.larkdocvar.garyzheng.com {
-  reverse_proxy 127.0.0.1:18081
-}
-```
-
-完成后可将飞书边栏插件运行地址配置为：
-- `https://login.larkdocvar.garyzheng.com`
+仓库也包含 GitHub Actions 部署工作流。使用前请在仓库 Secrets 中配置 SSH Key、目标主机、部署目录、端口和 `.env` 内容等信息。
 
 ## 常用命令
 
 ```bash
-# 本地开发（自动装依赖）
-npm run dev
-
-# 仅构建前端
-npm run build
-
-# Docker
+npm run dev          # 本地开发，启动前端和后端
+npm run dev:raw      # 直接并行运行前端和后端
+npm run build        # 构建前端
+npm run preview      # 预览前端构建结果
+npm run start        # 启动后端服务
 npm run docker:build
 npm run docker:up
 npm run docker:logs
 npm run docker:down
 ```
+
+## 注意事项
+
+- 不要提交真实飞书应用密钥、OAuth token、会话 cookie 或生产环境 `.env`。
+- 模板变量名称建议与多维表格字段名称保持一致，可减少手动绑定。
+- 图片变量依赖附件字段中的可访问 URL，生成前请确认附件字段数据完整。
+- 生产环境应使用 HTTPS、真实域名和稳定的 OAuth 回调地址。
