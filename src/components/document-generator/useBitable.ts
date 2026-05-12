@@ -56,7 +56,7 @@ function normalizeField(raw: unknown): TableField | null {
   };
 }
 
-async function getSelectedRecordCount(table: ITable): Promise<number> {
+async function getSelectedRecordIds(table: ITable): Promise<string[]> {
   const ids = new Set<string>();
   try {
     const selection = await bitable.base.getSelection();
@@ -74,7 +74,7 @@ async function getSelectedRecordCount(table: ITable): Promise<number> {
   } catch {
     // ignore
   }
-  return ids.size;
+  return Array.from(ids);
 }
 
 async function resolveActiveTable(): Promise<ITable | null> {
@@ -108,16 +108,19 @@ async function resolveActiveTable(): Promise<ITable | null> {
 export interface BitableContext {
   available: boolean;
   fields: TableField[];
+  selectedRecordIds: string[];
   selectedCount: number;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
   totalRecordCount: number;
+  allRecordIds: string[];
 }
 
 export function useBitable(): BitableContext {
   const [fields, setFields] = useState<TableField[]>([]);
-  const [selectedCount, setSelectedCount] = useState(0);
+  const [selectedRecordIds, setSelectedRecordIds] = useState<string[]>([]);
+  const [allRecordIds, setAllRecordIds] = useState<string[]>([]);
   const [totalRecordCount, setTotalRecordCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -131,7 +134,8 @@ export function useBitable(): BitableContext {
       if (!table) {
         setAvailable(false);
         setFields([]);
-        setSelectedCount(0);
+        setSelectedRecordIds([]);
+        setAllRecordIds([]);
         setTotalRecordCount(0);
         setError('未获取到当前数据表，请在飞书多维表格边栏中运行。');
         return;
@@ -148,19 +152,20 @@ export function useBitable(): BitableContext {
         }
       }
       setFields(normalized);
-      setSelectedCount(await getSelectedRecordCount(table));
+      setSelectedRecordIds(await getSelectedRecordIds(table));
       try {
-        let total = 0;
+        const collected: string[] = [];
         let pageToken: number | undefined;
-        // limit to a few pages to avoid loading huge tables synchronously
         for (let i = 0; i < 5; i += 1) {
           const page = await table.getRecordIdListByPage({ pageSize: 200, pageToken });
-          total += page.recordIds.length;
+          collected.push(...page.recordIds);
           if (!page.hasMore) break;
           pageToken = page.pageToken;
         }
-        setTotalRecordCount(total);
+        setAllRecordIds(collected);
+        setTotalRecordCount(collected.length);
       } catch {
+        setAllRecordIds([]);
         setTotalRecordCount(0);
       }
     } catch (err) {
@@ -195,5 +200,15 @@ export function useBitable(): BitableContext {
     };
   }, [refresh]);
 
-  return { available, fields, selectedCount, loading, error, refresh, totalRecordCount };
+  return {
+    available,
+    fields,
+    selectedRecordIds,
+    selectedCount: selectedRecordIds.length,
+    loading,
+    error,
+    refresh,
+    totalRecordCount,
+    allRecordIds,
+  };
 }

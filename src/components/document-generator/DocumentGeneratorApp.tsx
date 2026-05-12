@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import './_design.css';
 import { PrimaryScreen } from './PrimaryScreen';
 import { PickerScreen } from './PickerScreen';
 import { NewTemplateScreen } from './NewTemplateScreen';
 import { ProgressModal } from './ProgressModal';
-import { TABLE_ROWS } from './mockData';
 import type {
   AccentKey,
   Accent,
+  GenerateRunner,
   PrimaryState,
+  RecordSpec,
   TableField,
   Template,
 } from './types';
@@ -47,6 +48,8 @@ export interface DocumentGeneratorAppProps {
   refreshTemplates?: () => Promise<void>;
   accentKey?: AccentKey;
   density?: 'comfortable' | 'compact';
+  runner: GenerateRunner;
+  recordsFor: (state: PrimaryState) => RecordSpec[];
 }
 
 export function DocumentGeneratorApp({
@@ -60,6 +63,8 @@ export function DocumentGeneratorApp({
   refreshTemplates,
   accentKey = 'blue',
   density = 'comfortable',
+  runner,
+  recordsFor,
 }: DocumentGeneratorAppProps) {
   const accent = ACCENTS[accentKey] || ACCENTS.blue;
   const initialTemplate = templates[0] ?? null;
@@ -97,11 +102,6 @@ export function DocumentGeneratorApp({
     }
   }, [templates, fields, state.template]);
 
-  const recordsForRun = useMemo(
-    () => TABLE_ROWS.slice(0, Math.min(state.selectedCount, TABLE_ROWS.length)),
-    [state.selectedCount],
-  );
-
   return (
     <div
       className={'app density-' + density}
@@ -116,7 +116,18 @@ export function DocumentGeneratorApp({
           setState={setState}
           fields={fields}
           openPicker={() => setPicker(true)}
-          startGenerate={() => setProgress(true)}
+          startGenerate={() => {
+            const records = recordsFor(state);
+            if (records.length === 0) return;
+            runner.start(records, {
+              template: state.template,
+              mapping: state.mapping,
+              customText: state.customText,
+              fileNameTpl: state.fileNameTpl,
+              writeBackField: state.writeBackField,
+            });
+            setProgress(true);
+          }}
           accent={accent.primary}
           userMenu={userMenu}
         />
@@ -181,9 +192,19 @@ export function DocumentGeneratorApp({
         )}
         {progress && (
           <ProgressModal
-            records={recordsForRun}
+            items={runner.items}
+            phase={runner.phase}
+            counts={runner.counts}
+            startedAt={runner.startedAt}
             accent={accent.primary}
-            onClose={() => setProgress(false)}
+            onPause={runner.pause}
+            onResume={runner.resume}
+            onStop={runner.stop}
+            onRetry={runner.retry}
+            onClose={() => {
+              setProgress(false);
+              runner.reset();
+            }}
             onMinimize={() => setProgress(false)}
           />
         )}

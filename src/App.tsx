@@ -6,16 +6,21 @@ import {
   DocumentGeneratorApp,
   useBitable,
   useTemplates,
+  useGenerateMock,
+  useGenerateReal,
   MOCK_FIELDS,
   MOCK_TEMPLATES,
+  MOCK_ROWS,
 } from "./components/document-generator";
+import type { PrimaryState, RecordSpec } from "./components/document-generator";
 
 const SidebarApp = lazy(() => import("./SidebarApp"));
 
-function useNewUI(): boolean {
+function useLegacyUI(): boolean {
+  // ?ui=v1 opts back into the old SidebarApp surface; default is v2.
   return useMemo(() => {
     try {
-      return new URLSearchParams(window.location.search).get("ui") === "v2";
+      return new URLSearchParams(window.location.search).get("ui") === "v1";
     } catch {
       return false;
     }
@@ -33,6 +38,17 @@ function useMockMode(): boolean {
 }
 
 function V2MockRoute({ userMenu }: { userMenu: ReactNode }) {
+  const runner = useGenerateMock();
+  const recordsFor = useCallback(
+    (state: PrimaryState): RecordSpec[] =>
+      MOCK_ROWS.slice(0, Math.min(state.selectedCount, MOCK_ROWS.length)).map(
+        (r: (typeof MOCK_ROWS)[number], i: number): RecordSpec => ({
+          id: `mock-${i + 1}`,
+          displayName: r.客户名称,
+        }),
+      ),
+    [],
+  );
   return (
     <DocumentGeneratorApp
       userMenu={userMenu}
@@ -40,6 +56,8 @@ function V2MockRoute({ userMenu }: { userMenu: ReactNode }) {
       templates={MOCK_TEMPLATES}
       selectedCount={6}
       bitableAvailable
+      runner={runner}
+      recordsFor={recordsFor}
     />
   );
 }
@@ -47,17 +65,27 @@ function V2MockRoute({ userMenu }: { userMenu: ReactNode }) {
 function V2RealRoute({ userMenu }: { userMenu: ReactNode }) {
   const base = useBitable();
   const templates = useTemplates();
+  const runner = useGenerateReal();
+  const recordsFor = useCallback(
+    (_state: PrimaryState): RecordSpec[] => {
+      const ids = base.selectedRecordIds.length > 0 ? base.selectedRecordIds : base.allRecordIds;
+      return ids.map((id, i) => ({ id, displayName: `记录 ${i + 1}` }));
+    },
+    [base.selectedRecordIds, base.allRecordIds],
+  );
   return (
     <DocumentGeneratorApp
       userMenu={userMenu}
       fields={base.fields}
       templates={templates.items}
-      selectedCount={base.selectedCount || base.totalRecordCount || 1}
+      selectedCount={base.selectedCount || base.totalRecordCount || 0}
       bitableAvailable={base.available}
       bitableError={base.error}
       templatesLoading={templates.loading}
       templatesError={templates.error}
       refreshTemplates={templates.refresh}
+      runner={runner}
+      recordsFor={recordsFor}
     />
   );
 }
@@ -331,10 +359,10 @@ export default function App() {
     clearAuthPendingFlag();
   }, [clearAuthPendingFlag]);
 
-  const useV2 = useNewUI();
+  const useV1 = useLegacyUI();
   const mockMode = useMockMode();
 
-  if (useV2 && mockMode) {
+  if (!useV1 && mockMode) {
     const mockUser: AuthUser = { openId: "mock_user", name: "演示账号", avatarUrl: undefined };
     return (
       <V2MockRoute
@@ -355,25 +383,25 @@ export default function App() {
     return <FeishuLoginCard onBeforeLogin={markAuthPending} authError={authError} />;
   }
 
-  if (useV2) {
+  if (useV1) {
     return (
-      <V2RealRoute
-        userMenu={authUser ? <AccountMenu user={authUser} onLogout={handleLogout} /> : null}
-      />
+      <WorkbenchErrorBoundary>
+        <Suspense
+          fallback={
+            <div className="min-h-screen flex items-center justify-center text-[14px] text-[#5f6670]">
+              正在加载工作台...
+            </div>
+          }
+        >
+          <SidebarApp initialAuthUser={authUser} />
+        </Suspense>
+      </WorkbenchErrorBoundary>
     );
   }
 
   return (
-    <WorkbenchErrorBoundary>
-      <Suspense
-        fallback={
-          <div className="min-h-screen flex items-center justify-center text-[14px] text-[#5f6670]">
-            正在加载工作台...
-          </div>
-        }
-      >
-        <SidebarApp initialAuthUser={authUser} />
-      </Suspense>
-    </WorkbenchErrorBoundary>
+    <V2RealRoute
+      userMenu={authUser ? <AccountMenu user={authUser} onLogout={handleLogout} /> : null}
+    />
   );
 }

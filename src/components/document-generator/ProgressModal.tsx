@@ -1,84 +1,52 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon } from './icons';
-import type { Phase, RecordItem, TableRow } from './types';
+import type { Counts, Phase, RecordItem } from './types';
 
 interface ProgressModalProps {
-  records: TableRow[];
+  items: RecordItem[];
+  phase: Phase;
+  counts: Counts;
+  startedAt: number;
   accent: string;
+  onPause: () => void;
+  onResume: () => void;
+  onStop: () => void;
+  onRetry: () => void;
   onClose: () => void;
   onMinimize: () => void;
 }
 
-export function ProgressModal({ records, accent, onClose, onMinimize }: ProgressModalProps) {
-  const [items, setItems] = useState<RecordItem[]>(() =>
-    records.map((r) => ({ ...r, status: 'pending', error: null })),
-  );
-  const [phase, setPhase] = useState<Phase>('running');
+export function ProgressModal({
+  items,
+  phase,
+  counts,
+  startedAt,
+  accent,
+  onPause,
+  onResume,
+  onStop,
+  onRetry,
+  onClose,
+  onMinimize,
+}: ProgressModalProps) {
   const [confirmStop, setConfirmStop] = useState(false);
-  const [startedAt] = useState(() => Date.now());
-
-  const counts = {
-    total: items.length,
-    succeeded: items.filter((i) => i.status === 'succeeded').length,
-    failed: items.filter((i) => i.status === 'failed').length,
-    pending: items.filter((i) => i.status === 'pending').length,
-    processing: items.filter((i) => i.status === 'processing').length,
-  };
-  const processedCount = counts.succeeded + counts.failed;
-  const pct = counts.total === 0 ? 0 : Math.round((processedCount / counts.total) * 100);
+  const tickRef = useRef(0);
+  const [, setTick] = useState(0);
 
   useEffect(() => {
     if (phase !== 'running') return;
-    const next = items.findIndex((i) => i.status === 'pending');
-    const proc = items.findIndex((i) => i.status === 'processing');
-    if (next === -1 && proc === -1) {
-      setPhase('done');
-      return;
-    }
-    if (proc === -1 && next !== -1) {
-      setItems((s) =>
-        s.map((it, idx) => (idx === next ? { ...it, status: 'processing' } : it)),
-      );
-      return;
-    }
-    const tid = window.setTimeout(() => {
-      setItems((s) =>
-        s.map((it, idx) => {
-          if (idx !== proc) return it;
-          const willFail = (idx + 3) % 9 === 0;
-          return willFail
-            ? { ...it, status: 'failed', error: '字段 "金额" 为空，未填写' }
-            : { ...it, status: 'succeeded' };
-        }),
-      );
-    }, 380 + Math.random() * 320);
-    return () => window.clearTimeout(tid);
-  }, [items, phase]);
+    const id = window.setInterval(() => {
+      tickRef.current += 1;
+      setTick(tickRef.current);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [phase]);
 
-  const elapsedSec = Math.round((Date.now() - startedAt) / 1000);
+  const processedCount = counts.succeeded + counts.failed;
+  const pct = counts.total === 0 ? 0 : Math.round((processedCount / counts.total) * 100);
+  const elapsedSec = startedAt > 0 ? Math.max(0, Math.round((Date.now() - startedAt) / 1000)) : 0;
   const rate = processedCount > 0 && elapsedSec > 0 ? processedCount / elapsedSec : 0.8;
   const eta = rate > 0 ? Math.ceil((counts.total - processedCount) / rate) : null;
-
-  const togglePause = () => setPhase((p) => (p === 'paused' ? 'running' : 'paused'));
-  const askStop = () => setConfirmStop(true);
-  const doStop = () => {
-    setItems((s) =>
-      s.map((i) =>
-        i.status === 'processing' || i.status === 'pending'
-          ? { ...i, status: 'failed', error: '已被用户终止' }
-          : i,
-      ),
-    );
-    setPhase('terminated');
-    setConfirmStop(false);
-  };
-
-  const retryFailed = () => {
-    setItems((s) =>
-      s.map((i) => (i.status === 'failed' ? { ...i, status: 'pending', error: null } : i)),
-    );
-    setPhase('running');
-  };
 
   const isDone = phase === 'done' || phase === 'terminated';
   const headerLabel =
@@ -90,7 +58,15 @@ export function ProgressModal({ records, accent, onClose, onMinimize }: Progress
       ? counts.failed === 0
         ? '生成完成'
         : '生成完成（含失败）'
+      : phase === 'idle'
+      ? '准备生成'
       : '正在生成';
+
+  const askStop = () => setConfirmStop(true);
+  const doStop = () => {
+    onStop();
+    setConfirmStop(false);
+  };
 
   return (
     <div className="modal-scrim">
@@ -109,6 +85,7 @@ export function ProgressModal({ records, accent, onClose, onMinimize }: Progress
                   `已完成 ${counts.succeeded} 份 · ${counts.failed} 份中断`}
                 {phase === 'done' &&
                   `${counts.succeeded} 成功 · ${counts.failed} 失败 · 用时 ${elapsedSec} 秒`}
+                {phase === 'idle' && `${counts.total} 条记录待处理`}
               </div>
             </div>
           </div>
@@ -138,7 +115,7 @@ export function ProgressModal({ records, accent, onClose, onMinimize }: Progress
               style={{
                 width: pct + '%',
                 background:
-                  counts.failed > 0
+                  counts.failed > 0 && counts.total > 0
                     ? `linear-gradient(90deg, ${accent} 0%, ${accent} calc(100% - ${
                         (counts.failed / counts.total) * 100
                       }%), #d83931 calc(100% - ${
@@ -182,7 +159,7 @@ export function ProgressModal({ records, accent, onClose, onMinimize }: Progress
           </div>
           <div className="rec-scroll">
             {items.map((it, i) => (
-              <RecordRow key={i} idx={i + 1} item={it} accent={accent} />
+              <RecordRow key={it.id || i} idx={i + 1} item={it} accent={accent} />
             ))}
           </div>
         </div>
@@ -190,32 +167,24 @@ export function ProgressModal({ records, accent, onClose, onMinimize }: Progress
         <div className="modal-ftr">
           {phase === 'running' && (
             <>
-              <button
-                className="btn-ghost btn-danger"
-                type="button"
-                onClick={askStop}
-              >
+              <button className="btn-ghost btn-danger" type="button" onClick={askStop}>
                 <Icon.Stop /> 终止
               </button>
-              <button className="btn-ghost" type="button" onClick={togglePause}>
+              <button className="btn-ghost" type="button" onClick={onPause}>
                 <Icon.Pause /> 暂停
               </button>
             </>
           )}
           {phase === 'paused' && (
             <>
-              <button
-                className="btn-ghost btn-danger"
-                type="button"
-                onClick={askStop}
-              >
+              <button className="btn-ghost btn-danger" type="button" onClick={askStop}>
                 <Icon.Stop /> 终止
               </button>
               <button
                 className="btn-primary"
                 type="button"
                 style={{ background: accent }}
-                onClick={togglePause}
+                onClick={onResume}
               >
                 <Icon.Play /> 继续
               </button>
@@ -224,7 +193,7 @@ export function ProgressModal({ records, accent, onClose, onMinimize }: Progress
           {isDone && (
             <>
               {counts.failed > 0 && (
-                <button className="btn-ghost" type="button" onClick={retryFailed}>
+                <button className="btn-ghost" type="button" onClick={onRetry}>
                   <Icon.Retry /> 重试失败 ({counts.failed})
                 </button>
               )}
@@ -282,18 +251,11 @@ function ConfirmStop({
   );
 }
 
-function StatusDot({
-  phase,
-  failed,
-  accent,
-}: {
-  phase: Phase;
-  failed: number;
-  accent: string;
-}) {
+function StatusDot({ phase, failed, accent }: { phase: Phase; failed: number; accent: string }) {
   if (phase === 'paused') return <span className="sd sd-paused" />;
   if (phase === 'terminated') return <span className="sd sd-err" />;
   if (phase === 'done') return <span className={'sd ' + (failed === 0 ? 'sd-ok' : 'sd-warn')} />;
+  if (phase === 'idle') return <span className="sd sd-paused" />;
   return <span className="sd sd-run" style={{ ['--sd' as string]: accent } as React.CSSProperties} />;
 }
 
@@ -301,7 +263,7 @@ function RecordRow({ idx, item, accent }: { idx: number; item: RecordItem; accen
   return (
     <div className={'rec-row rec-' + item.status}>
       <span className="rec-idx">{String(idx).padStart(2, '0')}</span>
-      <span className="rec-name">{item.客户名称}</span>
+      <span className="rec-name">{item.displayName}</span>
       <span className="rec-status">
         {item.status === 'pending' && <span className="rs rs-pend">待处理</span>}
         {item.status === 'processing' && (

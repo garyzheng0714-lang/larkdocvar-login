@@ -46,12 +46,49 @@ export interface Accent {
   soft: string;
 }
 
-export type Phase = 'running' | 'paused' | 'done' | 'terminated';
+export type Phase = 'idle' | 'running' | 'paused' | 'done' | 'terminated';
 export type RecordStatus = 'pending' | 'processing' | 'succeeded' | 'failed';
 
-export interface RecordItem extends TableRow {
+export interface RecordItem {
+  id: string;
+  displayName: string;
   status: RecordStatus;
   error: string | null;
+  downloadUrl?: string;
+}
+
+export interface Counts {
+  total: number;
+  succeeded: number;
+  failed: number;
+  pending: number;
+  processing: number;
+}
+
+export interface RecordSpec {
+  id: string;
+  displayName: string;
+}
+
+export interface GenerateOptions {
+  template: Template | null;
+  mapping: Record<string, string>;
+  customText: Record<string, string>;
+  fileNameTpl: string;
+  writeBackField: string;
+}
+
+export interface GenerateRunner {
+  items: RecordItem[];
+  phase: Phase;
+  counts: Counts;
+  startedAt: number;
+  start: (records: RecordSpec[], options?: GenerateOptions) => void;
+  pause: () => void;
+  resume: () => void;
+  stop: () => void;
+  retry: () => void;
+  reset: () => void;
 }
 
 export interface PrimaryState {
