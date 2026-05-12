@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>选择模板</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {},
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    spacing: {},
+                    fontFamily: {
+                        "headline": ["Inter", "system-ui", "sans-serif"],
+                        "display": ["Inter", "system-ui", "sans-serif"],
+                        "body": ["Inter", "system-ui", "sans-serif"],
+                        "label": ["Inter", "system-ui", "sans-serif"]
+                    },
+                    fontSize: {}
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        /* Custom scrollbar for webkit */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background-color: #dee0e3;
+            border-radius: 20px;
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-white text-[#1f2329] antialiased flex justify-center items-start min-h-screen">
+<!-- Container matching Lark Base sidebar width -->
+<div class="w-[420px] bg-white border-l border-r border-[#ebedf0] min-h-screen flex flex-col relative shadow-[0_0_20px_rgba(0,0,0,0.05)]">
+<!-- Header -->
+<header class="flex items-center justify-between px-4 h-[44px] border-b border-[#ebedf0] shrink-0">
+<div class="flex items-center gap-2">
+<button class="p-1 -ml-1 text-[#5f6670] hover:bg-[#f5f6f7] rounded transition-colors duration-200">
+<span class="material-symbols-outlined text-[18px]">arrow_back</span>
+</button>
+<h1 class="text-[14px] font-semibold text-[#1f2329]">选择模板</h1>
+</div>
+<button class="text-[13px] font-medium text-[#3370ff] hover:text-[#245bdb] transition-colors duration-200">
+                新建
+            </button>
+</header>
+<!-- Tabs -->
+<div class="px-4 flex gap-6 border-b border-[#ebedf0] shrink-0">
+<button class="text-[14px] font-medium text-[#3370ff] h-[40px] border-b-2 border-[#3370ff] relative -mb-[1px]">
+                公用模板
+            </button>
+<button class="text-[14px] font-medium text-[#5f6670] hover:text-[#1f2329] h-[40px] border-b-2 border-transparent transition-colors duration-200">
+                个人模板
+            </button>
+</div>
+<!-- Search & Filters -->
+<div class="p-4 shrink-0 flex flex-col gap-3">
+<!-- Search -->
+<div class="relative flex items-center w-full">
+<span class="material-symbols-outlined absolute left-3 text-[16px] text-[#8f959e]">search</span>
+<input class="w-full h-[32px] bg-[#f5f6f7] border-none rounded-[6px] pl-9 pr-3 text-[13px] text-[#1f2329] placeholder-[#8f959e] focus:ring-1 focus:ring-[#3370ff] transition-shadow duration-200" placeholder="搜索模板名称" type="text"/>
+</div>
+<!-- Filters (Scrollable horizontally) -->
+<div class="flex items-center gap-2 overflow-x-auto hide-scrollbar pb-1">
+<button class="shrink-0 px-3 h-[28px] rounded-[6px] border border-[#1f2329] text-[#1f2329] text-[13px] font-medium">全部</button>
+<button class="shrink-0 px-3 h-[28px] rounded-[6px] bg-[#f5f6f7] hover:bg-[#ebedf0] text-[#5f6670] text-[13px] transition-colors duration-200">合同类</button>
+<button class="shrink-0 px-3 h-[28px] rounded-[6px] bg-[#f5f6f7] hover:bg-[#ebedf0] text-[#5f6670] text-[13px] transition-colors duration-200">通知类</button>
+<button class="shrink-0 px-3 h-[28px] rounded-[6px] bg-[#f5f6f7] hover:bg-[#ebedf0] text-[#5f6670] text-[13px] transition-colors duration-200">报表类</button>
+<button class="shrink-0 px-3 h-[28px] rounded-[6px] bg-[#f5f6f7] hover:bg-[#ebedf0] text-[#5f6670] text-[13px] transition-colors duration-200">证明类</button>
+</div>
+</div>
+<!-- Grid Content -->
+<div class="flex-1 overflow-y-auto p-4 pt-0">
+<div class="grid grid-cols-2 gap-2">
+<!-- Card 1 (Selected) -->
+<div class="relative group cursor-pointer">
+<div class="rounded-[8px] border-2 border-[#3370ff] overflow-hidden flex flex-col bg-white">
+<div class="h-[100px] bg-[#f5f6f7] flex items-center justify-center p-4 relative" style="background-image: radial-gradient(#dee0e3 1px, transparent 1px); background-size: 8px 8px;">
+<span class="material-symbols-outlined absolute top-2 right-2 text-[#3370ff] text-[16px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+<!-- Placeholder pattern representing document structure -->
+<div class="w-full max-w-[80%] space-y-2 opacity-50">
+<div class="h-2 bg-[#1f2329] rounded-full w-3/4"></div>
+<div class="h-2 bg-[#8f959e] rounded-full w-full"></div>
+<div class="h-2 bg-[#8f959e] rounded-full w-5/6"></div>
+<div class="h-2 bg-[#8f959e] rounded-full w-1/2"></div>
+</div>
+</div>
+<div class="p-3">
+<h3 class="text-[13px] font-medium text-[#1f2329] truncate mb-1">标准商业合同模板</h3>
+<p class="text-[11px] text-[#8f959e] truncate">8 变量 · 5 月 10 日</p>
+</div>
+</div>
+</div>
+<!-- Card 2 -->
+<div class="relative group cursor-pointer">
+<div class="rounded-[8px] border border-[#ebedf0] group-hover:border-[#bfd0ff] overflow-hidden flex flex-col bg-white transition-colors duration-200">
+<div class="h-[100px] bg-[#f5f6f7] group-hover:bg-[#f7f9fc] flex items-center justify-center p-4 transition-colors duration-200" style="background-image: radial-gradient(#dee0e3 1px, transparent 1px); background-size: 8px 8px;">
+<div class="w-full max-w-[80%] space-y-2 opacity-30">
+<div class="h-2 bg-[#1f2329] rounded-full w-1/2"></div>
+<div class="h-2 bg-[#8f959e] rounded-full w-full"></div>
+<div class="h-2 bg-[#8f959e] rounded-full w-full"></div>
+</div>
+</div>
+<div class="p-3">
+<h3 class="text-[13px] font-medium text-[#1f2329] truncate mb-1">入职欢迎信</h3>
+<p class="text-[11px] text-[#8f959e] truncate">3 变量 · 4 月 28 日</p>
+</div>
+</div>
+</div>
+<!-- Card 3 -->
+<div class="relative group cursor-pointer">
+<div class="rounded-[8px] border border-[#ebedf0] group-hover:border-[#bfd0ff] overflow-hidden flex flex-col bg-white transition-colors duration-200">
+<div class="h-[100px] bg-[#f5f6f7] group-hover:bg-[#f7f9fc] flex items-center justify-center p-4 transition-colors duration-200" style="background-image: radial-gradient(#dee0e3 1px, transparent 1px); background-size: 8px 8px;">
+<div class="w-full max-w-[80%] space-y-2 opacity-30">
+<div class="h-2 bg-[#1f2329] rounded-full w-2/3"></div>
+<div class="h-6 border border-[#8f959e] rounded-[4px] w-full mt-2"></div>
+<div class="h-2 bg-[#8f959e] rounded-full w-1/3"></div>
+</div>
+</div>
+<div class="p-3">
+<h3 class="text-[13px] font-medium text-[#1f2329] truncate mb-1">月度销售报表</h3>
+<p class="text-[11px] text-[#8f959e] truncate">12 变量 · 5 月 1 日</p>
+</div>
+</div>
+</div>
+<!-- Card 4 -->
+<div class="relative group cursor-pointer">
+<div class="rounded-[8px] border border-[#ebedf0] group-hover:border-[#bfd0ff] overflow-hidden flex flex-col bg-white transition-colors duration-200">
+<div class="h-[100px] bg-[#f5f6f7] group-hover:bg-[#f7f9fc] flex items-center justify-center p-4 transition-colors duration-200" style="background-image: radial-gradient(#dee0e3 1px, transparent 1px); background-size: 8px 8px;">
+<div class="w-full max-w-[80%] space-y-2 opacity-30">
+<div class="flex justify-center mb-2"><div class="h-6 w-6 rounded-full bg-[#1f2329]"></div></div>
+<div class="h-2 bg-[#1f2329] rounded-full w-1/2 mx-auto"></div>
+<div class="h-2 bg-[#8f959e] rounded-full w-3/4 mx-auto"></div>
+</div>
+</div>
+<div class="p-3">
+<h3 class="text-[13px] font-medium text-[#1f2329] truncate mb-1">在职证明</h3>
+<p class="text-[11px] text-[#8f959e] truncate">4 变量 · 3 月 15 日</p>
+</div>
+</div>
+</div>
+<!-- Card 5 -->
+<div class="relative group cursor-pointer">
+<div class="rounded-[8px] border border-[#ebedf0] group-hover:border-[#bfd0ff] overflow-hidden flex flex-col bg-white transition-colors duration-200">
+<div class="h-[100px] bg-[#f5f6f7] group-hover:bg-[#f7f9fc] flex items-center justify-center p-4 transition-colors duration-200" style="background-image: radial-gradient(#dee0e3 1px, transparent 1px); background-size: 8px 8px;">
+<div class="w-full max-w-[80%] space-y-2 opacity-30">
+<div class="h-2 bg-[#1f2329] rounded-full w-3/4"></div>
+<div class="h-2 bg-[#8f959e] rounded-full w-full"></div>
+<div class="h-2 bg-[#8f959e] rounded-full w-5/6"></div>
+<div class="h-2 bg-[#8f959e] rounded-full w-1/2"></div>
+</div>
+</div>
+<div class="p-3">
+<h3 class="text-[13px] font-medium text-[#1f2329] truncate mb-1">保密协议 (NDA)</h3>
+<p class="text-[11px] text-[#8f959e] truncate">5 变量 · 5 月 8 日</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Extra padding at bottom for the fixed bar -->
+<div class="h-[80px]"></div>
+</div>
+<!-- Bottom Bar -->
+<div class="absolute bottom-0 left-0 w-full bg-white border-t border-[#ebedf0] p-4 flex items-center justify-between z-10">
+<button class="px-4 py-2 text-[13px] font-medium text-[#5f6670] hover:bg-[#f5f6f7] rounded-[6px] transition-colors duration-200">
+                取消
+            </button>
+<button class="w-[60%] bg-[#3370ff] hover:bg-[#245bdb] text-white text-[14px] font-medium py-2 rounded-[6px] transition-colors duration-200 active:scale-[0.98]">
+                确认使用
+            </button>
+</div>
+</div>
+</body></html>

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#3370ff",
+                        "primary-hover": "#245bdb",
+                        "on-primary": "#ffffff",
+                        "bg-main": "#ffffff",
+                        "bg-sidebar": "#f5f6f7",
+                        "border-light": "#ebedf0",
+                        "text-main": "#1f2329",
+                        "text-secondary": "#5f6670",
+                        "text-tertiary": "#8f959e",
+                        "status-error": "#d93026",
+                        "status-success": "#00b865",
+                        "status-warning": "#c89000",
+                        "status-error-bg": "#feeceb",
+                        "status-warning-bg": "#fff7e6"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "10px",
+                        "md": "8px",
+                        "sm": "6px",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    fontFamily: {
+                        "headline": ["Inter", "sans-serif"],
+                        "display": ["Inter", "sans-serif"],
+                        "body": ["Inter", "sans-serif"],
+                        "label": ["Inter", "sans-serif"],
+                        "mono": ["JetBrains Mono", "monospace"]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+            font-size: 18px;
+            vertical-align: middle;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: #ffffff;
+            color: #1f2329;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #dee0e3;
+            border-radius: 10px;
+        }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-main antialiased selection:bg-primary/10">
+<!-- Top Navigation Anchor (Manual mapping to JSON TopAppBar style) -->
+<header class="fixed top-0 left-0 w-full z-50 bg-[#ffffff] h-[56px] flex items-center justify-between px-4 border-b border-[#ebedf0]">
+<div class="flex items-center gap-2">
+<button class="w-8 h-8 flex items-center justify-center hover:bg-[#f5f6f7] rounded-full transition-colors">
+<span class="material-symbols-outlined text-text-main">chevron_left</span>
+</button>
+<h1 class="text-[16px] font-medium text-text-main">字段匹配</h1>
+</div>
+<button class="text-[13px] text-primary font-medium hover:underline">更换模板</button>
+</header>
+<main class="pt-[56px] pb-[80px] max-w-[420px] mx-auto min-h-screen">
+<!-- Template Context Card -->
+<div class="m-3 p-3 bg-white border border-border-light rounded-lg flex items-center gap-3">
+<div class="w-[32px] h-[40px] bg-[#f5f6f7] rounded-[4px] flex items-center justify-center border border-border-light overflow-hidden">
+<span class="material-symbols-outlined text-text-tertiary">description</span>
+</div>
+<div class="flex-1">
+<div class="text-[14px] font-medium text-text-main">标准商业合同模板</div>
+<div class="text-[12px] text-text-tertiary">8 变量 · 47 行待生成</div>
+</div>
+</div>
+<!-- Sticky Tab Bar -->
+<div class="sticky top-[56px] z-40 bg-white px-4 border-b border-border-light flex gap-6 h-[40px] items-center">
+<button class="relative h-full flex items-center text-[13px] font-medium text-primary">
+                需要确认 · 2
+                <div class="absolute bottom-0 left-0 w-full h-[2px] bg-primary"></div>
+</button>
+<button class="h-full flex items-center text-[13px] text-text-tertiary hover:text-text-secondary transition-colors">
+                已绑定 · 6
+            </button>
+</div>
+<!-- Search Bar -->
+<div class="px-3 py-3">
+<div class="relative flex items-center">
+<span class="material-symbols-outlined absolute left-3 text-text-tertiary text-[16px]">search</span>
+<input class="w-full h-[32px] pl-9 pr-3 bg-bg-sidebar border-none rounded-sm text-[13px] focus:ring-1 focus:ring-primary/20 placeholder:text-text-tertiary" placeholder="搜索变量或字段" type="text"/>
+</div>
+</div>
+<!-- Mapping List -->
+<div class="space-y-[10px] px-3">
+<!-- Row 1: Unbound (Critical Warning) -->
+<div class="p-3 bg-white border-[1px] border-[#e89c9c] rounded-lg shadow-sm">
+<div class="flex justify-between items-start mb-3">
+<code class="font-mono text-[13px] text-text-main bg-[#f5f6f7] px-1.5 py-0.5 rounded">employee_name</code>
+<span class="text-[11px] font-medium text-status-error bg-status-error-bg px-1.5 py-0.5 rounded-sm">未绑定</span>
+</div>
+<button class="w-full h-[32px] px-3 bg-bg-sidebar rounded-sm flex items-center justify-between text-[13px] border border-transparent hover:border-primary/30 transition-all group">
+<span class="italic text-text-tertiary">选择字段</span>
+<span class="material-symbols-outlined text-text-tertiary group-hover:text-primary transition-colors">expand_more</span>
+</button>
+</div>
+<!-- Row 2: Suggested (Action Needed) -->
+<div class="p-3 bg-white border border-border-light rounded-lg shadow-sm">
+<div class="flex justify-between items-start mb-3">
+<code class="font-mono text-[13px] text-text-main bg-[#f5f6f7] px-1.5 py-0.5 rounded">join_date</code>
+<span class="text-[11px] font-medium text-status-warning bg-status-warning-bg px-1.5 py-0.5 rounded-sm">建议</span>
+</div>
+<button class="w-full h-[32px] px-3 bg-bg-sidebar rounded-sm flex items-center justify-between text-[13px] border border-transparent hover:border-primary/30 transition-all group">
+<span class="text-text-main">入职时间</span>
+<span class="material-symbols-outlined text-text-tertiary group-hover:text-primary transition-colors">expand_more</span>
+</button>
+</div>
+<!-- Row 3: Bound (Muted State) -->
+<div class="p-3 bg-white/95 border border-border-light rounded-lg opacity-95">
+<div class="flex justify-between items-start mb-3">
+<code class="font-mono text-[13px] text-text-secondary bg-[#f5f6f7] px-1.5 py-0.5 rounded">contract_id</code>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-status-success text-[14px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+<span class="text-[11px] font-medium text-status-success">已绑定</span>
+</div>
+</div>
+<div class="w-full h-[32px] px-3 bg-[#f5f6f7]/50 rounded-sm flex items-center justify-between text-[13px] border border-transparent cursor-not-allowed">
+<span class="text-text-secondary">合同编号</span>
+<span class="material-symbols-outlined text-text-tertiary text-[14px]">lock</span>
+</div>
+</div>
+<!-- Row 4: Bound (Muted State) -->
+<div class="p-3 bg-white/95 border border-border-light rounded-lg opacity-95">
+<div class="flex justify-between items-start mb-3">
+<code class="font-mono text-[13px] text-text-secondary bg-[#f5f6f7] px-1.5 py-0.5 rounded">company_legal_rep</code>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-status-success text-[14px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+<span class="text-[11px] font-medium text-status-success">已绑定</span>
+</div>
+</div>
+<div class="w-full h-[32px] px-3 bg-[#f5f6f7]/50 rounded-sm flex items-center justify-between text-[13px] border border-transparent cursor-not-allowed">
+<span class="text-text-secondary">法人代表</span>
+<span class="material-symbols-outlined text-text-tertiary text-[14px]">lock</span>
+</div>
+</div>
+<!-- Row 5: Bound (Muted State) -->
+<div class="p-3 bg-white/95 border border-border-light rounded-lg opacity-95">
+<div class="flex justify-between items-start mb-3">
+<code class="font-mono text-[13px] text-text-secondary bg-[#f5f6f7] px-1.5 py-0.5 rounded">effective_period</code>
+<div class="flex items-center gap-1">
+<span class="material-symbols-outlined text-status-success text-[14px]" style="font-variation-settings: 'FILL' 1;">check_circle</span>
+<span class="text-[11px] font-medium text-status-success">已绑定</span>
+</div>
+</div>
+<div class="w-full h-[32px] px-3 bg-[#f5f6f7]/50 rounded-sm flex items-center justify-between text-[13px] border border-transparent cursor-not-allowed">
+<span class="text-text-secondary">有效期</span>
+<span class="material-symbols-outlined text-text-tertiary text-[14px]">lock</span>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Navigation Shell (Execution of Shared Component BottomNavBar & Sticky Design) -->
+<footer class="fixed bottom-0 left-0 w-full z-50 bg-[#ffffff] h-[64px] border-t border-[#ebedf0] shadow-[0_-4px_12px_rgba(0,0,0,0.05)] flex items-center px-4 gap-3">
+<button class="flex items-center justify-center gap-1 w-[32%] h-[40px] text-[13px] font-medium text-text-secondary hover:bg-[#f5f6f7] rounded-sm transition-all active:scale-95">
+<span class="material-symbols-outlined text-[18px]">visibility</span>
+            Preview
+        </button>
+<button class="flex-1 h-[40px] bg-primary hover:bg-primary-hover text-white rounded-md text-[13px] font-medium flex items-center justify-center gap-2 shadow-sm transition-all active:scale-[0.98]">
+<span>开始生成 47 行</span>
+<span class="material-symbols-outlined text-[18px]">play_circle</span>
+</button>
+</footer>
+</body></html>
