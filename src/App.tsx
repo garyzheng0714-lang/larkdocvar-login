@@ -1,5 +1,5 @@
-import { Component, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ErrorInfo, ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { FeishuLoginCard } from "./components/FeishuLoginCard";
 import {
@@ -13,19 +13,6 @@ import {
   MOCK_ROWS,
 } from "./components/document-generator";
 import type { PrimaryState, RecordSpec } from "./components/document-generator";
-
-const SidebarApp = lazy(() => import("./SidebarApp"));
-
-function useLegacyUI(): boolean {
-  // ?ui=v1 opts back into the old SidebarApp surface; default is v2.
-  return useMemo(() => {
-    try {
-      return new URLSearchParams(window.location.search).get("ui") === "v1";
-    } catch {
-      return false;
-    }
-  }, []);
-}
 
 function useMockMode(): boolean {
   return useMemo(() => {
@@ -186,43 +173,6 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<R
   });
 }
 
-class WorkbenchErrorBoundary extends Component<
-  { children: ReactNode },
-  { hasError: boolean }
-> {
-  state = { hasError: false };
-
-  static getDerivedStateFromError(): { hasError: boolean } {
-    return { hasError: true };
-  }
-
-  componentDidCatch(error: unknown, info: ErrorInfo): void {
-    // eslint-disable-next-line no-console
-    console.error("workbench load failed:", error, info.componentStack);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="min-h-screen flex items-center justify-center px-6 text-center text-[14px] text-[#5f6670]">
-          <div className="space-y-3">
-            <div className="text-[#1f2329] font-medium">工作台加载失败，请刷新页面后重试。</div>
-            <button
-              type="button"
-              onClick={() => window.location.reload()}
-              className="h-9 px-4 rounded-[6px] bg-[#255f89] text-white text-[13px] font-medium"
-            >
-              重新加载
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return this.props.children;
-  }
-}
-
 export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -359,10 +309,9 @@ export default function App() {
     clearAuthPendingFlag();
   }, [clearAuthPendingFlag]);
 
-  const useV1 = useLegacyUI();
   const mockMode = useMockMode();
 
-  if (!useV1 && mockMode) {
+  if (mockMode) {
     const mockUser: AuthUser = { openId: "mock_user", name: "演示账号", avatarUrl: undefined };
     return (
       <V2MockRoute
@@ -381,22 +330,6 @@ export default function App() {
 
   if (!isAuthenticated) {
     return <FeishuLoginCard onBeforeLogin={markAuthPending} authError={authError} />;
-  }
-
-  if (useV1) {
-    return (
-      <WorkbenchErrorBoundary>
-        <Suspense
-          fallback={
-            <div className="min-h-screen flex items-center justify-center text-[14px] text-[#5f6670]">
-              正在加载工作台...
-            </div>
-          }
-        >
-          <SidebarApp initialAuthUser={authUser} />
-        </Suspense>
-      </WorkbenchErrorBoundary>
-    );
   }
 
   return (

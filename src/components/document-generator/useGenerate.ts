@@ -89,6 +89,29 @@ export function useGenerateMock(): GenerateRunner {
 
 const BATCH_SIZE = 10;
 
+async function readAttachmentUrls(
+  tableId: string,
+  fieldId: string,
+  recordId: string,
+): Promise<string[]> {
+  try {
+    const table = await bitable.base.getTableById(tableId);
+    const value = await table.getCellValue(fieldId, recordId);
+    if (!Array.isArray(value)) return [];
+    const urls: string[] = [];
+    for (const item of value) {
+      if (item && typeof item === 'object') {
+        const obj = item as Record<string, unknown>;
+        const url = (obj.url ?? obj.tmp_url ?? obj.downloadUrl) as string | undefined;
+        if (typeof url === 'string' && url) urls.push(url);
+      }
+    }
+    return urls;
+  } catch {
+    return [];
+  }
+}
+
 async function readCellString(
   tableId: string,
   fieldId: string,
@@ -186,9 +209,17 @@ export function useGenerateReal(): GenerateRunner {
       const batchPayload = await Promise.all(
         slice.map(async (r) => {
           const variables: Record<string, string> = {};
+          const imageVariables: Record<string, string[]> = {};
           for (const v of options.template?.variables ?? []) {
-            if (v.kind === 'image') continue;
             const fieldId = options.mapping[v.name];
+            if (v.kind === 'image') {
+              if (fieldId && fieldId !== '__custom__') {
+                imageVariables[v.name] = await readAttachmentUrls(tableId, fieldId, r.id);
+              } else {
+                imageVariables[v.name] = [];
+              }
+              continue;
+            }
             if (fieldId === '__custom__') {
               variables[v.name] = options.customText[v.name] ?? '';
             } else if (fieldId) {
@@ -198,7 +229,13 @@ export function useGenerateReal(): GenerateRunner {
             }
           }
           const fileName = interpolateFileName(options.fileNameTpl, variables);
-          return { recordId: r.id, variables, output: { fileName } };
+          const payload: Record<string, unknown> = {
+            recordId: r.id,
+            variables,
+            output: { fileName },
+          };
+          if (Object.keys(imageVariables).length > 0) payload.imageVariables = imageVariables;
+          return payload;
         }),
       );
 
