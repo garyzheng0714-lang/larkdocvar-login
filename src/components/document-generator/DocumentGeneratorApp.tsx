@@ -54,6 +54,7 @@ export interface DocumentGeneratorAppProps {
   accentKey?: AccentKey;
   density?: 'comfortable' | 'compact';
   mode?: 'bitable' | 'standalone';
+  createAttachmentField?: (name?: string) => Promise<TableField>;
   runner: GenerateRunner;
   recordsFor: (state: PrimaryState) => RecordSpec[];
 }
@@ -70,6 +71,7 @@ export function DocumentGeneratorApp({
   accentKey = 'blue',
   density = 'comfortable',
   mode = 'bitable',
+  createAttachmentField,
   runner,
   recordsFor,
 }: DocumentGeneratorAppProps) {
@@ -128,6 +130,7 @@ export function DocumentGeneratorApp({
           setState={setState}
           fields={fields}
           mode={mode}
+          createAttachmentField={createAttachmentField}
           openPicker={() => setPicker(true)}
           startGenerate={() => {
             const records = recordsFor(state);

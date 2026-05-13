@@ -9,6 +9,7 @@ interface PrimaryScreenProps {
   setState: Dispatch<SetStateAction<PrimaryState>>;
   fields: TableField[];
   mode?: 'bitable' | 'standalone';
+  createAttachmentField?: (name?: string) => Promise<TableField>;
   openPicker: () => void;
   startGenerate: () => void;
   accent: string;
@@ -20,6 +21,7 @@ export function PrimaryScreen({
   setState,
   fields,
   mode = 'bitable',
+  createAttachmentField,
   openPicker,
   startGenerate,
   accent,
@@ -41,6 +43,23 @@ export function PrimaryScreen({
       ).length
     : 0;
   const canGenerate = !!tpl && unmappedCount === 0;
+
+  function isCompatibleField(variable: TemplateVariable, field: TableField): boolean {
+    return variable.kind === 'image' ? field.type === 'attachment' : field.type !== 'attachment';
+  }
+
+  function findSmartField(variable: TemplateVariable): string | undefined {
+    const direct = fields.find(
+      (f) => f.name.trim().toLowerCase() === variable.name.trim().toLowerCase()
+        && isCompatibleField(variable, f),
+    );
+    if (direct) return direct.id;
+    if (variable.suggested) {
+      const suggested = fields.find((f) => f.id === variable.suggested && isCompatibleField(variable, f));
+      if (suggested) return suggested.id;
+    }
+    return undefined;
+  }
 
   return (
     <div className="screen">
@@ -90,11 +109,22 @@ export function PrimaryScreen({
                     className="ghost-link"
                     type="button"
                     onClick={() => {
-                      const m: Record<string, string> = {};
-                      tplVars.forEach((v) => {
-                        if (v.suggested) m[v.name] = v.suggested;
+                      setState((s) => {
+                        const next = { ...s.mapping };
+                        tplVars.forEach((v) => {
+                          const current = next[v.name];
+                          const currentField = fields.find((f) => f.id === current);
+                          if (
+                            current === '__custom__'
+                            || (currentField && isCompatibleField(v, currentField))
+                          ) {
+                            return;
+                          }
+                          const matched = findSmartField(v);
+                          if (matched) next[v.name] = matched;
+                        });
+                        return { ...s, mapping: next };
                       });
-                      setState((s) => ({ ...s, mapping: m }));
                     }}
                   >
                     <Icon.Sparkle /> 智能匹配
@@ -138,6 +168,7 @@ export function PrimaryScreen({
                 <WriteBackPicker
                   fields={fields.filter((f) => f.type === 'attachment')}
                   value={state.writeBackField}
+                  onCreate={createAttachmentField}
                   onChange={(fid) =>
                     setState((s) => ({ ...s, writeBackField: fid, writeBack: !!fid }))
                   }
@@ -543,10 +574,13 @@ interface WriteBackPickerProps {
   fields: TableField[];
   value: string;
   onChange: (fid: string) => void;
+  onCreate?: (name?: string) => Promise<TableField>;
 }
 
-function WriteBackPicker({ fields, value, onChange }: WriteBackPickerProps) {
+function WriteBackPicker({ fields, value, onChange, onCreate }: WriteBackPickerProps) {
   const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState('');
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const selected = fields.find((f) => f.id === value);
   return (
@@ -582,6 +616,7 @@ function WriteBackPicker({ fields, value, onChange }: WriteBackPickerProps) {
             type="button"
             className={'dd-item' + (f.id === value ? ' dd-item-on' : '')}
             onClick={() => {
+              setError('');
               onChange(f.id);
               setOpen(false);
             }}
@@ -595,11 +630,28 @@ function WriteBackPicker({ fields, value, onChange }: WriteBackPickerProps) {
         <button
           type="button"
           className="dd-item dd-item-accent"
-          onClick={() => setOpen(false)}
+          disabled={!onCreate || creating}
+          onClick={async () => {
+            if (!onCreate || creating) return;
+            setCreating(true);
+            setError('');
+            try {
+              const field = await onCreate('生成文档');
+              onChange(field.id);
+              setOpen(false);
+            } catch {
+              setError('创建失败，请检查字段编辑权限。');
+            } finally {
+              setCreating(false);
+            }
+          }}
         >
           <Icon.Plus />
-          <span style={{ flex: 1, textAlign: 'left' }}>新建附件字段…</span>
+          <span style={{ flex: 1, textAlign: 'left' }}>
+            {creating ? '正在创建…' : '新建附件字段…'}
+          </span>
         </button>
+        {error && <div className="dd-error-msg">{error}</div>}
       </Dropdown>
     </div>
   );

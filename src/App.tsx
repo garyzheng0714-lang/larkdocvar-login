@@ -36,6 +36,7 @@ function useStandalonePreviewMode(): boolean {
 
 function V2MockRoute({ userMenu, standalone = false }: { userMenu: ReactNode; standalone?: boolean }) {
   const runner = useGenerateMock();
+  const [mockFields, setMockFields] = useState(MOCK_FIELDS);
   const recordsFor = useCallback(
     (state: PrimaryState): RecordSpec[] =>
       standalone
@@ -52,10 +53,20 @@ function V2MockRoute({ userMenu, standalone = false }: { userMenu: ReactNode; st
     <DocumentGeneratorApp
       userMenu={userMenu}
       mode={standalone ? 'standalone' : 'bitable'}
-      fields={standalone ? [] : MOCK_FIELDS}
+      fields={standalone ? [] : mockFields}
       templates={MOCK_TEMPLATES}
       selectedCount={standalone ? 1 : 6}
       bitableAvailable={!standalone}
+      createAttachmentField={async (name = '生成文档') => {
+        const created = {
+          id: `mock_attachment_${Date.now()}`,
+          name,
+          type: 'attachment' as const,
+          icon: '',
+        };
+        setMockFields((prev) => [...prev, created]);
+        return created;
+      }}
       runner={runner}
       recordsFor={recordsFor}
     />
@@ -89,6 +100,7 @@ function V2RealRoute({ userMenu }: { userMenu: ReactNode }) {
       templatesLoading={templates.loading}
       templatesError={templates.error}
       refreshTemplates={templates.refresh}
+      createAttachmentField={base.createAttachmentField}
       runner={runner}
       recordsFor={recordsFor}
     />

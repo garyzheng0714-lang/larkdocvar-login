@@ -381,6 +381,11 @@ button { font: inherit; color: inherit; }
   color: var(--txt-1);
 }
 .dd-item:hover { background: var(--bg-hover); }
+.dd-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.dd-item:disabled:hover { background: transparent; }
 .dd-item-on { background: var(--accent-soft); color: var(--accent); }
 .dd-item-on:hover { background: var(--accent-soft); }
 .dd-divider { height: 1px; background: var(--bd-2); margin: 4px 6px; }
@@ -1124,6 +1129,12 @@ button { font: inherit; color: inherit; }
 .dd-empty-msg {
   padding: 10px 12px; font-size: 12px; color: var(--txt-3);
   text-align: center;
+}
+.dd-error-msg {
+  padding: 6px 8px 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--err);
 }
 .dd-item-accent { color: var(--accent); }
 

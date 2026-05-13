@@ -113,6 +113,7 @@ export interface BitableContext {
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
+  createAttachmentField: (name?: string) => Promise<TableField>;
   totalRecordCount: number;
   allRecordIds: string[];
 }
@@ -176,6 +177,32 @@ export function useBitable(): BitableContext {
     }
   }, []);
 
+  const createAttachmentField = useCallback(async (name = '生成文档'): Promise<TableField> => {
+    const table = await resolveActiveTable();
+    if (!table) {
+      throw new Error('未获取到当前数据表，请在飞书多维表格边栏中运行。');
+    }
+    const usedNames = new Set(fields.map((f) => f.name.trim()).filter(Boolean));
+    let fieldName = name.trim() || '生成文档';
+    if (usedNames.has(fieldName)) {
+      let i = 2;
+      while (usedNames.has(`${fieldName} ${i}`)) i += 1;
+      fieldName = `${fieldName} ${i}`;
+    }
+    const id = await table.addField({
+      name: fieldName,
+      type: FieldType.Attachment,
+      property: { onlyMobile: false },
+    });
+    const created: TableField = { id, name: fieldName, type: 'attachment', icon: '' };
+    setFields((prev) => {
+      if (prev.some((f) => f.id === id)) return prev;
+      return [...prev, created];
+    });
+    void refresh();
+    return created;
+  }, [fields, refresh]);
+
   useEffect(() => {
     let disposed = false;
     let unbind: (() => void) | undefined;
@@ -208,6 +235,7 @@ export function useBitable(): BitableContext {
     loading,
     error,
     refresh,
+    createAttachmentField,
     totalRecordCount,
     allRecordIds,
   };
