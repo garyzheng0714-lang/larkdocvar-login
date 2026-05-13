@@ -60,8 +60,11 @@ TOS_SECRET_KEY=...
 TOS_BUCKET=...
 TOS_REGION=cn-beijing
 TOS_ENDPOINT=tos-cn-beijing.volces.com
-DOCUMENT_RENDER_TOS_PREFIX=document-renders
+DOCUMENT_TOS_ROOT_PREFIX=fbif-sidebar-docgen/prod
+DOCUMENT_RENDER_TOS_PREFIX=renders
 ```
+
+推荐同时配置 `DOCUMENT_TEMPLATE_TOS_PREFIX=templates`，让模板资产和生成结果在同一个 TOS bucket 根目录下按 `templates/`、`renders/` 分开管理。未配置 `DOCUMENT_TOS_ROOT_PREFIX` 时仍兼容历史根目录前缀。
 
 实现没有引入 `@volcengine/tos-sdk` 生产依赖，避免把临时验证 SDK 带来的高危依赖审计项带入项目。生产代码使用 TOS4 签名：上传用 `Authorization: TOS4-HMAC-SHA256 ...`，下载用 `X-Tos-Algorithm`、`X-Tos-Credential`、`X-Tos-Date`、`X-Tos-Expires`、`X-Tos-SignedHeaders`、`X-Tos-Signature` 预签名参数。
 

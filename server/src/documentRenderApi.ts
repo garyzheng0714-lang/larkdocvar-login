@@ -15,7 +15,7 @@ import { z } from 'zod';
 import { documentRenderJsonParser } from './documentRenderBodyParser';
 import { DOCX_CONTENT_TYPE, buildContentDisposition, ensureDocxExtension, sanitizeFileName } from './documentRenderFile';
 import { UserFacingError } from './documentRenderStorageErrors';
-import { TosDocumentRenderStorage, type TosStorageConfig, normalizeTosEndpoint } from './documentRenderTosStorage';
+import { TosDocumentRenderStorage, buildTosPrefix, type TosStorageConfig, normalizeTosEndpoint } from './documentRenderTosStorage';
 import { createFixedLookup, isBlockedIpAddress } from './documentRenderUrlSafety';
 import { imageVariableMapSchema, isImagePlaceholderName, replaceImagePlaceholdersInDocx, type DocumentRenderImageVariableInput, type RenderedImageVariable } from './documentRenderImages';
 import type { DocumentTemplateResolver } from './documentTemplateApi';
@@ -368,7 +368,10 @@ function readTosConfig(): TosStorageConfig | null | UserFacingError {
     bucket,
     region,
     endpoint: normalizeTosEndpoint(region, endpoint),
-    prefix: normalizeOssPrefix(process.env.DOCUMENT_RENDER_TOS_PREFIX || process.env.DOCUMENT_RENDER_OSS_PREFIX || 'document-renders'),
+    prefix: buildTosPrefix(
+      process.env.DOCUMENT_TOS_ROOT_PREFIX || '',
+      process.env.DOCUMENT_RENDER_TOS_PREFIX || process.env.DOCUMENT_RENDER_OSS_PREFIX || 'document-renders',
+    ),
   };
 }
 

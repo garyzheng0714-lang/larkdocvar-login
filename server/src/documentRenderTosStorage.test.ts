@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { TosDocumentRenderStorage, createTosPresignedGetUrl, type TosStorageConfig } from './documentRenderTosStorage';
+import { TosDocumentRenderStorage, __test__, createTosPresignedGetUrl, type TosStorageConfig } from './documentRenderTosStorage';
 
 const DOCX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
@@ -36,6 +36,11 @@ test('TOS 预签名下载 URL 符合官方 TOS4 查询参数格式', () => {
   assert.match(parsed.searchParams.get('X-Tos-Signature') || '', /^[0-9a-f]{64}$/);
 });
 
+test('TOS 前缀支持统一项目根目录并清理危险路径片段', () => {
+  assert.equal(__test__.buildTosPrefix('../fbif-sidebar-docgen\\prod', '../renders'), 'fbif-sidebar-docgen/prod/renders/');
+  assert.equal(__test__.formatTosDatePath(new Date('2026-05-13T12:00:00.000Z')), '2026/05/13');
+});
+
 test('TOS 存储上传 Docx 并返回带 TTL 的签名下载链接', async () => {
   const previousFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -64,7 +69,7 @@ test('TOS 存储上传 Docx 并返回带 TTL 的签名下载链接', async () =>
     assert.equal(saved.fileName, '报价-单-.docx');
     assert.equal(saved.contentType, DOCX_CONTENT_TYPE);
     assert.equal(saved.size, buffer.length);
-    assert.match(saved.path, /^document-renders\/\d{4}-\d{2}-\d{2}\/request-id\.docx$/);
+    assert.match(saved.path, /^document-renders\/\d{4}\/\d{2}\/\d{2}\/request-id\.docx$/);
     assert.match(saved.url, /^https:\/\/examplebucket\.tos-cn-beijing\.volces\.com\//);
     assert.match(saved.url, /X-Tos-Algorithm=TOS4-HMAC-SHA256/);
     assert.equal(calls.length, 1);

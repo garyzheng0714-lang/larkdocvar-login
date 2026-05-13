@@ -1,6 +1,6 @@
 # Docx API 运维手册
 
-更新时间：2026-05-12
+更新时间：2026-05-13
 
 ## 必备环境变量
 
@@ -21,6 +21,8 @@
 | `DOCUMENT_RENDER_STORAGE_PROVIDER` | 可选 `oss` 或 `tos`；同时配置 OSS/TOS 时建议显式填写。 |
 | `DOCUMENT_RENDER_OSS_ACCESS_KEY_ID` / `DOCUMENT_RENDER_OSS_ACCESS_KEY_SECRET` / `DOCUMENT_RENDER_OSS_BUCKET` / `DOCUMENT_RENDER_OSS_REGION` | 阿里云 OSS 生成文件存储。 |
 | `TOS_ACCESS_KEY` / `TOS_SECRET_KEY` / `TOS_BUCKET` / `TOS_REGION` / `TOS_ENDPOINT` | 火山引擎 TOS 生成文件存储，也可复用为模板存储。 |
+| `DOCUMENT_TOS_ROOT_PREFIX` | 可选的 TOS 统一根目录，例如 `fbif-sidebar-docgen/prod`；为空时保留历史根目录。 |
+| `DOCUMENT_RENDER_TOS_PREFIX` | TOS 生成文件前缀，推荐 `renders`；最终路径为 `{root}/{render-prefix}/YYYY/MM/DD/{requestId}.docx`。 |
 | `DOCUMENT_RENDER_DOWNLOAD_TTL_SECONDS` | 默认下载链接有效期，建议用秒。 |
 | `DOCUMENT_RENDER_PUBLIC_BASE_URL` | 需要返回绝对下载 URL 时配置。 |
 
@@ -29,9 +31,20 @@
 | 变量 | 说明 |
 |---|---|
 | `DOCUMENT_TEMPLATE_STORAGE_PROVIDER` | 可选 `tos`。为空时会跟随 `DOCUMENT_RENDER_STORAGE_PROVIDER`。 |
-| `DOCUMENT_TEMPLATE_TOS_PREFIX` | 模板资产前缀，默认 `document-templates`。 |
+| `DOCUMENT_TEMPLATE_TOS_PREFIX` | 模板资产前缀，推荐 `templates`；最终路径为 `{root}/{template-prefix}/...`。 |
 | `DOCUMENT_TEMPLATE_STORAGE_DIR` | 本地开发模板存储目录；生产环境不能依赖它。 |
 | `DOCUMENT_TEMPLATE_ALLOW_PRIVATE_URLS` | 仅本地实验使用；生产不要开启。 |
+
+推荐的 TOS bucket 结构：
+
+```text
+fbif-sidebar-docgen/prod/
+├── templates/_index.json
+├── templates/{templateId}/metadata.json
+├── templates/{templateId}/versions/v001/source.docx
+├── renders/YYYY/MM/DD/{requestId}.docx
+└── renders/diagnostics/YYYY/MM/DD/{timestamp}.txt
+```
 
 ## 本地启动
 
@@ -91,7 +104,7 @@ OSS 最小权限：
 | 目标 bucket 已存在 | 必需 | `DOCUMENT_RENDER_OSS_BUCKET` 必须是当前 AccessKey 所属账号可访问的真实 bucket。 |
 | bucket 地域匹配 | 必需 | `DOCUMENT_RENDER_OSS_REGION` 必须和 bucket 地域一致。 |
 | AccessKey 状态启用 | 必需 | RAM/AccessKey 页面中该 AccessKey 必须为启用状态。 |
-| `PutObject` | 必需 | 允许写入 `DOCUMENT_RENDER_OSS_PREFIX` 下的生成文件和预检文件。 |
+| `PutObject` | 必需 | 允许写入 `DOCUMENT_RENDER_OSS_PREFIX` 或 TOS `{DOCUMENT_TOS_ROOT_PREFIX}/{DOCUMENT_RENDER_TOS_PREFIX}` 下的生成文件和预检文件。 |
 | `GetObject` | 必需 | 允许通过签名 URL 下载刚生成的 Docx。 |
 | `DeleteObject` | 必需 | 允许预检脚本删除诊断文件，避免留下测试对象。 |
 | `ListBuckets` | 仅诊断 | 只用于失败时生成可读诊断；没有这个权限时，真实 put/signature/download/delete 通过仍可完成 OSS 链路验收。 |

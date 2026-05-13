@@ -23,6 +23,7 @@ const OSS_ENV_NAMES = [
   'TOS_BUCKET',
   'TOS_REGION',
   'TOS_ENDPOINT',
+  'DOCUMENT_TOS_ROOT_PREFIX',
 ];
 
 function withOssEnv(values: Record<string, string>): () => void {
@@ -85,6 +86,8 @@ test('Docx API TOS 配置读取支持生产对象存储链路', () => {
     TOS_BUCKET: 'tos-bucket',
     TOS_REGION: 'cn-beijing',
     TOS_ENDPOINT: 'https://tos-cn-beijing.volces.com/',
+    DOCUMENT_TOS_ROOT_PREFIX: 'fbif-sidebar-docgen/prod',
+    DOCUMENT_RENDER_TOS_PREFIX: 'renders',
   });
 
   try {
@@ -95,6 +98,7 @@ test('Docx API TOS 配置读取支持生产对象存储链路', () => {
     assert.equal(config.bucket, 'tos-bucket');
     assert.equal(config.region, 'cn-beijing');
     assert.equal(config.endpoint, 'tos-cn-beijing.volces.com');
+    assert.equal(config.prefix, 'fbif-sidebar-docgen/prod/renders/');
   } finally {
     restore();
   }

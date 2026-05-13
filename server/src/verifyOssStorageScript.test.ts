@@ -27,6 +27,7 @@ const OSS_ENV_NAMES = [
   'TOS_BUCKET',
   'TOS_REGION',
   'TOS_ENDPOINT',
+  'DOCUMENT_TOS_ROOT_PREFIX',
   'DOCUMENT_RENDER_TOS_PREFIX',
   'DOCUMENT_RENDER_STORAGE_PROVIDER',
   'DOCUMENT_RENDER_OBJECT_STORAGE_PROVIDER',
@@ -137,6 +138,7 @@ test('对象存储预检支持显式选择 TOS 配置且诊断脱敏', () => {
     TOS_BUCKET: 'tos-private-bucket-value',
     TOS_REGION: 'cn-beijing',
     TOS_ENDPOINT: 'https://tos-cn-beijing.volces.com/',
+    DOCUMENT_TOS_ROOT_PREFIX: '../fbif-sidebar-docgen\\prod',
     DOCUMENT_RENDER_TOS_PREFIX: '../tos\\diagnostics',
   });
 
@@ -149,7 +151,7 @@ test('对象存储预检支持显式选择 TOS 配置且诊断脱敏', () => {
     assert.equal(config.bucket, 'tos-private-bucket-value');
     assert.equal(config.region, 'cn-beijing');
     assert.equal(config.endpoint, 'tos-cn-beijing.volces.com');
-    assert.equal(config.prefix, 'tos/diagnostics/');
+    assert.equal(config.prefix, 'fbif-sidebar-docgen/prod/tos/diagnostics/');
     assert.doesNotMatch(JSON.stringify({
       accessKeyIdEnv: config.envNames.accessKeyId,
       accessKeySecretEnv: config.envNames.accessKeySecret,

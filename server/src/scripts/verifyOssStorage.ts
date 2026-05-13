@@ -4,10 +4,11 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
+  buildTosPrefix,
   createTosPresignedGetUrl,
   deleteTosObject,
+  formatTosDatePath,
   normalizeTosEndpoint,
-  normalizeTosPrefix,
   putTosObject,
   type TosStorageConfig,
 } from '../documentRenderTosStorage';
@@ -207,7 +208,10 @@ function getTosConfig(): TosVerifyConfig {
     bucket: bucket.value,
     region: region.value,
     endpoint: normalizeTosEndpoint(region.value, endpoint.value),
-    prefix: normalizeTosPrefix(process.env.DOCUMENT_RENDER_TOS_PREFIX || process.env.DOCUMENT_RENDER_OSS_PREFIX || 'document-renders'),
+    prefix: buildTosPrefix(
+      process.env.DOCUMENT_TOS_ROOT_PREFIX || '',
+      process.env.DOCUMENT_RENDER_TOS_PREFIX || process.env.DOCUMENT_RENDER_OSS_PREFIX || 'document-renders',
+    ),
     envNames: {
       accessKeyId: accessKeyId.name,
       accessKeySecret: accessKeySecret.name,
@@ -507,7 +511,7 @@ async function main(): Promise<void> {
 
 async function mainTos(): Promise<void> {
   const config = getTosConfig();
-  const objectName = `${config.prefix}diagnostics/${Date.now()}-${Math.random().toString(16).slice(2)}.txt`;
+  const objectName = `${config.prefix}diagnostics/${formatTosDatePath()}/${Date.now()}-${Math.random().toString(16).slice(2)}.txt`;
 
   try {
     await putTosObject(config, objectName, TEST_CONTENT, {

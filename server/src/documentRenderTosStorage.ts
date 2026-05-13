@@ -56,6 +56,14 @@ export function normalizeTosPrefix(prefix: string): string {
   return cleaned ? `${cleaned}/` : '';
 }
 
+export function buildTosPrefix(rootPrefix: string, prefix: string): string {
+  return `${normalizeTosPrefix(rootPrefix)}${normalizeTosPrefix(prefix)}`;
+}
+
+export function formatTosDatePath(date = new Date()): string {
+  return date.toISOString().slice(0, 10).replace(/-/g, '/');
+}
+
 function createSigningKey(secret: string, date: string, region: string): Buffer {
   return hmac(hmac(hmac(hmac(Buffer.from(secret, 'utf8'), date), region), 'tos'), 'request');
 }
@@ -191,7 +199,7 @@ export class TosDocumentRenderStorage implements DocumentRenderStorage {
   async saveDocx(input: SaveGeneratedDocxInput): Promise<SavedGeneratedDocx> {
     const safeFileName = ensureDocxExtension(sanitizeFileName(input.fileName, '生成文档.docx'));
     const safeRequestId = sanitizeTosRequestId(input.requestId);
-    const objectName = `${this.config.prefix}${new Date().toISOString().slice(0, 10)}/${safeRequestId}.docx`;
+    const objectName = `${this.config.prefix}${formatTosDatePath()}/${safeRequestId}.docx`;
     const contentDisposition = buildContentDisposition(safeFileName);
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + input.ttlMs).toISOString();
@@ -220,9 +228,11 @@ export class TosDocumentRenderStorage implements DocumentRenderStorage {
 }
 
 export const __test__ = {
+  buildTosPrefix,
   buildTosAuthorizationHeaders,
   createSigningKey,
   encodeTosPath,
+  formatTosDatePath,
   formatTosDate,
   getTosHost,
   parseTosErrorXml,

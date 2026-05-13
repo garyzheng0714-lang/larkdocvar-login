@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   createTosPresignedGetUrl,
   deleteTosObject,
+  buildTosPrefix,
   normalizeTosEndpoint,
   normalizeTosPrefix,
   putTosObject,
@@ -67,7 +68,10 @@ export function readTemplateTosConfig(): TosStorageConfig | null | UserFacingErr
     bucket,
     region,
     endpoint: normalizeTosEndpoint(region, endpoint),
-    prefix: normalizePrefix(process.env.DOCUMENT_TEMPLATE_TOS_PREFIX || process.env.DOCUMENT_RENDER_TOS_PREFIX || DEFAULT_TEMPLATE_STORAGE_PREFIX),
+    prefix: buildTosPrefix(
+      process.env.DOCUMENT_TOS_ROOT_PREFIX || '',
+      process.env.DOCUMENT_TEMPLATE_TOS_PREFIX || process.env.DOCUMENT_RENDER_TOS_PREFIX || DEFAULT_TEMPLATE_STORAGE_PREFIX,
+    ),
   };
 }
 
