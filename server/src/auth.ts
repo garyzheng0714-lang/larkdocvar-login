@@ -25,6 +25,14 @@ export type AuthProfile = {
   avatarUrl: string | null;
 };
 
+export type FeishuOAuthAppKey = 'fbif' | 'fude';
+
+export type FeishuAppCredentials = {
+  appKey: FeishuOAuthAppKey;
+  appId: string;
+  appSecret: string;
+};
+
 // ---------------------------------------------------------------------------
 // Module-private state
 // ---------------------------------------------------------------------------
@@ -44,6 +52,25 @@ export function isAllowedTenant(tenantKey: string | undefined | null): boolean {
   if (!tenantKey) return false;
   const list = allowed.split(',').map((s) => s.trim()).filter(Boolean);
   return list.includes(tenantKey);
+}
+
+export function normalizeFeishuOAuthAppKey(value: unknown): FeishuOAuthAppKey | null {
+  if (value === 'fbif' || value === 'fude') {
+    return value;
+  }
+  return null;
+}
+
+export function getFeishuAppCredentials(appKeyInput: unknown = 'fbif'): FeishuAppCredentials {
+  const appKey = normalizeFeishuOAuthAppKey(appKeyInput) ?? 'fbif';
+  const prefix = appKey === 'fude' ? 'FEISHU_FUDE' : 'FEISHU_FBIF';
+  return {
+    appKey,
+    appId: process.env[`${prefix}_APP_ID`] || (appKey === 'fbif' ? process.env.FEISHU_APP_ID || '' : ''),
+    appSecret:
+      process.env[`${prefix}_APP_SECRET`] ||
+      (appKey === 'fbif' ? process.env.FEISHU_APP_SECRET || '' : ''),
+  };
 }
 
 const sessionRefreshInflight = new Map<string, Promise<AuthSessionRow>>();
@@ -75,7 +102,7 @@ export function resolveSessionTokenFromRequest(request: express.Request): string
 // ---------------------------------------------------------------------------
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
-const OAUTH_STATE_COOKIE_PATH = '/api/auth/feishu';
+const OAUTH_STATE_COOKIE_PATH = '/';
 
 export function setOAuthStateCookie(
   response: express.Response,
@@ -114,16 +141,17 @@ export function consumeOAuthStateCookie(
 //   with an app_access_token. The v2 endpoint does NOT accept passport codes.
 // ---------------------------------------------------------------------------
 
-export async function getAppAccessToken(): Promise<string> {
-  const appId = process.env.FEISHU_APP_ID || '';
-  const appSecret = process.env.FEISHU_APP_SECRET || '';
-  if (!appId || !appSecret) {
+export async function getAppAccessToken(appId?: string, appSecret?: string): Promise<string> {
+  const fallback = getFeishuAppCredentials('fbif');
+  const resolvedAppId = appId || fallback.appId;
+  const resolvedAppSecret = appSecret || fallback.appSecret;
+  if (!resolvedAppId || !resolvedAppSecret) {
     throw new Error('服务未配置 FEISHU_APP_ID / FEISHU_APP_SECRET。');
   }
 
   const resp = await axios.post(
     'https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal',
-    { app_id: appId, app_secret: appSecret },
+    { app_id: resolvedAppId, app_secret: resolvedAppSecret },
     { headers: { 'Content-Type': 'application/json' }, timeout: 20000 },
   );
   const body = resp.data as { code?: number; msg?: string; app_access_token?: string };
@@ -199,8 +227,7 @@ function extractOAuthTokenData(body: Record<string, unknown>): Record<string, un
 }
 
 async function refreshUserAccessToken(session: AuthSessionRow): Promise<AuthSessionRow> {
-  const appId = process.env.FEISHU_APP_ID || '';
-  const appSecret = process.env.FEISHU_APP_SECRET || '';
+  const { appId, appSecret } = getFeishuAppCredentials(session.oauth_app_key);
   if (!session.refresh_token) {
     throw new Error('refresh_token 不存在，请重新登录。');
   }

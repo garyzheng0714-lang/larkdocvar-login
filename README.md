@@ -84,6 +84,11 @@ cp .env.example .env
 ```bash
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
+FEISHU_FBIF_APP_ID=cli_fbif_xxx
+FEISHU_FBIF_APP_SECRET=xxx
+FEISHU_FUDE_APP_ID=cli_fude_xxx
+FEISHU_FUDE_APP_SECRET=xxx
+FEISHU_REDIRECT_BASE=http://localhost:3000
 PORT=3000
 HOST=0.0.0.0
 ```
@@ -106,13 +111,16 @@ npm run dev
 在飞书开放平台应用中添加 OAuth 回调地址：
 
 ```text
-http://localhost:3000/api/auth/feishu/callback
+http://localhost:3000/auth/feishu/fbif/callback
+http://localhost:3000/auth/feishu/fbif/qr-callback
+http://localhost:3000/auth/feishu/fude/callback
+http://localhost:3000/auth/feishu/fude/qr-callback
 ```
 
 本地 `.env` 中确认：
 
 ```bash
-FEISHU_OAUTH_REDIRECT_URI=http://localhost:3000/api/auth/feishu/callback
+FEISHU_REDIRECT_BASE=http://localhost:3000
 FEISHU_OAUTH_SCOPE=contact:user.base:readonly drive:drive drive:file docx:document:readonly wiki:wiki
 SESSION_COOKIE_NAME=larkdocvar_session
 SESSION_COOKIE_SECURE=false
@@ -149,8 +157,11 @@ BITABLE_SYNC_COOLDOWN_MS=60000
 常用接口：
 
 - `GET /api/health`：健康检查
-- `GET /api/auth/feishu/login`：跳转飞书登录
-- `GET /api/auth/feishu/callback`：OAuth 回调
+- `GET /auth/feishu/fbif/login`：跳转 FBIF 飞书登录
+- `GET /auth/feishu/fude/login`：跳转富的飞书登录
+- `GET /auth/feishu/:appKey/callback`：OAuth 回调
+- `GET /auth/feishu/:appKey/qr-config`：扫码登录配置
+- `GET /auth/feishu/:appKey/qr-callback`：扫码登录回调
 - `GET /api/auth/session`：查询当前会话
 - `POST /api/auth/logout`：退出登录
 - `POST /api/template/variables`：提取模板变量

@@ -27,6 +27,7 @@ import {
   requireAuth,
   peekSessionForRequest,
   resolveSessionTokenFromRequest,
+  getFeishuAppCredentials,
 } from './auth';
 import { registerOAuthRoutes } from './oauthRoutes';
 
@@ -34,8 +35,9 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || '0.0.0.0';
 
-const appId = process.env.FEISHU_APP_ID || '';
-const appSecret = process.env.FEISHU_APP_SECRET || '';
+const fbifCredentials = getFeishuAppCredentials('fbif');
+const appId = fbifCredentials.appId;
+const appSecret = fbifCredentials.appSecret;
 const GENERATE_RECORD_BATCH_LIMIT = 10;
 const GENERATE_IMAGE_URL_LIMIT_PER_VARIABLE = 5;
 const INTERNAL_ERROR_MESSAGE = '服务暂时不可用，请稍后重试。';

@@ -1,11 +1,28 @@
 // 飞书登录卡片（按钮 + 角标切扫码）— FBIF v3 视觉规范
 // 视觉值参考 ~/.claude/skills/feishu-login-guide/assets/login-ui-spec.md
-// 路由保持项目约定：/api/auth/feishu/{login,qr-config,qr-callback}
+// 路由保持项目约定：/auth/feishu/{fbif,fude}/{login,qr-config,qr-callback}
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-const LOGIN_URL = "/api/auth/feishu/login";
-const QR_CONFIG_URL = "/api/auth/feishu/qr-config";
+type LoginOrg = "fbif" | "fude";
+
+const LOGIN_ORGS: Record<LoginOrg, {
+  label: string;
+  loginUrl: string;
+  qrConfigUrl: string;
+}> = {
+  fbif: {
+    label: "FBIF",
+    loginUrl: "/auth/feishu/fbif/login",
+    qrConfigUrl: "/auth/feishu/fbif/qr-config",
+  },
+  fude: {
+    label: "富的",
+    loginUrl: "/auth/feishu/fude/login",
+    qrConfigUrl: "/auth/feishu/fude/qr-config",
+  },
+};
+
 const FEISHU_QR_SDK_URL =
   "https://lf-package-cn.feishucdn.com/obj/feishu-static/lark/passport/qrcode/LarkSSOSDKWebQRCode-1.0.3.js";
 
@@ -121,6 +138,88 @@ function MonitorIcon({ size = 20, color = "#ffffff" }: { size?: number; color?: 
   );
 }
 
+function LoginButton({
+  org,
+  variant,
+  onBeforeLogin,
+}: {
+  org: LoginOrg;
+  variant: "primary" | "secondary";
+  onBeforeLogin?: () => void;
+}) {
+  const [hover, setHover] = useState(false);
+  const [active, setActive] = useState(false);
+  const config = LOGIN_ORGS[org];
+  const isPrimary = variant === "primary";
+  const bg = isPrimary
+    ? active
+      ? C.brandBlueActive
+      : hover
+        ? C.brandBlueHover
+        : C.brandBlue
+    : hover
+      ? "#f3f7fb"
+      : C.surface;
+
+  const handleClick = () => {
+    if (onBeforeLogin) onBeforeLogin();
+    window.location.href = config.loginUrl;
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => {
+        setHover(false);
+        setActive(false);
+      }}
+      onMouseDown={() => setActive(true)}
+      onMouseUp={() => setActive(false)}
+      className="w-full flex items-center justify-center"
+      style={{
+        height: 52,
+        gap: 12,
+        padding: "0 18px",
+        border: isPrimary ? 0 : `1px solid ${C.border}`,
+        borderRadius: 10,
+        background: bg,
+        color: isPrimary ? "#ffffff" : C.textPrimary,
+        fontSize: 15,
+        fontWeight: 600,
+        lineHeight: 1,
+        cursor: "pointer",
+        boxShadow: isPrimary
+          ? hover
+            ? "0 2px 5px rgba(37, 95, 137, 0.18)"
+            : "0 1px 2px rgba(37, 95, 137, 0.18)"
+          : "none",
+        transition:
+          "transform 140ms ease, background-color 140ms ease, box-shadow 140ms ease",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span
+        style={{
+          width: 28,
+          height: 28,
+          flex: "0 0 auto",
+          display: "grid",
+          placeItems: "center",
+          borderRadius: "999px",
+          background: "#ffffff",
+          boxShadow:
+            "0 1px 2px rgba(15, 31, 51, 0.1), inset 0 0 0 1px rgba(15, 31, 51, 0.04)",
+        }}
+      >
+        <FeishuLogo size={20} />
+      </span>
+      <span>使用 {config.label} 飞书登录</span>
+    </button>
+  );
+}
+
 function CornerBadge({
   mode,
   onClick,
@@ -174,7 +273,15 @@ interface QRConfigResponse {
   expires_in?: number;
 }
 
-function QRView({ onSwitchToOAuth }: { onSwitchToOAuth: () => void }) {
+function QRView({
+  org,
+  onOrgChange,
+  onSwitchToOAuth,
+}: {
+  org: LoginOrg;
+  onOrgChange: (org: LoginOrg) => void;
+  onSwitchToOAuth: () => void;
+}) {
   const [status, setStatus] = useState<"loading" | "ready" | "expired" | "error">("loading");
   const [errorMsg, setErrorMsg] = useState("");
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -200,7 +307,7 @@ function QRView({ onSwitchToOAuth }: { onSwitchToOAuth: () => void }) {
     setErrorMsg("");
     cleanup();
     try {
-      const resp = await fetch(QR_CONFIG_URL, { credentials: "include" });
+      const resp = await fetch(LOGIN_ORGS[org].qrConfigUrl, { credentials: "include" });
       if (!resp.ok) throw new Error(`qr-config ${resp.status}`);
       const cfg = (await resp.json()) as QRConfigResponse;
       if (!cfg.goto) throw new Error("qr-config missing goto");
@@ -242,7 +349,7 @@ function QRView({ onSwitchToOAuth }: { onSwitchToOAuth: () => void }) {
       setErrorMsg("二维码加载失败，请稍后重试。");
       setStatus("error");
     }
-  }, [cleanup]);
+  }, [cleanup, org]);
 
   useEffect(() => {
     initQr();
@@ -266,11 +373,52 @@ function QRView({ onSwitchToOAuth }: { onSwitchToOAuth: () => void }) {
         style={{
           fontSize: 13,
           color: C.textMuted,
-          margin: "0 0 24px",
+          margin: "0 0 16px",
           textAlign: "center",
         }}
       >
         请使用飞书移动端扫描二维码
+      </div>
+
+      <div
+        role="tablist"
+        aria-label="选择飞书组织"
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 4,
+          width: 180,
+          padding: 4,
+          marginBottom: 16,
+          border: `1px solid ${C.border}`,
+          borderRadius: 8,
+          background: "#f7f9fb",
+        }}
+      >
+        {(Object.keys(LOGIN_ORGS) as LoginOrg[]).map((key) => {
+          const selected = key === org;
+          return (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => onOrgChange(key)}
+              style={{
+                height: 30,
+                border: 0,
+                borderRadius: 6,
+                background: selected ? C.brandBlue : "transparent",
+                color: selected ? "#ffffff" : C.textPrimary,
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {LOGIN_ORGS[key].label}
+            </button>
+          );
+        })}
       </div>
 
       <div
@@ -378,18 +526,7 @@ export interface FeishuLoginCardProps {
 
 export function FeishuLoginCard({ onBeforeLogin, authError }: FeishuLoginCardProps) {
   const [mode, setMode] = useState<"oauth" | "qr">("oauth");
-  const [hover, setHover] = useState(false);
-  const [active, setActive] = useState(false);
-
-  const handleClick = () => {
-    if (onBeforeLogin) onBeforeLogin();
-    window.location.href = LOGIN_URL;
-  };
-
-  const bg = active ? C.brandBlueActive : hover ? C.brandBlueHover : C.brandBlue;
-  const shadow = hover
-    ? "0 2px 5px rgba(37, 95, 137, 0.18)"
-    : "0 1px 2px rgba(37, 95, 137, 0.18)";
+  const [org, setOrg] = useState<LoginOrg>("fbif");
 
   return (
     <div
@@ -434,54 +571,13 @@ export function FeishuLoginCard({ onBeforeLogin, authError }: FeishuLoginCardPro
               height={120}
               style={{ display: "block", objectFit: "contain", marginBottom: 20 }}
             />
-            <button
-              type="button"
-              onClick={handleClick}
-              onMouseEnter={() => setHover(true)}
-              onMouseLeave={() => {
-                setHover(false);
-                setActive(false);
-              }}
-              onMouseDown={() => setActive(true)}
-              onMouseUp={() => setActive(false)}
-              className="w-full flex items-center justify-center text-white"
-              style={{
-                height: 52,
-                gap: 12,
-                padding: "0 18px",
-                border: 0,
-                borderRadius: 10,
-                background: bg,
-                fontSize: 15,
-                fontWeight: 600,
-                lineHeight: 1,
-                cursor: "pointer",
-                boxShadow: shadow,
-                transition:
-                  "transform 140ms ease, background-color 140ms ease, box-shadow 140ms ease",
-                whiteSpace: "nowrap",
-              }}
-            >
-              <span
-                style={{
-                  width: 28,
-                  height: 28,
-                  flex: "0 0 auto",
-                  display: "grid",
-                  placeItems: "center",
-                  borderRadius: "999px",
-                  background: "#ffffff",
-                  boxShadow:
-                    "0 1px 2px rgba(15, 31, 51, 0.1), inset 0 0 0 1px rgba(15, 31, 51, 0.04)",
-                }}
-              >
-                <FeishuLogo size={20} />
-              </span>
-              <span>使用 FBIF 飞书登录</span>
-            </button>
+            <div className="w-full flex flex-col gap-3">
+              <LoginButton org="fbif" variant="primary" onBeforeLogin={onBeforeLogin} />
+              <LoginButton org="fude" variant="secondary" onBeforeLogin={onBeforeLogin} />
+            </div>
           </>
         ) : (
-          <QRView onSwitchToOAuth={() => setMode("oauth")} />
+          <QRView org={org} onOrgChange={setOrg} onSwitchToOAuth={() => setMode("oauth")} />
         )}
       </main>
     </div>

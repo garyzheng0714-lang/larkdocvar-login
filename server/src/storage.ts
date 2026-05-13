@@ -12,6 +12,7 @@ interface UserRow {
 
 interface AuthSessionRow {
   token: string;
+  oauth_app_key: string;
   open_id: string;
   access_token: string;
   refresh_token: string;
@@ -44,6 +45,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS auth_sessions (
   token               TEXT PRIMARY KEY,
+  oauth_app_key       TEXT NOT NULL DEFAULT 'fbif',
   open_id             TEXT NOT NULL REFERENCES users(open_id) ON DELETE CASCADE,
   access_token        TEXT NOT NULL,
   refresh_token       TEXT NOT NULL DEFAULT '',
@@ -53,6 +55,9 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE auth_sessions
+  ADD COLUMN IF NOT EXISTS oauth_app_key TEXT NOT NULL DEFAULT 'fbif';
 
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_open_id ON auth_sessions(open_id);
 CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at);
@@ -102,6 +107,7 @@ function mapUserRow(row: Record<string, unknown>): UserRow {
 function mapSessionRow(row: Record<string, unknown>): AuthSessionRow {
   return {
     token: String(row.token || ''),
+    oauth_app_key: String(row.oauth_app_key || 'fbif'),
     open_id: String(row.open_id || ''),
     access_token: String(row.access_token || ''),
     refresh_token: String(row.refresh_token || ''),
@@ -187,6 +193,7 @@ async function getUserByOpenId(openId: string): Promise<UserRow | undefined> {
 
 async function upsertSession(session: {
   token: string;
+  oauthAppKey?: string;
   openId: string;
   accessToken: string;
   refreshToken?: string;
@@ -197,9 +204,10 @@ async function upsertSession(session: {
   const db = await initDatabase();
   const { rows } = await db.query(
     `INSERT INTO auth_sessions
-       (token, open_id, access_token, refresh_token, token_type, expires_at, refresh_expires_at, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, '')::timestamptz, NOW())
+       (token, oauth_app_key, open_id, access_token, refresh_token, token_type, expires_at, refresh_expires_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::timestamptz, NOW())
      ON CONFLICT(token) DO UPDATE SET
+       oauth_app_key      = EXCLUDED.oauth_app_key,
        access_token       = EXCLUDED.access_token,
        refresh_token      = EXCLUDED.refresh_token,
        token_type         = EXCLUDED.token_type,
@@ -209,6 +217,7 @@ async function upsertSession(session: {
      RETURNING *`,
     [
       session.token,
+      session.oauthAppKey ?? 'fbif',
       session.openId,
       session.accessToken,
       session.refreshToken ?? '',

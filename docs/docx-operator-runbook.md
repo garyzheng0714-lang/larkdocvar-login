@@ -9,7 +9,9 @@
 | 变量 | 必需性 | 说明 |
 |---|---|---|
 | `DOCUMENT_RENDER_API_KEY` | 建议生产配置 | 服务端到服务端 API Key。配置后业务系统需传 `Authorization: Bearer` 或 `x-api-key`。 |
-| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 侧边栏必需 | 飞书登录和云文档模板路径使用。 |
+| `FEISHU_FBIF_APP_ID` / `FEISHU_FBIF_APP_SECRET` | 侧边栏必需 | FBIF 飞书登录和云文档模板路径使用；`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 仍作为 FBIF 兼容别名。 |
+| `FEISHU_FUDE_APP_ID` / `FEISHU_FUDE_APP_SECRET` | 富的入口必需 | 富的飞书登录使用。 |
+| `FEISHU_REDIRECT_BASE` | 登录必需 | 生产为 `https://fbif-sidebar-docgen.fbif.com`，用于生成 `/auth/feishu/{fbif,fude}/{callback,qr-callback}`。 |
 | `DATABASE_URL` | 侧边栏必需 | 保存登录会话和飞书云文档模板配置。 |
 
 ### 生成文件存储
