@@ -17,6 +17,9 @@ interface Pos {
   width: number;
 }
 
+const EDGE_GAP = 8;
+const MIN_MENU_WIDTH = 120;
+
 export function Dropdown({ open, onClose, children, align = 'left', width, triggerRef }: DropdownProps) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState<Pos | null>(null);
@@ -24,8 +27,11 @@ export function Dropdown({ open, onClose, children, align = 'left', width, trigg
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const r = triggerRef.current.getBoundingClientRect();
-    const menuW = width || r.width;
-    const left = align === 'right' ? r.right - menuW : r.left;
+    const availableW = Math.max(MIN_MENU_WIDTH, window.innerWidth - EDGE_GAP * 2);
+    const menuW = Math.min(width || r.width, availableW);
+    const rawLeft = align === 'right' ? r.right - menuW : r.left;
+    const maxLeft = Math.max(EDGE_GAP, window.innerWidth - menuW - EDGE_GAP);
+    const left = Math.min(Math.max(rawLeft, EDGE_GAP), maxLeft);
     setPos({ top: r.bottom + 4, left, width: menuW });
   }, [open, align, width, triggerRef]);
 

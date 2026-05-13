@@ -32,22 +32,25 @@ button { font: inherit; color: inherit; }
 .app {
   display: flex;
   min-height: 100vh;
+  width: 100%;
+  min-width: 0;
   position: relative;
   overflow: hidden;
 }
 .sidebar {
-  width: 380px;
-  min-width: 380px;
+  width: 100%;
+  min-width: 0;
   height: 100vh;
   background: var(--bg-side);
-  border-left: 1px solid var(--bd-1);
+  border-left: 0;
   position: relative;
   overflow: hidden;
-  box-shadow: -8px 0 24px rgba(20, 30, 60, 0.04);
-  margin-left: auto;
+  box-shadow: none;
+  margin: 0;
   z-index: 2;
   display: flex;
   flex-direction: column;
+  container-type: inline-size;
 }
 .app-standalone {
   min-height: 100vh;
@@ -193,10 +196,19 @@ button { font: inherit; color: inherit; }
   flex-shrink: 0;
   background: #fff;
 }
-.hdr-title { flex: 1; font-size: 15px; font-weight: 600; color: var(--txt-1); }
+.hdr-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--txt-1);
+}
 .hdr-with-back { padding-left: 4px; }
 .hdr-with-back .hdr-title { text-align: left; }
-.hdr-actions { display: flex; gap: 2px; padding-right: 16px; }
+.hdr-actions { display: flex; gap: 2px; padding-right: 8px; flex-shrink: 0; }
 .hdr-icon {
   width: 32px; height: 32px;
   display: flex; align-items: center; justify-content: center;
@@ -489,8 +501,9 @@ button { font: inherit; color: inherit; }
   border-top: 1px solid var(--bd-1);
   background: #fff;
   flex-shrink: 0;
+  min-width: 0;
 }
-.ftr-info { flex: 1; line-height: 1.4; }
+.ftr-info { flex: 1; min-width: 0; line-height: 1.4; }
 .ftr-info-1 { font-size: 13px; color: var(--txt-1); }
 .ftr-info-1 b { color: var(--accent); font-weight: 600; }
 .ftr-info-2 { font-size: 11.5px; color: var(--txt-3); margin-top: 2px; }
@@ -500,7 +513,10 @@ button { font: inherit; color: inherit; }
   border: 0; border-radius: 6px;
   background: var(--accent); color: #fff;
   font-size: 13.5px; font-weight: 500;
-  cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 92px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .btn-primary[disabled] {
   cursor: not-allowed; background: #c8ccd2 !important;
@@ -887,6 +903,7 @@ button { font: inherit; color: inherit; }
 .block-head {
   display: flex; align-items: center; gap: 8px;
   margin-bottom: 10px;
+  min-width: 0;
 }
 .block-title { font-size: 13px; font-weight: 600; color: var(--txt-1); }
 .block-count {
@@ -900,6 +917,8 @@ button { font: inherit; color: inherit; }
   background: transparent; border: 0; cursor: pointer;
   font-size: 12px; color: var(--accent);
   padding: 4px 6px; border-radius: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .ghost-link:hover { background: var(--accent-soft); }
 
@@ -932,9 +951,10 @@ button { font: inherit; color: inherit; }
 /* Mapping table — borderless, denser */
 .map-table { display: flex; flex-direction: column; gap: 2px; }
 .mrow {
-  display: grid; grid-template-columns: 96px 1fr;
+  display: grid; grid-template-columns: minmax(72px, 28%) minmax(0, 1fr);
   gap: 10px; align-items: center;
   padding: 4px 0;
+  min-width: 0;
 }
 .mrow-manual {
   grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
@@ -989,6 +1009,7 @@ button { font: inherit; color: inherit; }
   border-radius: 8px;
   padding: 7px 10px;
   min-height: 40px;
+  min-width: 0;
   transition: border-color .12s, background .12s;
 }
 .fn-tokens:focus-within { border-color: var(--accent); background: #fff; box-shadow: 0 0 0 3px var(--accent-soft); }
@@ -1030,6 +1051,7 @@ button { font: inherit; color: inherit; }
   margin-left: auto;
   font-size: 12px; color: var(--txt-3);
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  flex-shrink: 0;
 }
 
 .filename-preview {
@@ -1081,6 +1103,44 @@ button { font: inherit; color: inherit; }
   background: #fff;
 }
 .custom-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+@container (max-width: 430px) {
+  .hdr {
+    padding-left: 12px;
+    padding-right: 4px;
+  }
+  .hdr-actions {
+    padding-right: 4px;
+  }
+  .block {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .block-tpl {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .tpl-row {
+    gap: 10px;
+    padding: 11px 10px;
+  }
+  .tpl-row-action {
+    padding: 4px 6px;
+  }
+  .mrow {
+    grid-template-columns: minmax(68px, 27%) minmax(0, 1fr);
+    gap: 8px;
+  }
+  .ftr {
+    gap: 8px;
+    padding: 10px 10px;
+  }
+  .btn-primary {
+    min-width: 86px;
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}
 
 @media (max-width: 640px) {
   .app-standalone {
@@ -1308,6 +1368,7 @@ button { font: inherit; color: inherit; }
   display: inline-flex;
   align-items: center;
   min-width: 8px;
+  max-width: 100%;
 }
 .auto-input-sizer {
   visibility: hidden;
