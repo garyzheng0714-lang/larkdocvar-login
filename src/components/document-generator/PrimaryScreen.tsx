@@ -2,6 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Icon, FieldTypeIcon } from './icons';
 import { Dropdown } from './Dropdown';
+import { findSmartField, isCompatibleField } from './mapping';
 import type { PrimaryState, TableField, TemplateVariable } from './types';
 
 interface PrimaryScreenProps {
@@ -43,23 +44,6 @@ export function PrimaryScreen({
       ).length
     : 0;
   const canGenerate = !!tpl && unmappedCount === 0;
-
-  function isCompatibleField(variable: TemplateVariable, field: TableField): boolean {
-    return variable.kind === 'image' ? field.type === 'attachment' : field.type !== 'attachment';
-  }
-
-  function findSmartField(variable: TemplateVariable): string | undefined {
-    const direct = fields.find(
-      (f) => f.name.trim().toLowerCase() === variable.name.trim().toLowerCase()
-        && isCompatibleField(variable, f),
-    );
-    if (direct) return direct.id;
-    if (variable.suggested) {
-      const suggested = fields.find((f) => f.id === variable.suggested && isCompatibleField(variable, f));
-      if (suggested) return suggested.id;
-    }
-    return undefined;
-  }
 
   return (
     <div className="screen">
@@ -120,7 +104,7 @@ export function PrimaryScreen({
                           ) {
                             return;
                           }
-                          const matched = findSmartField(v);
+                          const matched = findSmartField(v, fields);
                           if (matched) next[v.name] = matched;
                         });
                         return { ...s, mapping: next };

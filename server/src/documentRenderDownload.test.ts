@@ -101,6 +101,31 @@ test('本地下载响应包含安全下载头并清洗文件名', async () => {
   }
 });
 
+test('Docx 响应可按需返回文件 Base64 供侧边栏写回附件字段', async () => {
+  const restorePrivateUrls = withTemporaryEnv('DOCUMENT_TEMPLATE_ALLOW_PRIVATE_URLS', 'true');
+  const api = await startApi();
+  try {
+    const response = await fetch(`${api.baseUrl}/api/v1/document-renders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        template: { format: 'docx', url: `${api.baseUrl}/template.docx` },
+        variables: { 客户名称: '上海测试科技有限公司' },
+        output: { fileName: '生成文档.docx', includeFileBase64: true },
+      }),
+    });
+    const body = await response.json() as any;
+    assert.equal(response.status, 200);
+    assert.equal(typeof body.download.fileBase64, 'string');
+    const buffer = Buffer.from(body.download.fileBase64, 'base64');
+    assert.equal(buffer.subarray(0, 2).toString('utf8'), 'PK');
+    assert.equal(buffer.length, body.download.size);
+  } finally {
+    restorePrivateUrls();
+    await api.close();
+  }
+});
+
 test('公开 API 拒绝超过上限的下载有效期', async () => {
   const api = await startApi();
   try {

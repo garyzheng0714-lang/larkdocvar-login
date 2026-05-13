@@ -104,18 +104,44 @@ export function resolveSessionTokenFromRequest(request: express.Request): string
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const OAUTH_STATE_COOKIE_PATH = '/';
 
+function getCookieSecure(): boolean {
+  return (process.env.SESSION_COOKIE_SECURE || 'false').toLowerCase() === 'true';
+}
+
+function normalizeSameSite(value: string | undefined, secure: boolean): 'lax' | 'strict' | 'none' {
+  const raw = (value || '').toLowerCase();
+  const sameSite = raw === 'strict' || raw === 'none' ? raw : 'lax';
+  return sameSite === 'none' && !secure ? 'lax' : sameSite;
+}
+
+export function getOAuthStateCookieOptions(): {
+  httpOnly: true;
+  secure: boolean;
+  sameSite: 'lax' | 'strict' | 'none';
+  path: string;
+  maxAge: number;
+} {
+  const secure = getCookieSecure();
+  const sameSite = normalizeSameSite(
+    process.env.OAUTH_STATE_COOKIE_SAMESITE ||
+      (secure ? 'none' : 'lax'),
+    secure,
+  );
+  return {
+    httpOnly: true,
+    secure,
+    sameSite,
+    path: OAUTH_STATE_COOKIE_PATH,
+    maxAge: OAUTH_STATE_TTL_MS,
+  };
+}
+
 export function setOAuthStateCookie(
   response: express.Response,
   name: string,
   value: string,
 ): void {
-  response.cookie(name, value, {
-    httpOnly: true,
-    secure: (process.env.SESSION_COOKIE_SECURE || 'false').toLowerCase() === 'true',
-    sameSite: 'lax',
-    path: OAUTH_STATE_COOKIE_PATH,
-    maxAge: OAUTH_STATE_TTL_MS,
-  });
+  response.cookie(name, value, getOAuthStateCookieOptions());
 }
 
 /**
@@ -130,7 +156,8 @@ export function consumeOAuthStateCookie(
 ): boolean {
   const cookies = parseCookies(request.headers.cookie);
   const stored = (cookies[name] || '').trim();
-  response.clearCookie(name, { path: OAUTH_STATE_COOKIE_PATH });
+  const { maxAge: _maxAge, ...clearOptions } = getOAuthStateCookieOptions();
+  response.clearCookie(name, clearOptions);
   if (!stored || !expected) return false;
   return stored === expected;
 }

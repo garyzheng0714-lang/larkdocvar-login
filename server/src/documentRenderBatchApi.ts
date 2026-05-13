@@ -31,6 +31,7 @@ const templateSchema = z.object({
 const outputSchema = z.object({
   fileName: z.string().trim().max(255).optional(),
   expiresInSeconds: z.number().int().positive().max(7 * 24 * 60 * 60).optional(),
+  includeFileBase64: z.boolean().optional(),
 }).optional();
 
 export type DocumentRenderBatchRecordInput = {

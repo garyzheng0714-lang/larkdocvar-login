@@ -77,7 +77,12 @@ async function getSelectedRecordIds(table: ITable): Promise<string[]> {
   return Array.from(ids);
 }
 
-async function resolveActiveTable(): Promise<ITable | null> {
+interface ResolvedTable {
+  table: ITable;
+  tableId: string | null;
+}
+
+async function resolveActiveTable(): Promise<ResolvedTable | null> {
   let selection: { tableId?: string | null } | null = null;
   try {
     selection = await bitable.base.getSelection();
@@ -86,20 +91,26 @@ async function resolveActiveTable(): Promise<ITable | null> {
   }
   if (selection?.tableId) {
     try {
-      return await bitable.base.getTableById(selection.tableId);
+      return { table: await bitable.base.getTableById(selection.tableId), tableId: selection.tableId };
     } catch {
       // fall through
     }
   }
   try {
     const active = await bitable.base.getActiveTable();
-    if (active) return active;
+    if (active) {
+      const raw = active as unknown as { id?: string; tableId?: string };
+      return { table: active, tableId: raw.id ?? raw.tableId ?? selection?.tableId ?? null };
+    }
   } catch {
     // fall through
   }
   try {
     const list = await bitable.base.getTableList();
-    return list[0] ?? null;
+    const table = list[0];
+    if (!table) return null;
+    const raw = table as unknown as { id?: string; tableId?: string };
+    return { table, tableId: raw.id ?? raw.tableId ?? null };
   } catch {
     return null;
   }
@@ -114,6 +125,7 @@ export interface BitableContext {
   error: string | null;
   refresh: () => Promise<void>;
   createAttachmentField: (name?: string) => Promise<TableField>;
+  activeTableId: string | null;
   totalRecordCount: number;
   allRecordIds: string[];
 }
@@ -126,14 +138,16 @@ export function useBitable(): BitableContext {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [available, setAvailable] = useState(true);
+  const [activeTableId, setActiveTableId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const table = await resolveActiveTable();
-      if (!table) {
+      const resolved = await resolveActiveTable();
+      if (!resolved) {
         setAvailable(false);
+        setActiveTableId(null);
         setFields([]);
         setSelectedRecordIds([]);
         setAllRecordIds([]);
@@ -141,7 +155,9 @@ export function useBitable(): BitableContext {
         setError('未获取到当前数据表，请在飞书多维表格边栏中运行。');
         return;
       }
+      const { table, tableId } = resolved;
       setAvailable(true);
+      setActiveTableId(tableId);
       const rawList = (await table.getFieldMetaList()) as unknown[];
       const normalized: TableField[] = [];
       const seen = new Set<string>();
@@ -171,6 +187,7 @@ export function useBitable(): BitableContext {
       }
     } catch (err) {
       setAvailable(false);
+      setActiveTableId(null);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
@@ -178,10 +195,11 @@ export function useBitable(): BitableContext {
   }, []);
 
   const createAttachmentField = useCallback(async (name = '生成文档'): Promise<TableField> => {
-    const table = await resolveActiveTable();
-    if (!table) {
+    const resolved = await resolveActiveTable();
+    if (!resolved) {
       throw new Error('未获取到当前数据表，请在飞书多维表格边栏中运行。');
     }
+    const { table } = resolved;
     const usedNames = new Set(fields.map((f) => f.name.trim()).filter(Boolean));
     let fieldName = name.trim() || '生成文档';
     if (usedNames.has(fieldName)) {
@@ -236,6 +254,7 @@ export function useBitable(): BitableContext {
     error,
     refresh,
     createAttachmentField,
+    activeTableId,
     totalRecordCount,
     allRecordIds,
   };

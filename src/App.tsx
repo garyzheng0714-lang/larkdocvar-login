@@ -93,6 +93,7 @@ function V2RealRoute({ userMenu }: { userMenu: ReactNode }) {
       userMenu={userMenu}
       mode={standalone ? 'standalone' : 'bitable'}
       fields={standalone ? [] : base.fields}
+      activeTableId={standalone ? null : base.activeTableId}
       templates={templates.items}
       selectedCount={standalone ? 1 : base.selectedCount || base.totalRecordCount || 0}
       bitableAvailable={base.available}

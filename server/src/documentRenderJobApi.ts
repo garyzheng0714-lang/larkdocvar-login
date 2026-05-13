@@ -57,6 +57,7 @@ const jobSchema = z.object({
   output: z.object({
     fileName: z.string().trim().max(255).optional(),
     expiresInSeconds: z.number().int().positive().max(7 * 24 * 60 * 60).optional(),
+    includeFileBase64: z.boolean().optional(),
   }).optional(),
   records: z.array(z.object({
     recordId: z.string().trim().min(1).max(128),
@@ -65,6 +66,7 @@ const jobSchema = z.object({
     output: z.object({
       fileName: z.string().trim().max(255).optional(),
       expiresInSeconds: z.number().int().positive().max(7 * 24 * 60 * 60).optional(),
+      includeFileBase64: z.boolean().optional(),
     }).optional(),
   })).min(1).max(MAX_JOB_RECORDS),
 });

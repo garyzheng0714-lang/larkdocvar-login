@@ -109,6 +109,23 @@ test('Docx 拆分变量替换后保留起始文本节点样式', async () => {
   );
 });
 
+test('Docx 单节点变量替换后完整保留占位符字体样式', async () => {
+  const rPr = '<w:rPr><w:rFonts w:hint="eastAsia" w:ascii="等线" w:hAnsi="等线" w:eastAsia="等线" w:cs="等线"/><w:b/><w:color w:val="000000"/><w:sz w:val="24"/><w:szCs w:val="24"/><w:u w:val="single"/><w:lang w:val="en-US" w:eastAsia="zh-CN"/></w:rPr>';
+  const rendered = await __test__.renderDocx(await createDocxBuffer(`
+    <w:p>
+      <w:r>${rPr}<w:t xml:space="preserve"> {{姓名}} </w:t></w:r>
+    </w:p>
+  `), { 姓名: 'Gary' });
+
+  const outputZip = await JSZip.loadAsync(rendered.buffer);
+  const documentXml = await outputZip.file('word/document.xml')?.async('string');
+  assert.match(
+    documentXml || '',
+    new RegExp(`${rPr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}<w:t xml:space="preserve"> Gary </w:t>`),
+  );
+});
+
+
 test('Docx 替换支持表格、页眉、页脚里的拆分变量', async () => {
   const rendered = await __test__.renderDocx(await createDocxBufferWithParts({
     documentXml: `

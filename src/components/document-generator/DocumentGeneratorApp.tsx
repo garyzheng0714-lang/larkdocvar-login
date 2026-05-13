@@ -1,10 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import './_design.css';
 import { PrimaryScreen } from './PrimaryScreen';
 import { PickerScreen } from './PickerScreen';
 import { NewTemplateScreen } from './NewTemplateScreen';
 import { ProgressModal } from './ProgressModal';
+import {
+  buildDefaultMapping,
+  buildStandaloneMapping,
+  isSameMapping,
+  reconcileMapping,
+} from './mapping';
 import type {
   AccentKey,
   Accent,
@@ -22,28 +28,12 @@ const ACCENTS: Record<AccentKey, Accent> = {
   amber: { primary: '#b9621a', soft: '#fbeedf' },
 };
 
-function buildDefaultMapping(template: Template | null, fields: TableField[]): Record<string, string> {
-  if (!template?.variables) return {};
-  const mapping: Record<string, string> = {};
-  const byName = new Map(fields.map((f) => [f.name.toLowerCase(), f]));
-  for (const v of template.variables) {
-    const direct = byName.get(v.name.toLowerCase());
-    if (direct) mapping[v.name] = direct.id;
-    else if (v.suggested && fields.some((f) => f.id === v.suggested)) mapping[v.name] = v.suggested;
-  }
-  return mapping;
-}
-
-function buildStandaloneMapping(template: Template | null): Record<string, string> {
-  if (!template?.variables) return {};
-  return Object.fromEntries(template.variables.map((v) => [v.name, '__custom__']));
-}
-
 const CATEGORIES = ['全部', '合同类', '通知类', '报表类', '证明类'];
 
 export interface DocumentGeneratorAppProps {
   userMenu?: ReactNode;
   fields: TableField[];
+  activeTableId?: string | null;
   templates: Template[];
   selectedCount: number;
   bitableAvailable: boolean;
@@ -62,6 +52,7 @@ export interface DocumentGeneratorAppProps {
 export function DocumentGeneratorApp({
   userMenu,
   fields,
+  activeTableId,
   templates,
   selectedCount,
   bitableAvailable,
@@ -95,6 +86,10 @@ export function DocumentGeneratorApp({
   const [picker, setPicker] = useState(false);
   const [newTpl, setNewTpl] = useState(false);
   const [progress, setProgress] = useState(false);
+  const fieldSignature = useMemo(
+    () => fields.map((f) => `${f.id}:${f.name}:${f.type}`).join('|'),
+    [fields],
+  );
 
   useEffect(() => {
     setState((s) => ({ ...s, selectedCount, sourceMode: mode }));
@@ -115,6 +110,25 @@ export function DocumentGeneratorApp({
       }));
     }
   }, [templates, fields, state.template, mode]);
+
+  useEffect(() => {
+    if (mode === 'standalone') return;
+    setState((s) => {
+      if (!s.template) return s;
+      const nextMapping = reconcileMapping(s.template, fields, s.mapping);
+      const writeBackFieldExists = fields.some((f) => f.id === s.writeBackField && f.type === 'attachment');
+      const nextWriteBackField = writeBackFieldExists ? s.writeBackField : '';
+      const mappingChanged = !isSameMapping(s.mapping, nextMapping);
+      const writeBackChanged = s.writeBackField !== nextWriteBackField;
+      if (!mappingChanged && !writeBackChanged) return s;
+      return {
+        ...s,
+        mapping: nextMapping,
+        writeBackField: nextWriteBackField,
+        writeBack: nextWriteBackField ? s.writeBack : false,
+      };
+    });
+  }, [activeTableId, fieldSignature, fields, mode]);
 
   return (
     <div

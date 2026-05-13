@@ -83,6 +83,7 @@ const documentRenderSchema = z.object({
   output: z.object({
     fileName: z.string().trim().max(255).optional(),
     expiresInSeconds: z.number().int().positive().max(7 * 24 * 60 * 60).optional(),
+    includeFileBase64: z.boolean().optional(),
   }).optional(),
 });
 
@@ -817,7 +818,9 @@ async function buildDocxResponse(input: DocumentRenderRequest, storage: Document
       provided: [...Object.keys(variables), ...Object.keys(imageVariables).map((name) => `image:${name}`)],
       unused,
     },
-    download: saved,
+    download: input.output?.includeFileBase64
+      ? { ...saved, fileBase64: rendered.buffer.toString('base64') }
+      : saved,
   };
   return rendered.images.found.length > 0 || Object.keys(imageVariables).length > 0
     ? { ...response, images: { ...rendered.images, provided: Object.keys(imageVariables), unused: unusedImageVariables.map((name) => name.replace(/^image:/, '')) } }

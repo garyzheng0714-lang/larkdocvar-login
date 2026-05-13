@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { bitable } from '@lark-base-open/js-sdk';
+import type { IAttachmentField, IOpenAttachment } from '@lark-base-open/js-sdk';
 import type {
   Counts,
   GenerateOptions,
@@ -99,10 +100,14 @@ interface BatchRecordResponse {
   download?: {
     url?: string;
     fileName?: string;
+    contentType?: string;
+    fileBase64?: string;
   };
   downloadUrl?: string;
   url?: string;
   fileName?: string;
+  contentType?: string;
+  fileBase64?: string;
 }
 
 interface NormalizedBatchRecord {
@@ -111,6 +116,8 @@ interface NormalizedBatchRecord {
   error?: string;
   downloadUrl?: string;
   fileName?: string;
+  contentType?: string;
+  fileBase64?: string;
 }
 
 function normalizeBatchRecord(record: BatchRecordResponse): NormalizedBatchRecord {
@@ -121,6 +128,8 @@ function normalizeBatchRecord(record: BatchRecordResponse): NormalizedBatchRecor
     error: record.error,
     downloadUrl,
     fileName: record.download?.fileName || record.fileName || 'document.docx',
+    contentType: record.download?.contentType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    fileBase64: record.download?.fileBase64,
   };
 }
 
@@ -204,6 +213,22 @@ function parseImageUrls(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function base64ToFile(base64: string, fileName: string, contentType: string): File {
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new File([bytes.buffer], fileName, { type: contentType });
+}
+
+async function downloadAsFile(url: string, fileName: string, contentType: string): Promise<File> {
+  const response = await fetch(url, { credentials: url.startsWith('/') ? 'include' : 'omit' });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  const blob = await response.blob();
+  return new File([blob], fileName, { type: blob.type || contentType });
+}
+
 async function getActiveTableId(): Promise<string | null> {
   try {
     const sel = await bitable.base.getSelection();
@@ -232,14 +257,23 @@ export function useGenerateReal(): GenerateRunner {
   const counts = useMemo(() => computeCounts(items), [items]);
 
   const writeBack = useCallback(
-    async (tableId: string, recordId: string, url: string, fileName: string, writeBackField: string): Promise<string | null> => {
+    async (
+      tableId: string,
+      recordId: string,
+      file: { url: string; fileName: string; contentType: string; fileBase64?: string },
+      writeBackField: string,
+    ): Promise<string | null> => {
       if (!writeBackField) return null;
       try {
         const table = await bitable.base.getTableById(tableId);
-        const ext = table as unknown as {
-          setCellValue: (fieldId: string, recordId: string, value: unknown) => Promise<unknown>;
-        };
-        await ext.setCellValue(writeBackField, recordId, [{ name: fileName, url }]);
+        const field = await table.getField<IAttachmentField>(writeBackField);
+        const uploadFile = file.fileBase64
+          ? base64ToFile(file.fileBase64, file.fileName, file.contentType)
+          : await downloadAsFile(file.url, file.fileName, file.contentType);
+        const current = await field.getValue(recordId).catch((): IOpenAttachment[] => []);
+        const existing = Array.isArray(current) ? current : [];
+        const uploaded = await field.transform(uploadFile);
+        await table.setCellValue(writeBackField, recordId, [...existing, ...uploaded]);
         return null;
       } catch {
         return '生成成功，但写回附件字段失败，请手动下载。';
@@ -293,7 +327,11 @@ export function useGenerateReal(): GenerateRunner {
           const payload: Record<string, unknown> = {
             recordId: r.id,
             variables,
-            output: ttlSeconds ? { fileName, expiresInSeconds: ttlSeconds } : { fileName },
+            output: {
+              fileName,
+              ...(ttlSeconds ? { expiresInSeconds: ttlSeconds } : {}),
+              ...(options.writeBackField ? { includeFileBase64: true } : {}),
+            },
           };
           if (Object.keys(imageVariables).length > 0) payload.imageVariables = imageVariables;
           return { recordId: r.id, payload };
@@ -346,8 +384,12 @@ export function useGenerateReal(): GenerateRunner {
               ? await writeBack(
                   tableId,
                   item.recordId,
-                  item.downloadUrl,
-                  item.fileName || 'document.docx',
+                  {
+                    url: item.downloadUrl,
+                    fileName: item.fileName || 'document.docx',
+                    contentType: item.contentType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    fileBase64: item.fileBase64,
+                  },
                   options.writeBackField,
                 )
               : null;
