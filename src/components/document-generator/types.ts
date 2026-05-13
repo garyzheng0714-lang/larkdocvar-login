@@ -75,6 +75,7 @@ export interface RecordSpec {
 
 export interface GenerateOptions {
   template: Template | null;
+  sourceMode?: 'bitable' | 'standalone';
   mapping: Record<string, string>;
   customText: Record<string, string>;
   fileNameTpl: string;
@@ -98,6 +99,7 @@ export interface GenerateRunner {
 
 export interface PrimaryState {
   template: Template | null;
+  sourceMode?: 'bitable' | 'standalone';
   mapping: Record<string, string>;
   customText: Record<string, string>;
   fileNameTpl: string;

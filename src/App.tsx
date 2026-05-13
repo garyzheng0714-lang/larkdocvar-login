@@ -24,25 +24,38 @@ function useMockMode(): boolean {
   }, []);
 }
 
-function V2MockRoute({ userMenu }: { userMenu: ReactNode }) {
+function useStandalonePreviewMode(): boolean {
+  return useMemo(() => {
+    try {
+      return new URLSearchParams(window.location.search).get("standalone") === "1";
+    } catch {
+      return false;
+    }
+  }, []);
+}
+
+function V2MockRoute({ userMenu, standalone = false }: { userMenu: ReactNode; standalone?: boolean }) {
   const runner = useGenerateMock();
   const recordsFor = useCallback(
     (state: PrimaryState): RecordSpec[] =>
-      MOCK_ROWS.slice(0, Math.min(state.selectedCount, MOCK_ROWS.length)).map(
-        (r: (typeof MOCK_ROWS)[number], i: number): RecordSpec => ({
-          id: `mock-${i + 1}`,
-          displayName: r.客户名称,
-        }),
-      ),
-    [],
+      standalone
+        ? [{ id: 'manual-1', displayName: '手动生成' }]
+        : MOCK_ROWS.slice(0, Math.min(state.selectedCount, MOCK_ROWS.length)).map(
+            (r: (typeof MOCK_ROWS)[number], i: number): RecordSpec => ({
+              id: `mock-${i + 1}`,
+              displayName: r.客户名称,
+            }),
+          ),
+    [standalone],
   );
   return (
     <DocumentGeneratorApp
       userMenu={userMenu}
-      fields={MOCK_FIELDS}
+      mode={standalone ? 'standalone' : 'bitable'}
+      fields={standalone ? [] : MOCK_FIELDS}
       templates={MOCK_TEMPLATES}
-      selectedCount={6}
-      bitableAvailable
+      selectedCount={standalone ? 1 : 6}
+      bitableAvailable={!standalone}
       runner={runner}
       recordsFor={recordsFor}
     />
@@ -53,21 +66,26 @@ function V2RealRoute({ userMenu }: { userMenu: ReactNode }) {
   const base = useBitable();
   const templates = useTemplates();
   const runner = useGenerateReal();
+  const standalone = !base.loading && !base.available;
   const recordsFor = useCallback(
     (_state: PrimaryState): RecordSpec[] => {
+      if (standalone) {
+        return [{ id: 'manual-1', displayName: '手动生成' }];
+      }
       const ids = base.selectedRecordIds.length > 0 ? base.selectedRecordIds : base.allRecordIds;
       return ids.map((id, i) => ({ id, displayName: `记录 ${i + 1}` }));
     },
-    [base.selectedRecordIds, base.allRecordIds],
+    [standalone, base.selectedRecordIds, base.allRecordIds],
   );
   return (
     <DocumentGeneratorApp
       userMenu={userMenu}
-      fields={base.fields}
+      mode={standalone ? 'standalone' : 'bitable'}
+      fields={standalone ? [] : base.fields}
       templates={templates.items}
-      selectedCount={base.selectedCount || base.totalRecordCount || 0}
+      selectedCount={standalone ? 1 : base.selectedCount || base.totalRecordCount || 0}
       bitableAvailable={base.available}
-      bitableError={base.error}
+      bitableError={standalone ? null : base.error}
       templatesLoading={templates.loading}
       templatesError={templates.error}
       refreshTemplates={templates.refresh}
@@ -310,11 +328,13 @@ export default function App() {
   }, [clearAuthPendingFlag]);
 
   const mockMode = useMockMode();
+  const standalonePreview = useStandalonePreviewMode();
 
   if (mockMode) {
     const mockUser: AuthUser = { openId: "mock_user", name: "演示账号", avatarUrl: undefined };
     return (
       <V2MockRoute
+        standalone={standalonePreview}
         userMenu={<AccountMenu user={mockUser} onLogout={() => window.alert("（mock 模式不会真的退出）")} />}
       />
     );

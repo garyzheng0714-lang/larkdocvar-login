@@ -8,6 +8,7 @@ interface PrimaryScreenProps {
   state: PrimaryState;
   setState: Dispatch<SetStateAction<PrimaryState>>;
   fields: TableField[];
+  mode?: 'bitable' | 'standalone';
   openPicker: () => void;
   startGenerate: () => void;
   accent: string;
@@ -18,6 +19,7 @@ export function PrimaryScreen({
   state,
   setState,
   fields,
+  mode = 'bitable',
   openPicker,
   startGenerate,
   accent,
@@ -32,7 +34,12 @@ export function PrimaryScreen({
     setState((s) => ({ ...s, mapping: { ...s.mapping, [varName]: fieldId } }));
   }
   const tplVars = tpl?.variables ?? [];
-  const unmappedCount = tpl ? tplVars.filter((v) => !mapping[v.name]).length : 0;
+  const isStandalone = mode === 'standalone';
+  const unmappedCount = tpl
+    ? tplVars.filter((v) =>
+        isStandalone ? !state.customText[v.name]?.trim() : !mapping[v.name],
+      ).length
+    : 0;
   const canGenerate = !!tpl && unmappedCount === 0;
 
   return (
@@ -76,21 +83,23 @@ export function PrimaryScreen({
           <>
             <div className="block">
               <div className="block-head">
-                <span className="block-title">字段映射</span>
+                <span className="block-title">{isStandalone ? '填写变量' : '字段映射'}</span>
                 <span className="block-count">{tplVars.length}</span>
-                <button
-                  className="ghost-link"
-                  type="button"
-                  onClick={() => {
-                    const m: Record<string, string> = {};
-                    tplVars.forEach((v) => {
-                      if (v.suggested) m[v.name] = v.suggested;
-                    });
-                    setState((s) => ({ ...s, mapping: m }));
-                  }}
-                >
-                  <Icon.Sparkle /> 智能匹配
-                </button>
+                {!isStandalone && (
+                  <button
+                    className="ghost-link"
+                    type="button"
+                    onClick={() => {
+                      const m: Record<string, string> = {};
+                      tplVars.forEach((v) => {
+                        if (v.suggested) m[v.name] = v.suggested;
+                      });
+                      setState((s) => ({ ...s, mapping: m }));
+                    }}
+                  >
+                    <Icon.Sparkle /> 智能匹配
+                  </button>
+                )}
               </div>
               <div className="map-table">
                 {tplVars.map((v) => (
@@ -98,6 +107,7 @@ export function PrimaryScreen({
                     key={v.name}
                     variable={v}
                     fields={fields}
+                    mode={mode}
                     value={mapping[v.name]}
                     onChange={(fid) => setMapping(v.name, fid)}
                     customText={state.customText[v.name]}
@@ -120,17 +130,33 @@ export function PrimaryScreen({
               />
             </div>
 
+            {!isStandalone && (
+              <div className="block">
+                <div className="block-head">
+                  <span className="block-title">生成后写回附件字段</span>
+                </div>
+                <WriteBackPicker
+                  fields={fields.filter((f) => f.type === 'attachment')}
+                  value={state.writeBackField}
+                  onChange={(fid) =>
+                    setState((s) => ({ ...s, writeBackField: fid, writeBack: !!fid }))
+                  }
+                />
+              </div>
+            )}
+
             <div className="block">
               <div className="block-head">
-                <span className="block-title">生成后写回附件字段</span>
+                <span className="block-title">生成数量</span>
               </div>
-              <WriteBackPicker
-                fields={fields.filter((f) => f.type === 'attachment')}
-                value={state.writeBackField}
-                onChange={(fid) =>
-                  setState((s) => ({ ...s, writeBackField: fid, writeBack: !!fid }))
-                }
-              />
+              <div className="src-card">
+                <div className="src-row">
+                  <span className="src-label">{isStandalone ? '来源' : '记录'}</span>
+                  <span className="src-value">
+                    {isStandalone ? '手动填写 1 份文档' : `当前将生成 ${state.selectedCount} 份文档`}
+                  </span>
+                </div>
+              </div>
             </div>
 
             <div className={'block block-collapsible' + (optsOpen ? ' is-open' : '')}>
@@ -168,13 +194,13 @@ export function PrimaryScreen({
       <footer className="ftr">
         <div className="ftr-info">
           <div className="ftr-info-1">
-            将生成 <b>{state.selectedCount}</b> 份文档
+            将生成 <b>{isStandalone ? 1 : state.selectedCount}</b> 份文档
           </div>
           <div className="ftr-info-2">
             {tpl
               ? unmappedCount > 0
                 ? <span className="ftr-warn">还有 {unmappedCount} 个变量未填</span>
-                : <span>预计 ~{Math.ceil(state.selectedCount * 0.8)} 秒</span>
+                : <span>预计 ~{Math.ceil((isStandalone ? 1 : state.selectedCount) * 0.8)} 秒</span>
               : '请先选择模板'}
           </div>
         </div>
@@ -222,13 +248,14 @@ function DocThumb() {
 interface MapRowProps {
   variable: TemplateVariable;
   fields: TableField[];
+  mode?: 'bitable' | 'standalone';
   value: string | undefined;
   onChange: (fid: string) => void;
   customText: string | undefined;
   onCustomText: (t: string) => void;
 }
 
-function MapRow({ variable, fields, value, onChange, customText, onCustomText }: MapRowProps) {
+function MapRow({ variable, fields, mode = 'bitable', value, onChange, customText, onCustomText }: MapRowProps) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const isImage = variable.kind === 'image';
@@ -237,6 +264,26 @@ function MapRow({ variable, fields, value, onChange, customText, onCustomText }:
   );
   const selected = fields.find((f) => f.id === value);
   const isCustom = value === '__custom__';
+
+  if (mode === 'standalone') {
+    return (
+      <label className="mrow mrow-manual">
+        <span className="mrow-var">
+          {variable.name}
+          <span className="manual-required">*</span>
+        </span>
+        <input
+          className="custom-input manual-input"
+          placeholder={isImage ? '输入图片 URL，多个 URL 可用换行分隔' : '输入固定值'}
+          value={customText || ''}
+          onChange={(e) => {
+            if (value !== '__custom__') onChange('__custom__');
+            onCustomText(e.target.value);
+          }}
+        />
+      </label>
+    );
+  }
 
   return (
     <div className="mrow">
@@ -285,27 +332,25 @@ function MapRow({ variable, fields, value, onChange, customText, onCustomText }:
               {f.id === value && <Icon.Check />}
             </button>
           ))}
-          {!isImage && (
-            <>
-              <div className="dd-divider" />
-              <button
-                type="button"
-                className={'dd-item' + (isCustom ? ' dd-item-on' : '')}
-                onClick={() => {
-                  onChange('__custom__');
-                  setOpen(false);
-                }}
-              >
-                <FieldTypeIcon type="text" />
-                <span style={{ flex: 1, textAlign: 'left' }}>自定义文本…</span>
-              </button>
-            </>
-          )}
+          <div className="dd-divider" />
+          <button
+            type="button"
+            className={'dd-item' + (isCustom ? ' dd-item-on' : '')}
+            onClick={() => {
+              onChange('__custom__');
+              setOpen(false);
+            }}
+          >
+            <FieldTypeIcon type={isImage ? 'attachment' : 'text'} />
+            <span style={{ flex: 1, textAlign: 'left' }}>
+              {isImage ? '固定图片链接…' : '自定义文本…'}
+            </span>
+          </button>
         </Dropdown>
         {isCustom && (
           <input
             className="custom-input"
-            placeholder="输入固定值"
+            placeholder={isImage ? '输入图片 URL，多个 URL 可用换行分隔' : '输入固定值'}
             value={customText || ''}
             onChange={(e) => onCustomText(e.target.value)}
           />

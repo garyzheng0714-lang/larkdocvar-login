@@ -49,6 +49,41 @@ button { font: inherit; color: inherit; }
   display: flex;
   flex-direction: column;
 }
+.app-standalone {
+  min-height: 100vh;
+  overflow: auto;
+  padding: 24px;
+  justify-content: center;
+  align-items: flex-start;
+  background: linear-gradient(180deg, #f6f8fb 0%, #eef2f7 100%);
+}
+.app-standalone .sidebar {
+  width: min(960px, calc(100vw - 48px));
+  min-width: 0;
+  max-width: 960px;
+  height: auto;
+  min-height: calc(100vh - 48px);
+  margin: 0 auto;
+  border: 1px solid var(--bd-1);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(20, 30, 60, 0.10);
+}
+.app-standalone .hdr {
+  padding: 0 16px 0 20px;
+}
+.app-standalone .scroll {
+  overflow: visible;
+}
+.app-standalone .block {
+  padding-left: 24px;
+  padding-right: 24px;
+}
+.app-standalone .block-tpl {
+  padding-top: 18px;
+}
+.app-standalone .ftr {
+  padding: 14px 24px;
+}
 .screen {
   display: flex;
   flex-direction: column;
@@ -896,6 +931,11 @@ button { font: inherit; color: inherit; }
   gap: 10px; align-items: center;
   padding: 4px 0;
 }
+.mrow-manual {
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
+  align-items: center;
+  padding: 7px 0;
+}
 .mrow-var {
   font-size: 13px; color: var(--txt-2);
   min-width: 0;
@@ -909,6 +949,10 @@ button { font: inherit; color: inherit; }
 .kind-txt { background: #eef0f4; color: #5b647a; }
 .kind-img { background: #e8f1ff; color: #2766b8; }
 .mrow-field { position: relative; min-width: 0; }
+.manual-required {
+  color: var(--err);
+  margin-left: 4px;
+}
 
 .fld-trigger {
   width: 100%;
@@ -1025,7 +1069,30 @@ button { font: inherit; color: inherit; }
   border: 1px solid var(--bd-1); border-radius: 6px;
   font-size: 13px; outline: none;
 }
+.manual-input {
+  margin-top: 0;
+  height: 36px;
+  padding: 0 11px;
+  background: #fff;
+}
 .custom-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+@media (max-width: 640px) {
+  .app-standalone {
+    padding: 0;
+  }
+  .app-standalone .sidebar {
+    width: 100vw;
+    min-height: 100vh;
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+  .mrow-manual {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
 
 
 /* Collapsible block */

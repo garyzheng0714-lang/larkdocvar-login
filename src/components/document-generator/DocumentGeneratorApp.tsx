@@ -34,6 +34,11 @@ function buildDefaultMapping(template: Template | null, fields: TableField[]): R
   return mapping;
 }
 
+function buildStandaloneMapping(template: Template | null): Record<string, string> {
+  if (!template?.variables) return {};
+  return Object.fromEntries(template.variables.map((v) => [v.name, '__custom__']));
+}
+
 const CATEGORIES = ['全部', '合同类', '通知类', '报表类', '证明类'];
 
 export interface DocumentGeneratorAppProps {
@@ -48,6 +53,7 @@ export interface DocumentGeneratorAppProps {
   refreshTemplates?: () => Promise<void>;
   accentKey?: AccentKey;
   density?: 'comfortable' | 'compact';
+  mode?: 'bitable' | 'standalone';
   runner: GenerateRunner;
   recordsFor: (state: PrimaryState) => RecordSpec[];
 }
@@ -63,6 +69,7 @@ export function DocumentGeneratorApp({
   refreshTemplates,
   accentKey = 'blue',
   density = 'comfortable',
+  mode = 'bitable',
   runner,
   recordsFor,
 }: DocumentGeneratorAppProps) {
@@ -71,7 +78,10 @@ export function DocumentGeneratorApp({
 
   const [state, setState] = useState<PrimaryState>(() => ({
     template: initialTemplate,
-    mapping: buildDefaultMapping(initialTemplate, fields),
+    sourceMode: mode,
+    mapping: mode === 'standalone'
+      ? buildStandaloneMapping(initialTemplate)
+      : buildDefaultMapping(initialTemplate, fields),
     customText: {},
     fileNameTpl: initialTemplate ? `{{${initialTemplate.variables?.[0]?.name ?? '客户名称'}}}-${initialTemplate.name}` : '文档',
     selectedCount,
@@ -85,8 +95,8 @@ export function DocumentGeneratorApp({
   const [progress, setProgress] = useState(false);
 
   useEffect(() => {
-    setState((s) => ({ ...s, selectedCount }));
-  }, [selectedCount]);
+    setState((s) => ({ ...s, selectedCount, sourceMode: mode }));
+  }, [selectedCount, mode]);
 
   useEffect(() => {
     if (!state.template && templates.length > 0) {
@@ -94,17 +104,19 @@ export function DocumentGeneratorApp({
       setState((s) => ({
         ...s,
         template: first,
-        mapping: buildDefaultMapping(first, fields),
+        mapping: mode === 'standalone'
+          ? buildStandaloneMapping(first)
+          : buildDefaultMapping(first, fields),
         fileNameTpl: first.variables?.[0]
           ? `{{${first.variables[0].name}}}-${first.name}`
           : first.name || '文档',
       }));
     }
-  }, [templates, fields, state.template]);
+  }, [templates, fields, state.template, mode]);
 
   return (
     <div
-      className={'app density-' + density}
+      className={`app app-${mode} density-${density}`}
       style={{
         ['--accent' as string]: accent.primary,
         ['--accent-soft' as string]: accent.soft,
@@ -115,12 +127,14 @@ export function DocumentGeneratorApp({
           state={state}
           setState={setState}
           fields={fields}
+          mode={mode}
           openPicker={() => setPicker(true)}
           startGenerate={() => {
             const records = recordsFor(state);
             if (records.length === 0) return;
             runner.start(records, {
               template: state.template,
+              sourceMode: mode,
               mapping: state.mapping,
               customText: state.customText,
               fileNameTpl: state.fileNameTpl,
@@ -168,7 +182,9 @@ export function DocumentGeneratorApp({
                 setState((s) => ({
                   ...s,
                   template: tpl,
-                  mapping: buildDefaultMapping(tpl, fields),
+                  mapping: mode === 'standalone'
+                    ? buildStandaloneMapping(tpl)
+                    : buildDefaultMapping(tpl, fields),
                   customText: {},
                   fileNameTpl: tpl.variables?.[0]
                     ? `{{${tpl.variables[0].name}}}-${tpl.name}`

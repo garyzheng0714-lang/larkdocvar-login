@@ -197,6 +197,13 @@ function interpolateFileName(tpl: string, variables: Record<string, string>): st
   );
 }
 
+function parseImageUrls(value: string | undefined): string[] {
+  return (value || '')
+    .split(/[\n,，]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 async function getActiveTableId(): Promise<string | null> {
   try {
     const sel = await bitable.base.getSelection();
@@ -242,7 +249,7 @@ export function useGenerateReal(): GenerateRunner {
   );
 
   const runBatch = useCallback(
-    async (tableId: string, slice: RecordSpec[], options: GenerateOptions) => {
+    async (tableId: string | null, slice: RecordSpec[], options: GenerateOptions) => {
       if (!options.template) return;
       const sliceIds = new Set(slice.map((s) => s.id));
       setItems((prev) =>
@@ -258,14 +265,17 @@ export function useGenerateReal(): GenerateRunner {
           for (const v of options.template?.variables ?? []) {
             const fieldId = options.mapping[v.name];
             if (v.kind === 'image') {
-              if (fieldId && fieldId !== '__custom__') {
+              if (fieldId && fieldId !== '__custom__' && tableId) {
                 const urls = await readAttachmentUrls(tableId, fieldId, r.id);
+                if (urls.length > 0) imageVariables[v.name] = { urls };
+              } else if (fieldId === '__custom__' || options.sourceMode === 'standalone') {
+                const urls = parseImageUrls(options.customText[v.name]);
                 if (urls.length > 0) imageVariables[v.name] = { urls };
               }
               if (!imageVariables[v.name]) missing.push(`图片变量「${v.name}」`);
               continue;
             }
-            if (fieldId === '__custom__') {
+            if (fieldId === '__custom__' || options.sourceMode === 'standalone' || !tableId) {
               variables[v.name] = options.customText[v.name] ?? '';
             } else if (fieldId) {
               variables[v.name] = await readCellString(tableId, fieldId, r.id);
@@ -332,13 +342,15 @@ export function useGenerateReal(): GenerateRunner {
         for (const r of json.records) {
           const item = normalizeBatchRecord(r);
           if (item.ok && item.downloadUrl) {
-            const warning = await writeBack(
-              tableId,
-              item.recordId,
-              item.downloadUrl,
-              item.fileName || 'document.docx',
-              options.writeBackField,
-            );
+            const warning = tableId
+              ? await writeBack(
+                  tableId,
+                  item.recordId,
+                  item.downloadUrl,
+                  item.fileName || 'document.docx',
+                  options.writeBackField,
+                )
+              : null;
             if (warning) warnings.set(item.recordId, warning);
           }
         }
@@ -379,7 +391,7 @@ export function useGenerateReal(): GenerateRunner {
       setItems(records.map((r) => ({ ...r, status: 'pending', error: null })));
       setPhase('running');
       const tableId = await getActiveTableId();
-      if (!tableId) {
+      if (!tableId && options.sourceMode !== 'standalone') {
         setItems((prev) =>
           prev.map((it) => ({ ...it, status: 'failed' as const, error: '未获取到当前数据表' })),
         );
@@ -411,7 +423,7 @@ export function useGenerateReal(): GenerateRunner {
     );
     setPhase('running');
     const tableId = await getActiveTableId();
-    if (!tableId) return;
+    if (!tableId && options.sourceMode !== 'standalone') return;
     for (let i = 0; i < failedSpecs.length; i += BATCH_SIZE) {
       if ((phaseRef.current as Phase) === 'terminated') return;
       while ((phaseRef.current as Phase) === 'paused') {
