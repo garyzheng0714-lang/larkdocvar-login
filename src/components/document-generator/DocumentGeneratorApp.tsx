@@ -125,6 +125,8 @@ export function DocumentGeneratorApp({
               customText: state.customText,
               fileNameTpl: state.fileNameTpl,
               writeBackField: state.writeBackField,
+              expires: state.expires,
+              onMissing: state.onMissing,
             });
             setProgress(true);
           }}
@@ -183,9 +185,9 @@ export function DocumentGeneratorApp({
             <NewTemplateScreen
               accent={accent.primary}
               onCancel={() => setNewTpl(false)}
-              onSave={() => {
+              onSave={async () => {
+                await refreshTemplates?.();
                 setNewTpl(false);
-                void refreshTemplates?.();
               }}
             />
           </div>

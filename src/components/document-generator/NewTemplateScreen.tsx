@@ -1,29 +1,23 @@
 import { useRef, useState } from 'react';
 import { Icon } from './icons';
 import { Dropdown } from './Dropdown';
-import type { TemplateVariable } from './types';
 
-interface ParsedFile {
+interface SelectedFile {
   name: string;
   size: number;
-  parsedVars: TemplateVariable[];
+  file: File;
 }
 
 interface NewTemplateScreenProps {
   accent: string;
   onCancel: () => void;
-  onSave: (input: {
-    name: string;
-    category: string;
-    visibility: '公用' | '个人';
-    desc: string;
-    vars: TemplateVariable[];
-  }) => void;
+  onSave: () => void | Promise<void>;
 }
 
 export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScreenProps) {
-  const [file, setFile] = useState<ParsedFile | null>(null);
-  const [parsing, setParsing] = useState(false);
+  const [file, setFile] = useState<SelectedFile | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [category, setCategory] = useState('合同');
   const [visibility, setVisibility] = useState<'公用' | '个人'>('个人');
@@ -34,28 +28,17 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
   function handleFiles(fileList: FileList | null) {
     const f = fileList?.[0];
     if (!f) return;
-    if (!/\.docx?$/i.test(f.name)) {
+    if (!/\.docx$/i.test(f.name)) {
       window.alert('请选择 .docx 文件');
       return;
     }
-    setParsing(true);
+    if (f.size > 20 * 1024 * 1024) {
+      window.alert('模板文件不能超过 20MB');
+      return;
+    }
+    setError(null);
     if (!name) setName(f.name.replace(/\.docx?$/i, ''));
-    window.setTimeout(() => {
-      setFile({
-        name: f.name,
-        size: f.size,
-        parsedVars: [
-          { name: '客户名称', kind: 'text' },
-          { name: '合同金额', kind: 'text' },
-          { name: '签订日期', kind: 'text' },
-          { name: '联系人', kind: 'text' },
-          { name: '联系电话', kind: 'text' },
-          { name: '业务负责人', kind: 'text' },
-          { name: '客户 Logo', kind: 'image' },
-        ],
-      });
-      setParsing(false);
-    }, 700);
+    setFile({ name: f.name, size: f.size, file: f });
   }
 
   function onDrop(e: React.DragEvent<HTMLDivElement>) {
@@ -72,6 +55,37 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
   }
 
   const canSave = !!file && name.trim().length > 0;
+
+  async function saveTemplate() {
+    if (!file || !canSave || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const fileBase64 = await readFileAsBase64(file.file);
+      const response = await fetch('/api/v1/document-templates', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          fileName: file.name,
+          fileBase64,
+          category,
+          visibility: visibility === '个人' ? 'private' : 'shared',
+          description: desc.trim() || undefined,
+        }),
+      });
+      const body = await response.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+      if (!response.ok || !body?.ok) {
+        throw new Error(body?.error || '模板保存失败，请稍后重试。');
+      }
+      await onSave();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '模板保存失败，请稍后重试。');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="screen nt-screen">
@@ -91,19 +105,9 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
               onDragLeave={onDragLeave}
               onClick={() => inputRef.current?.click()}
             >
-              {parsing ? (
-                <>
-                  <div className="nt-drop-spinner" />
-                  <div className="nt-drop-title">正在解析变量…</div>
-                  <div className="nt-drop-hint">检测文档中的 {'{{变量}}'} 占位符</div>
-                </>
-              ) : (
-                <>
-                  <div className="nt-drop-glyph"><DocxGlyph /></div>
-                  <div className="nt-drop-title">拖入或点击选择 .docx 文件</div>
-                  <div className="nt-drop-hint">单文件 ≤ 20MB</div>
-                </>
-              )}
+              <div className="nt-drop-glyph"><DocxGlyph /></div>
+              <div className="nt-drop-title">拖入或点击选择 .docx 文件</div>
+              <div className="nt-drop-hint">单文件 ≤ 20MB</div>
               <input
                 ref={inputRef}
                 type="file"
@@ -143,7 +147,7 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
                 <div className="nt-file-meta">
                   <span>{prettyBytes(file.size)}</span>
                   <span className="dot-sep" />
-                  <span>已识别 {file.parsedVars.length} 个变量</span>
+                  <span>保存后自动识别变量</span>
                 </div>
               </div>
               <button
@@ -224,21 +228,13 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
           <div className="block">
             <div className="block-head">
               <span className="block-title">识别到的变量</span>
-              <span className="block-count">{file.parsedVars.length}</span>
+              <span className="block-count">保存后更新</span>
             </div>
-            <div className="nt-vars">
-              {file.parsedVars.map((v) => (
-                <span key={v.name} className="nt-var-chip">
-                  <span className={'mrow-kind ' + (v.kind === 'image' ? 'kind-img' : 'kind-txt')}>
-                    {v.kind === 'image' ? <Icon.Image /> : <Icon.Text />}
-                  </span>
-                  {v.name}
-                </span>
-              ))}
-            </div>
-            <div className="nt-vars-hint">保存后可在使用模板时把每个变量绑定到表中字段。</div>
+            <div className="nt-vars-hint">系统会在保存模板时读取 Word 占位符，保存完成后可绑定字段。</div>
           </div>
         )}
+
+        {error && <div className="nt-error">{error}</div>}
 
         <div style={{ height: 8 }} />
       </div>
@@ -248,24 +244,24 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
         <button
           className="btn-primary"
           type="button"
-          style={{ background: canSave ? accent : '#c8ccd2' }}
-          disabled={!canSave}
-          onClick={() => {
-            if (!file) return;
-            onSave({
-              name: name.trim(),
-              category,
-              visibility,
-              desc,
-              vars: file.parsedVars,
-            });
-          }}
+          style={{ background: canSave && !saving ? accent : '#c8ccd2' }}
+          disabled={!canSave || saving}
+          onClick={saveTemplate}
         >
-          保存模板
+          {saving ? '保存中...' : '保存模板'}
         </button>
       </footer>
     </div>
   );
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('模板文件读取失败，请重新选择。'));
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.readAsDataURL(file);
+  });
 }
 
 function CategorySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {

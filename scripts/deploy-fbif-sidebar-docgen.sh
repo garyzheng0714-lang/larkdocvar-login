@@ -1,25 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SSH_ALIAS="aliyun-prod"
-APP_DIR="/opt/larkdocvar-login"
-APP_NAME="larkdocvar-login"
-HOST_PORT="18081"
+SSH_ALIAS=""
+SSH_HOST="121.40.214.5"
+SSH_USER="root"
+SSH_IDENTITY_FILE=""
+APP_DIR="/opt/fbif-sidebar-docgen"
+APP_NAME="fbif-sidebar-docgen"
+HOST_PORT="19094"
 CONTAINER_PORT="3180"
+POSTGRES_HOST_PORT="15433"
+POSTGRES_CONTAINER_NAME="fbif-sidebar-docgen-postgres"
 KEEP_RELEASES="5"
 APP_ENV_B64=""
 
 usage() {
   cat <<'EOF'
 Usage:
-  scripts/deploy-aliyun-docker.sh [options]
+  scripts/deploy-fbif-sidebar-docgen.sh [options]
 
 Options:
-  --alias <ssh_alias>           SSH alias (default: aliyun-prod)
-  --app-dir <remote_path>       Remote deploy root (default: /opt/larkdocvar-login)
-  --app-name <container_name>   Container/compose project name (default: larkdocvar-login)
-  --host-port <port>            Host exposed port (default: 18081)
+  --alias <ssh_alias>           SSH alias (optional)
+  --host <host>                 SSH host (default: 121.40.214.5)
+  --user <user>                 SSH user (default: root)
+  --identity-file <path>        SSH private key path
+  --app-dir <remote_path>       Remote deploy root (default: /opt/fbif-sidebar-docgen)
+  --app-name <container_name>   Container/compose project name (default: fbif-sidebar-docgen)
+  --host-port <port>            Host exposed port (default: 19094)
   --container-port <port>       Container internal port (default: 3180)
+  --postgres-host-port <port>   Host mapped PostgreSQL port (default: 15433)
+  --postgres-container <name>   PostgreSQL container name (default: fbif-sidebar-docgen-postgres)
   --keep-releases <num>         Keep latest N releases (default: 5)
   --app-env-b64 <base64>        Optional base64 .env content for remote bootstrap
   -h, --help                    Show this help
@@ -30,6 +40,18 @@ while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --alias)
       SSH_ALIAS="$2"
+      shift 2
+      ;;
+    --host)
+      SSH_HOST="$2"
+      shift 2
+      ;;
+    --user)
+      SSH_USER="$2"
+      shift 2
+      ;;
+    --identity-file)
+      SSH_IDENTITY_FILE="$2"
       shift 2
       ;;
     --app-dir)
@@ -46,6 +68,14 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --container-port)
       CONTAINER_PORT="$2"
+      shift 2
+      ;;
+    --postgres-host-port)
+      POSTGRES_HOST_PORT="$2"
+      shift 2
+      ;;
+    --postgres-container)
+      POSTGRES_CONTAINER_NAME="$2"
       shift 2
       ;;
     --keep-releases)
@@ -74,8 +104,13 @@ cd "$ROOT_DIR"
 STAMP="$(date +%Y%m%d%H%M%S)"
 SHORT_SHA="$(git rev-parse --short HEAD 2>/dev/null || true)"
 RELEASE_NAME="${SHORT_SHA:-manual}-${STAMP}"
-RELEASE_TAR="/tmp/larkdocvar-release-${RELEASE_NAME}.tgz"
-REMOTE_RELEASE_TAR="/tmp/larkdocvar-release.tgz"
+RELEASE_TAR="/tmp/fbif-sidebar-docgen-release-${RELEASE_NAME}.tgz"
+REMOTE_RELEASE_TAR="/tmp/fbif-sidebar-docgen-release.tgz"
+SSH_TARGET="${SSH_ALIAS:-${SSH_USER}@${SSH_HOST}}"
+SSH_ARGS=(-o BatchMode=yes -o StrictHostKeyChecking=accept-new)
+if [[ -n "${SSH_IDENTITY_FILE}" ]]; then
+  SSH_ARGS+=(-i "${SSH_IDENTITY_FILE}")
+fi
 
 echo "[deploy] Packaging release archive: $RELEASE_TAR"
 tar -czf "$RELEASE_TAR" \
@@ -87,15 +122,15 @@ tar -czf "$RELEASE_TAR" \
   --exclude=".DS_Store" \
   .
 
-echo "[deploy] Uploading package to server alias: $SSH_ALIAS"
-scp -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$RELEASE_TAR" "$SSH_ALIAS:$REMOTE_RELEASE_TAR"
+echo "[deploy] Uploading package to server: $SSH_TARGET"
+scp "${SSH_ARGS[@]}" "$RELEASE_TAR" "$SSH_TARGET:$REMOTE_RELEASE_TAR"
 
 REMOTE_ENV="$(printf \
-  "APP_DIR=%q APP_NAME=%q HOST_PORT=%q CONTAINER_PORT=%q KEEP_RELEASES=%q APP_ENV_B64=%q RELEASE_FILE=%q RELEASE_NAME=%q" \
-  "$APP_DIR" "$APP_NAME" "$HOST_PORT" "$CONTAINER_PORT" "$KEEP_RELEASES" "$APP_ENV_B64" "$REMOTE_RELEASE_TAR" "$RELEASE_NAME")"
+  "APP_DIR=%q APP_NAME=%q HOST_PORT=%q CONTAINER_PORT=%q POSTGRES_HOST_PORT=%q POSTGRES_CONTAINER_NAME=%q KEEP_RELEASES=%q APP_ENV_B64=%q RELEASE_FILE=%q RELEASE_NAME=%q" \
+  "$APP_DIR" "$APP_NAME" "$HOST_PORT" "$CONTAINER_PORT" "$POSTGRES_HOST_PORT" "$POSTGRES_CONTAINER_NAME" "$KEEP_RELEASES" "$APP_ENV_B64" "$REMOTE_RELEASE_TAR" "$RELEASE_NAME")"
 
 echo "[deploy] Running remote deploy script"
-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$SSH_ALIAS" \
+ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
   "${REMOTE_ENV} bash -s" <<'REMOTE_SCRIPT'
 set -euo pipefail
 
@@ -142,6 +177,9 @@ upsert_env() {
 
 upsert_env "HOST_PORT" "${HOST_PORT}"
 upsert_env "CONTAINER_PORT" "${CONTAINER_PORT}"
+upsert_env "APP_NAME" "${APP_NAME}"
+upsert_env "POSTGRES_HOST_PORT" "${POSTGRES_HOST_PORT}"
+upsert_env "POSTGRES_CONTAINER_NAME" "${POSTGRES_CONTAINER_NAME}"
 upsert_env "PORT" "${CONTAINER_PORT}"
 upsert_env "HOST" "0.0.0.0"
 
@@ -151,6 +189,16 @@ if ss -ltn "( sport = :${HOST_PORT} )" | grep -q LISTEN; then
   else
     echo "[remote] 端口冲突: HOST_PORT=${HOST_PORT} 已被占用"
     ss -ltnp | awk -v p=":${HOST_PORT}" '$4 ~ p"$" {print}'
+    exit 1
+  fi
+fi
+
+if ss -ltn "( sport = :${POSTGRES_HOST_PORT} )" | grep -q LISTEN; then
+  if docker ps --filter "name=^/${POSTGRES_CONTAINER_NAME}$" --format '{{.Ports}}' | grep -q ":${POSTGRES_HOST_PORT}->"; then
+    echo "[remote] POSTGRES_HOST_PORT=${POSTGRES_HOST_PORT} currently used by ${POSTGRES_CONTAINER_NAME}, continue rolling update"
+  else
+    echo "[remote] 端口冲突: POSTGRES_HOST_PORT=${POSTGRES_HOST_PORT} 已被占用"
+    ss -ltnp | awk -v p=":${POSTGRES_HOST_PORT}" '$4 ~ p"$" {print}'
     exit 1
   fi
 fi

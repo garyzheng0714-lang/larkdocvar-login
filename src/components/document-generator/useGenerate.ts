@@ -89,6 +89,48 @@ export function useGenerateMock(): GenerateRunner {
 
 const BATCH_SIZE = 10;
 
+type ImageVariablePayload = Record<string, { urls: string[] }>;
+
+interface BatchRecordResponse {
+  recordId: string;
+  ok?: boolean;
+  status?: 'succeeded' | 'failed';
+  error?: string;
+  download?: {
+    url?: string;
+    fileName?: string;
+  };
+  downloadUrl?: string;
+  url?: string;
+  fileName?: string;
+}
+
+interface NormalizedBatchRecord {
+  recordId: string;
+  ok: boolean;
+  error?: string;
+  downloadUrl?: string;
+  fileName?: string;
+}
+
+function normalizeBatchRecord(record: BatchRecordResponse): NormalizedBatchRecord {
+  const downloadUrl = record.download?.url || record.downloadUrl || record.url;
+  return {
+    recordId: record.recordId,
+    ok: record.ok === true || record.status === 'succeeded',
+    error: record.error,
+    downloadUrl,
+    fileName: record.download?.fileName || record.fileName || 'document.docx',
+  };
+}
+
+function expiresInSeconds(label: string): number | undefined {
+  if (label === '1 小时') return 60 * 60;
+  if (label === '24 小时') return 24 * 60 * 60;
+  if (label === '7 天') return 7 * 24 * 60 * 60;
+  return undefined;
+}
+
 async function readAttachmentUrls(
   tableId: string,
   fieldId: string,
@@ -183,16 +225,17 @@ export function useGenerateReal(): GenerateRunner {
   const counts = useMemo(() => computeCounts(items), [items]);
 
   const writeBack = useCallback(
-    async (tableId: string, recordId: string, url: string, fileName: string, writeBackField: string) => {
-      if (!writeBackField) return;
+    async (tableId: string, recordId: string, url: string, fileName: string, writeBackField: string): Promise<string | null> => {
+      if (!writeBackField) return null;
       try {
         const table = await bitable.base.getTableById(tableId);
         const ext = table as unknown as {
           setCellValue: (fieldId: string, recordId: string, value: unknown) => Promise<unknown>;
         };
         await ext.setCellValue(writeBackField, recordId, [{ name: fileName, url }]);
+        return null;
       } catch {
-        // writeback errors are non-fatal — surface via item.error if you need
+        return '生成成功，但写回附件字段失败，请手动下载。';
       }
     },
     [],
@@ -206,18 +249,20 @@ export function useGenerateReal(): GenerateRunner {
         prev.map((it) => (sliceIds.has(it.id) ? { ...it, status: 'processing' } : it)),
       );
 
-      const batchPayload = await Promise.all(
+      const ttlSeconds = expiresInSeconds(options.expires);
+      const prepared = await Promise.all(
         slice.map(async (r) => {
           const variables: Record<string, string> = {};
-          const imageVariables: Record<string, string[]> = {};
+          const imageVariables: ImageVariablePayload = {};
+          const missing: string[] = [];
           for (const v of options.template?.variables ?? []) {
             const fieldId = options.mapping[v.name];
             if (v.kind === 'image') {
               if (fieldId && fieldId !== '__custom__') {
-                imageVariables[v.name] = await readAttachmentUrls(tableId, fieldId, r.id);
-              } else {
-                imageVariables[v.name] = [];
+                const urls = await readAttachmentUrls(tableId, fieldId, r.id);
+                if (urls.length > 0) imageVariables[v.name] = { urls };
               }
+              if (!imageVariables[v.name]) missing.push(`图片变量「${v.name}」`);
               continue;
             }
             if (fieldId === '__custom__') {
@@ -227,17 +272,40 @@ export function useGenerateReal(): GenerateRunner {
             } else {
               variables[v.name] = '';
             }
+            if (options.onMissing === '停止该条' && !variables[v.name].trim()) {
+              missing.push(`变量「${v.name}」`);
+            }
+          }
+          if (missing.length > 0 && options.onMissing === '停止该条') {
+            return { recordId: r.id, error: `${missing.join('、')}为空。` };
           }
           const fileName = interpolateFileName(options.fileNameTpl, variables);
           const payload: Record<string, unknown> = {
             recordId: r.id,
             variables,
-            output: { fileName },
+            output: ttlSeconds ? { fileName, expiresInSeconds: ttlSeconds } : { fileName },
           };
           if (Object.keys(imageVariables).length > 0) payload.imageVariables = imageVariables;
-          return payload;
+          return { recordId: r.id, payload };
         }),
       );
+
+      const localFailures = prepared.filter((item): item is { recordId: string; error: string } => Boolean(item.error));
+      if (localFailures.length > 0) {
+        const errorsById = new Map(localFailures.map((item) => [item.recordId, item.error]));
+        setItems((prev) =>
+          prev.map((it) =>
+            errorsById.has(it.id)
+              ? { ...it, status: 'failed' as const, error: errorsById.get(it.id) || '变量为空' }
+              : it,
+          ),
+        );
+      }
+
+      const batchPayload = prepared
+        .filter((item): item is { recordId: string; payload: Record<string, unknown> } => Boolean(item.payload))
+        .map((item) => item.payload);
+      if (batchPayload.length === 0) return;
 
       try {
         const res = await fetch('/api/v1/document-renders/batch', {
@@ -252,45 +320,43 @@ export function useGenerateReal(): GenerateRunner {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = (await res.json()) as {
           ok?: boolean;
-          records?: Array<{
-            recordId: string;
-            status?: 'succeeded' | 'failed';
-            error?: string;
-            downloadUrl?: string;
-            url?: string;
-            fileName?: string;
-          }>;
+          records?: BatchRecordResponse[];
           error?: string;
         };
         if (!json.ok || !Array.isArray(json.records)) {
           throw new Error(json.error || '批量生成接口返回异常');
         }
-        const byId = new Map(json.records.map((r) => [r.recordId, r]));
+        const normalized = json.records.map(normalizeBatchRecord);
+        const byId = new Map(normalized.map((r) => [r.recordId, r]));
+        const warnings = new Map<string, string>();
         for (const r of json.records) {
-          if (r.status === 'succeeded' && (r.downloadUrl || r.url)) {
-            const fileName = r.fileName || 'document.docx';
-            await writeBack(
+          const item = normalizeBatchRecord(r);
+          if (item.ok && item.downloadUrl) {
+            const warning = await writeBack(
               tableId,
-              r.recordId,
-              (r.downloadUrl || r.url) as string,
-              fileName,
+              item.recordId,
+              item.downloadUrl,
+              item.fileName || 'document.docx',
               options.writeBackField,
             );
+            if (warning) warnings.set(item.recordId, warning);
           }
         }
         setItems((prev) =>
           prev.map((it) => {
             const r = byId.get(it.id);
             if (!r) return it;
-            if (r.status === 'succeeded') {
+            if (r.ok && r.downloadUrl) {
               return {
                 ...it,
                 status: 'succeeded' as const,
-                downloadUrl: r.downloadUrl || r.url,
+                downloadUrl: r.downloadUrl,
+                fileName: r.fileName,
+                warning: warnings.get(r.recordId) || null,
                 error: null,
               };
             }
-            return { ...it, status: 'failed' as const, error: r.error || '生成失败' };
+            return { ...it, status: 'failed' as const, error: r.error || '生成成功但没有返回下载链接' };
           }),
         );
       } catch (err) {

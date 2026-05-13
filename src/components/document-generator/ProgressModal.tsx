@@ -43,6 +43,7 @@ export function ProgressModal({
   }, [phase]);
 
   const processedCount = counts.succeeded + counts.failed;
+  const downloadableItems = items.filter((item) => item.status === 'succeeded' && item.downloadUrl);
   const pct = counts.total === 0 ? 0 : Math.round((processedCount / counts.total) * 100);
   const elapsedSec = startedAt > 0 ? Math.max(0, Math.round((Date.now() - startedAt) / 1000)) : 0;
   const rate = processedCount > 0 && elapsedSec > 0 ? processedCount / elapsedSec : 0.8;
@@ -66,6 +67,11 @@ export function ProgressModal({
   const doStop = () => {
     onStop();
     setConfirmStop(false);
+  };
+  const downloadAll = () => {
+    downloadableItems.forEach((item, index) => {
+      window.setTimeout(() => downloadItem(item), index * 120);
+    });
   };
 
   return (
@@ -197,14 +203,25 @@ export function ProgressModal({
                   <Icon.Retry /> 重试失败 ({counts.failed})
                 </button>
               )}
-              <button
-                className="btn-primary"
-                type="button"
-                style={{ background: accent }}
-                onClick={onClose}
-              >
-                <Icon.Download /> 下载全部 ({counts.succeeded})
-              </button>
+              {downloadableItems.length > 0 ? (
+                <button
+                  className="btn-primary"
+                  type="button"
+                  style={{ background: accent }}
+                  onClick={downloadAll}
+                >
+                  <Icon.Download /> 下载全部 ({downloadableItems.length})
+                </button>
+              ) : (
+                <button
+                  className="btn-primary"
+                  type="button"
+                  style={{ background: accent }}
+                  onClick={onClose}
+                >
+                  关闭
+                </button>
+              )}
             </>
           )}
         </div>
@@ -251,6 +268,18 @@ function ConfirmStop({
   );
 }
 
+function downloadItem(item: RecordItem) {
+  if (!item.downloadUrl) return;
+  const link = document.createElement('a');
+  link.href = item.downloadUrl;
+  link.download = item.fileName || '';
+  link.target = '_blank';
+  link.rel = 'noreferrer';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 function StatusDot({ phase, failed, accent }: { phase: Phase; failed: number; accent: string }) {
   if (phase === 'paused') return <span className="sd sd-paused" />;
   if (phase === 'terminated') return <span className="sd sd-err" />;
@@ -272,9 +301,16 @@ function RecordRow({ idx, item, accent }: { idx: number; item: RecordItem; accen
           </span>
         )}
         {item.status === 'succeeded' && (
-          <span className="rs rs-ok">
-            <Icon.Check /> 成功
-          </span>
+          <>
+            <span className={'rs ' + (item.warning ? 'rs-warn' : 'rs-ok')} title={item.warning ?? undefined}>
+              {item.warning ? <Icon.Warn /> : <Icon.Check />} {item.warning ? '需下载' : '成功'}
+            </span>
+            {item.downloadUrl && (
+              <button className="rec-download" type="button" onClick={() => downloadItem(item)}>
+                下载
+              </button>
+            )}
+          </>
         )}
         {item.status === 'failed' && (
           <span className="rs rs-err" title={item.error ?? undefined}>

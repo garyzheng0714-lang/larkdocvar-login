@@ -27,9 +27,9 @@ export function PickerScreen({
   const [selectedId, setSelectedId] = useState<string | undefined>(initialSelectedId);
 
   const list = useMemo(() => {
-    if (tab === '个人') return [] as Template[];
     return templates.filter(
       (t) =>
+        (tab === '个人' ? t.visibility === 'private' : t.visibility !== 'private') &&
         (category === '全部' || t.category === category) &&
         (!query || t.name.includes(query)),
     );

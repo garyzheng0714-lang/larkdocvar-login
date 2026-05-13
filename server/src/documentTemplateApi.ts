@@ -1,21 +1,99 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { documentRenderJsonParser } from './documentRenderBodyParser';
+import { documentTemplateJsonParser } from './documentRenderBodyParser';
 import { UserFacingError } from './documentRenderStorageErrors';
 import { DocumentTemplateService } from './documentTemplateService';
 import type { LoadedDocumentTemplate } from './documentTemplateService';
+import { peekSessionForRequest } from './auth';
+import { hasValidDocumentRenderApiKey } from './documentRenderApiKeyGuard';
 
-const createTemplateSchema = z.object({
+const templateInputSchema = z.object({
   templateId: z.string().trim().optional(),
   name: z.string().trim().max(255).optional(),
-  url: z.string().trim().min(1),
+  url: z.string().trim().min(1).optional(),
+  fileBase64: z.string().trim().min(1).optional(),
   fileName: z.string().trim().max(255).optional(),
+  category: z.string().trim().max(64).optional(),
+  visibility: z.enum(['private', 'shared']).optional(),
+  description: z.string().trim().max(1000).optional(),
+});
+
+const createTemplateSchema = templateInputSchema.refine((value) => Boolean(value.url || value.fileBase64), {
+  message: '模板链接或模板文件不能为空。',
+});
+
+const createTemplateVersionSchema = templateInputSchema.omit({ templateId: true }).refine((value) => Boolean(value.url || value.fileBase64), {
+  message: '模板链接或模板文件不能为空。',
 });
 
 export type DocumentTemplateResolver = {
   loadTemplate(templateId: string, versionId?: string): Promise<LoadedDocumentTemplate>;
 };
+
+export type DocumentTemplateActor = {
+  openId?: string;
+  isAdmin: boolean;
+};
+
+export type DocumentTemplateRouterOptions = {
+  enforceOwnership?: boolean;
+  resolveActor?: (request: express.Request) => Promise<DocumentTemplateActor>;
+};
+
+function isAdminOpenId(openId: string | undefined): boolean {
+  if (!openId) return false;
+  return (process.env.DOCUMENT_TEMPLATE_ADMIN_OPEN_IDS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .includes(openId);
+}
+
+async function resolveDefaultActor(request: express.Request): Promise<DocumentTemplateActor> {
+  const session = await peekSessionForRequest(request).catch(() => null);
+  const openId = session?.profile.openId;
+  return {
+    openId,
+    isAdmin: hasValidDocumentRenderApiKey(request) || isAdminOpenId(openId),
+  };
+}
+
+async function requireTemplateActor(
+  request: express.Request,
+  response: express.Response,
+  requestId: string,
+  options: DocumentTemplateRouterOptions,
+): Promise<DocumentTemplateActor | null> {
+  if (!options.enforceOwnership) return { isAdmin: true };
+  const actor = await (options.resolveActor || resolveDefaultActor)(request);
+  if (actor.isAdmin || actor.openId) return actor;
+  response.status(401).json({ ok: false, requestId, error: '请先登录后再管理模板。' });
+  return null;
+}
+
+function canManageTemplate(
+  template: { createdByOpenId?: string },
+  actor: DocumentTemplateActor,
+): boolean {
+  return actor.isAdmin || Boolean(actor.openId && template.createdByOpenId === actor.openId);
+}
+
+async function requireTemplateManager(
+  request: express.Request,
+  response: express.Response,
+  requestId: string,
+  service: DocumentTemplateService,
+  templateId: string,
+  options: DocumentTemplateRouterOptions,
+): Promise<DocumentTemplateActor | null> {
+  const actor = await requireTemplateActor(request, response, requestId, options);
+  if (!actor) return null;
+  const template = await service.getTemplate(templateId);
+  if (canManageTemplate(template, actor)) return actor;
+  response.status(403).json({ ok: false, requestId, error: '只有管理员或模板创建者可以修改此模板。' });
+  return null;
+}
 
 function getRequestId(request: express.Request): string {
   const headerValue = request.headers['x-request-id'];
@@ -33,9 +111,12 @@ function sendError(response: express.Response, requestId: string, error: unknown
   response.status(500).json({ ok: false, requestId, error: '模板服务暂时不可用，请稍后重试。' });
 }
 
-export function createDocumentTemplateRouter(service = new DocumentTemplateService()): express.Router {
+export function createDocumentTemplateRouter(
+  service = new DocumentTemplateService(),
+  options: DocumentTemplateRouterOptions = {},
+): express.Router {
   const router = express.Router();
-  router.use(documentRenderJsonParser);
+  router.use(documentTemplateJsonParser);
 
   router.get('/', async (request, response) => {
     const requestId = getRequestId(request);
@@ -55,7 +136,17 @@ export function createDocumentTemplateRouter(service = new DocumentTemplateServi
       return;
     }
     try {
-      response.json({ ok: true, requestId, template: await service.createTemplate(parsed.data) });
+      const actor = await requireTemplateActor(request, response, requestId, options);
+      if (!actor) return;
+      response.json({
+        ok: true,
+        requestId,
+        template: await service.createTemplate({
+          ...parsed.data,
+          createdByOpenId: actor.openId,
+          updatedByOpenId: actor.openId,
+        }),
+      });
     } catch (error) {
       sendError(response, requestId, error);
     }
@@ -82,13 +173,20 @@ export function createDocumentTemplateRouter(service = new DocumentTemplateServi
 
   router.post('/:templateId/versions', async (request, response) => {
     const requestId = getRequestId(request);
-    const parsed = createTemplateSchema.omit({ templateId: true }).safeParse(request.body);
+    const parsed = createTemplateVersionSchema.safeParse(request.body);
     if (!parsed.success) {
       response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
       return;
     }
     try {
-      response.json({ ok: true, requestId, template: await service.addVersion(String(request.params.templateId || ''), parsed.data) });
+      const templateId = String(request.params.templateId || '');
+      const actor = await requireTemplateManager(request, response, requestId, service, templateId, options);
+      if (!actor) return;
+      response.json({
+        ok: true,
+        requestId,
+        template: await service.addVersion(templateId, { ...parsed.data, updatedByOpenId: actor.openId }),
+      });
     } catch (error) {
       sendError(response, requestId, error);
     }
@@ -97,8 +195,11 @@ export function createDocumentTemplateRouter(service = new DocumentTemplateServi
   router.delete('/:templateId', async (request, response) => {
     const requestId = getRequestId(request);
     try {
+      const templateId = String(request.params.templateId || '');
+      const actor = await requireTemplateManager(request, response, requestId, service, templateId, options);
+      if (!actor) return;
       const purge = String(request.query.purge || '').toLowerCase() === 'true';
-      response.json({ ok: true, requestId, template: await service.deleteTemplate(String(request.params.templateId || ''), { purge }) });
+      response.json({ ok: true, requestId, template: await service.deleteTemplate(templateId, { purge }) });
     } catch (error) {
       sendError(response, requestId, error);
     }

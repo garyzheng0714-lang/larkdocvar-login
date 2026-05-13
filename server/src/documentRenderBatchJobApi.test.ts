@@ -27,7 +27,7 @@ async function createDocx(text: string): Promise<Buffer> {
   return zip.generateAsync({ type: 'nodebuffer' });
 }
 
-async function startServer(): Promise<{ baseUrl: string; close: () => Promise<void>; hits: number }> {
+async function startServer(options: { jobTtlMs?: number; maxJobs?: number } = {}): Promise<{ baseUrl: string; close: () => Promise<void>; hits: number }> {
   const dir = await mkdtemp(join(tmpdir(), 'document-render-batch-job-'));
   const service = new DocumentTemplateService(new LocalTemplateObjectStore(dir));
   const app = express();
@@ -38,7 +38,12 @@ async function startServer(): Promise<{ baseUrl: string; close: () => Promise<vo
     response.type('application/vnd.openxmlformats-officedocument.wordprocessingml.document').send(templateDocx);
   });
   app.use('/api/v1/document-templates', createDocumentTemplateRouter(service));
-  app.use('/api/v1/document-render-jobs', createDocumentRenderJobRouter({ templateResolver: service, storageDir: dir }));
+  app.use('/api/v1/document-render-jobs', createDocumentRenderJobRouter({
+    templateResolver: service,
+    storageDir: dir,
+    jobTtlMs: options.jobTtlMs,
+    maxJobs: options.maxJobs,
+  }));
   app.use('/api/v1/document-renders', createDocumentRenderBatchRouter({ templateResolver: service, storageDir: dir }));
   app.use('/api/v1/document-renders', createDocumentRenderRouter({ templateResolver: service, storageDir: dir }));
   const server = http.createServer(app);
@@ -100,6 +105,42 @@ test('批量生成每条记录独立返回状态，失败记录不影响成功�
     assert.equal(body.records[1].ok, false);
     assert.deepEqual(body.records[1].missingVariables, ['金额']);
     assert.equal(api.hits, 1);
+  } finally {
+    restore();
+    await api.close();
+  }
+});
+
+test('异步任务完成后按 TTL 清理，避免长期堆积内存', async () => {
+  const restore = withPrivateTemplateUrls();
+  const api = await startServer({ jobTtlMs: 50 });
+  try {
+    await createTemplate(api.baseUrl);
+    const submitResponse = await fetch(`${api.baseUrl}/api/v1/document-render-jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        template: { format: 'docx', templateId: 'fbiftemp_20260512_001' },
+        records: [
+          { recordId: 'rec_1', variables: { 客户名称: '客户 1', 金额: '100 元' } },
+        ],
+      }),
+    });
+    const submitted = await submitResponse.json() as any;
+    const jobId = submitted.job.jobId;
+
+    let job = submitted.job;
+    for (let index = 0; index < 20 && !['completed', 'partial_failed', 'failed'].includes(job.status); index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const progressResponse = await fetch(`${api.baseUrl}/api/v1/document-render-jobs/${jobId}`);
+      const progress = await progressResponse.json() as any;
+      job = progress.job;
+    }
+    assert.equal(job.status, 'completed');
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const expiredResponse = await fetch(`${api.baseUrl}/api/v1/document-render-jobs/${jobId}`);
+    assert.equal(expiredResponse.status, 404);
   } finally {
     restore();
     await api.close();

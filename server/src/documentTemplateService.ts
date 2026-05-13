@@ -25,6 +25,11 @@ export type DocumentTemplateVersion = {
 export type DocumentTemplateRecord = {
   templateId: string;
   name: string;
+  category?: string;
+  visibility?: 'private' | 'shared';
+  description?: string;
+  createdByOpenId?: string;
+  updatedByOpenId?: string;
   status: 'active' | 'deleted';
   activeVersionId: string;
   versions: DocumentTemplateVersion[];
@@ -41,6 +46,11 @@ export type PublicDocumentTemplateRecord = Omit<DocumentTemplateRecord, 'version
 export type DocumentTemplateIndexItem = {
   templateId: string;
   name: string;
+  category?: string;
+  visibility?: 'private' | 'shared';
+  description?: string;
+  createdByOpenId?: string;
+  updatedByOpenId?: string;
   status: 'active' | 'deleted';
   activeVersionId: string;
   versionCount: number;
@@ -59,9 +69,19 @@ export type LoadedDocumentTemplate = {
 export type CreateDocumentTemplateInput = {
   templateId?: string;
   name?: string;
-  url: string;
+  url?: string;
+  fileBase64?: string;
   fileName?: string;
+  category?: string;
+  visibility?: 'private' | 'shared';
+  description?: string;
+  createdByOpenId?: string;
+  updatedByOpenId?: string;
 };
+
+type UpdateDocumentTemplateInput = Omit<CreateDocumentTemplateInput, 'templateId' | 'createdByOpenId'>;
+
+const MAX_UPLOADED_TEMPLATE_BYTES = 20 * 1024 * 1024;
 
 function sha256(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex');
@@ -105,6 +125,26 @@ function normalizeRecord(input: unknown): DocumentTemplateRecord {
   return record;
 }
 
+function cleanOptionalText(value: string | undefined, maxLength: number): string | undefined {
+  const cleaned = value?.trim();
+  return cleaned ? cleaned.slice(0, maxLength) : undefined;
+}
+
+function decodeUploadedTemplate(input: CreateDocumentTemplateInput | UpdateDocumentTemplateInput): Buffer | null {
+  const raw = input.fileBase64?.trim();
+  if (!raw) return null;
+  const base64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw;
+  let buffer: Buffer;
+  try {
+    buffer = Buffer.from(base64, 'base64');
+  } catch {
+    throw new UserFacingError('模板文件内容不合法，请重新上传。');
+  }
+  if (buffer.length === 0) throw new UserFacingError('模板文件为空，请重新上传。');
+  if (buffer.length > MAX_UPLOADED_TEMPLATE_BYTES) throw new UserFacingError('Docx 模板不能超过 20MB。');
+  return buffer;
+}
+
 function publicTemplate(record: DocumentTemplateRecord): PublicDocumentTemplateRecord {
   return {
     ...record,
@@ -113,7 +153,21 @@ function publicTemplate(record: DocumentTemplateRecord): PublicDocumentTemplateR
 }
 
 export class DocumentTemplateService {
+  private mutationQueue: Promise<void> = Promise.resolve();
+
   constructor(private readonly store: TemplateObjectStore = createConfiguredTemplateObjectStore()) {}
+
+  private async withMutationLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.mutationQueue;
+    let release!: () => void;
+    this.mutationQueue = previous.then(() => new Promise<void>((resolve) => { release = resolve; }));
+    await previous;
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
+  }
 
   async listTemplates(options: { includeDeleted?: boolean } = {}): Promise<DocumentTemplateIndexItem[]> {
     const index = await this.readIndex();
@@ -123,38 +177,52 @@ export class DocumentTemplateService {
   }
 
   async createTemplate(input: CreateDocumentTemplateInput): Promise<PublicDocumentTemplateRecord> {
-    const templateId = input.templateId?.trim() || generateTemplateId();
-    assertTemplateId(templateId);
-    const existing = await this.getTemplateOrNull(templateId);
-    if (existing) throw new UserFacingError('模板编号已存在，请换一个编号或新增版本。');
-    const now = new Date().toISOString();
-    const version = await this.createVersionFromUrl(templateId, 1, input);
-    const record: DocumentTemplateRecord = {
-      templateId,
-      name: input.name?.trim() || path.basename(version.fileName, '.docx') || templateId,
-      status: 'active',
-      activeVersionId: version.versionId,
-      versions: [version],
-      createdAt: now,
-      updatedAt: now,
-    };
-    await this.writeRecord(record);
-    await this.upsertIndex(record);
-    return publicTemplate(record);
+    return this.withMutationLock(async () => {
+      const templateId = input.templateId?.trim() || generateTemplateId();
+      assertTemplateId(templateId);
+      const existing = await this.getTemplateOrNull(templateId);
+      if (existing) throw new UserFacingError('模板编号已存在，请换一个编号或新增版本。');
+      const now = new Date().toISOString();
+      const version = await this.createVersion(templateId, 1, input);
+      const actorOpenId = cleanOptionalText(input.createdByOpenId, 128);
+      const record: DocumentTemplateRecord = {
+        templateId,
+        name: input.name?.trim() || path.basename(version.fileName, '.docx') || templateId,
+        category: cleanOptionalText(input.category, 64),
+        visibility: input.visibility,
+        description: cleanOptionalText(input.description, 1000),
+        createdByOpenId: actorOpenId,
+        updatedByOpenId: cleanOptionalText(input.updatedByOpenId, 128) || actorOpenId,
+        status: 'active',
+        activeVersionId: version.versionId,
+        versions: [version],
+        createdAt: now,
+        updatedAt: now,
+      };
+      await this.writeRecord(record);
+      await this.upsertIndex(record);
+      return publicTemplate(record);
+    });
   }
 
-  async addVersion(templateId: string, input: Omit<CreateDocumentTemplateInput, 'templateId'>): Promise<PublicDocumentTemplateRecord> {
-    const record = await this.getTemplateInternal(templateId);
-    if (record.status === 'deleted') throw new UserFacingError('模板已删除，不能新增版本。');
-    const versionNumber = Math.max(...record.versions.map((version) => version.versionNumber), 0) + 1;
-    const version = await this.createVersionFromUrl(record.templateId, versionNumber, input);
-    record.versions.push(version);
-    record.activeVersionId = version.versionId;
-    record.name = input.name?.trim() || record.name;
-    record.updatedAt = new Date().toISOString();
-    await this.writeRecord(record);
-    await this.upsertIndex(record);
-    return publicTemplate(record);
+  async addVersion(templateId: string, input: UpdateDocumentTemplateInput): Promise<PublicDocumentTemplateRecord> {
+    return this.withMutationLock(async () => {
+      const record = await this.getTemplateInternal(templateId);
+      if (record.status === 'deleted') throw new UserFacingError('模板已删除，不能新增版本。');
+      const versionNumber = Math.max(...record.versions.map((version) => version.versionNumber), 0) + 1;
+      const version = await this.createVersion(record.templateId, versionNumber, input);
+      record.versions.push(version);
+      record.activeVersionId = version.versionId;
+      record.name = input.name?.trim() || record.name;
+      record.category = cleanOptionalText(input.category, 64) || record.category;
+      record.visibility = input.visibility || record.visibility;
+      record.description = cleanOptionalText(input.description, 1000) ?? record.description;
+      record.updatedByOpenId = cleanOptionalText(input.updatedByOpenId, 128) || record.updatedByOpenId;
+      record.updatedAt = new Date().toISOString();
+      await this.writeRecord(record);
+      await this.upsertIndex(record);
+      return publicTemplate(record);
+    });
   }
 
   async getTemplate(templateId: string): Promise<PublicDocumentTemplateRecord> {
@@ -175,25 +243,25 @@ export class DocumentTemplateService {
     const version = record.versions.find((item) => item.versionId === targetVersionId);
     if (!version) throw new UserFacingError('模板版本不存在。');
     const buffer = await this.store.getObject(version.storagePath);
-    record.updatedAt = new Date().toISOString();
-    await this.writeRecord(record).catch(() => undefined);
     return { record, version, buffer };
   }
 
   async deleteTemplate(templateId: string, options: { purge?: boolean } = {}): Promise<PublicDocumentTemplateRecord> {
-    const record = await this.getTemplateInternal(templateId);
-    if (options.purge) {
-      await Promise.all(record.versions.map((version) => this.store.deleteObject(version.storagePath).catch(() => undefined)));
-      await this.store.deleteObject(this.store.objectName(metadataKey(record.templateId))).catch(() => undefined);
-      await this.removeFromIndex(record.templateId);
-      return publicTemplate({ ...record, status: 'deleted', deletedAt: new Date().toISOString() });
-    }
-    record.status = 'deleted';
-    record.deletedAt = new Date().toISOString();
-    record.updatedAt = record.deletedAt;
-    await this.writeRecord(record);
-    await this.upsertIndex(record);
-    return publicTemplate(record);
+    return this.withMutationLock(async () => {
+      const record = await this.getTemplateInternal(templateId);
+      if (options.purge) {
+        await Promise.all(record.versions.map((version) => this.store.deleteObject(version.storagePath).catch(() => undefined)));
+        await this.store.deleteObject(this.store.objectName(metadataKey(record.templateId))).catch(() => undefined);
+        await this.removeFromIndex(record.templateId);
+        return publicTemplate({ ...record, status: 'deleted', deletedAt: new Date().toISOString() });
+      }
+      record.status = 'deleted';
+      record.deletedAt = new Date().toISOString();
+      record.updatedAt = record.deletedAt;
+      await this.writeRecord(record);
+      await this.upsertIndex(record);
+      return publicTemplate(record);
+    });
   }
 
   private async getTemplateOrNull(templateId: string): Promise<DocumentTemplateRecord | null> {
@@ -207,10 +275,11 @@ export class DocumentTemplateService {
     }
   }
 
-  private async createVersionFromUrl(templateId: string, versionNumber: number, input: Omit<CreateDocumentTemplateInput, 'templateId'>): Promise<DocumentTemplateVersion> {
-    const sourceUrl = input.url.trim();
-    if (!sourceUrl) throw new UserFacingError('模板链接不能为空。');
-    const downloadedBuffer = await downloadTemplateDocx(sourceUrl);
+  private async createVersion(templateId: string, versionNumber: number, input: CreateDocumentTemplateInput | UpdateDocumentTemplateInput): Promise<DocumentTemplateVersion> {
+    const sourceUrl = input.url?.trim() || '';
+    const uploadedBuffer = decodeUploadedTemplate(input);
+    if (!sourceUrl && !uploadedBuffer) throw new UserFacingError('模板链接或模板文件不能为空。');
+    const downloadedBuffer = uploadedBuffer || await downloadTemplateDocx(sourceUrl);
     const annotated = await convertCommentAnnotationsToTemplate(downloadedBuffer);
     const buffer = annotated.buffer;
     const rendered = await renderDocx(buffer, {});
@@ -220,7 +289,7 @@ export class DocumentTemplateService {
       versionNumber,
       storagePath: await this.store.putObject(versionKey(templateId, versionNumber), buffer, DOCX_CONTENT_TYPE),
       fileName,
-      sourceUrl,
+      sourceUrl: sourceUrl || 'uploaded',
       sha256: sha256(buffer),
       size: buffer.length,
       variables: annotated.variables.length > 0 ? annotated.variables : rendered.found,
@@ -241,6 +310,11 @@ export class DocumentTemplateService {
     return {
       templateId: record.templateId,
       name: record.name,
+      category: record.category,
+      visibility: record.visibility,
+      description: record.description,
+      createdByOpenId: record.createdByOpenId,
+      updatedByOpenId: record.updatedByOpenId,
       status: record.status,
       activeVersionId: record.activeVersionId,
       versionCount: record.versions.length,

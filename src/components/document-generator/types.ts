@@ -26,6 +26,7 @@ export interface Template {
   varCount: number;
   updatedAt: string;
   category: string;
+  visibility?: 'private' | 'shared';
   kind: 'doc' | 'sheet';
   variables?: TemplateVariable[];
   hasLogo?: boolean;
@@ -55,6 +56,8 @@ export interface RecordItem {
   status: RecordStatus;
   error: string | null;
   downloadUrl?: string;
+  fileName?: string;
+  warning?: string | null;
 }
 
 export interface Counts {
@@ -76,6 +79,8 @@ export interface GenerateOptions {
   customText: Record<string, string>;
   fileNameTpl: string;
   writeBackField: string;
+  expires: string;
+  onMissing: string;
 }
 
 export interface GenerateRunner {

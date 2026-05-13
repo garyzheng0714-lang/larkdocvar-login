@@ -27,7 +27,7 @@
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f larkdocvar-login"
+    "docker:logs": "docker compose logs -f fbif-sidebar-docgen"
   },
   "dependencies": {
     "@lark-base-open/js-sdk": "^1.0.2",

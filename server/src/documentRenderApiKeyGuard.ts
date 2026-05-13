@@ -9,12 +9,18 @@ function safeEqual(left: string, right: string): boolean {
   return timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-function readPresentedKey(request: Request): string {
+export function readPresentedDocumentRenderApiKey(request: Request): string {
   const apiKey = request.headers['x-api-key'];
   if (typeof apiKey === 'string' && apiKey.trim()) return apiKey.trim();
   const authorization = request.headers.authorization || '';
   const match = authorization.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim() || '';
+}
+
+export function hasValidDocumentRenderApiKey(request: Request): boolean {
+  const expected = (process.env.DOCUMENT_RENDER_API_KEY || '').trim();
+  const presented = readPresentedDocumentRenderApiKey(request);
+  return Boolean(expected && presented && safeEqual(presented, expected));
 }
 
 export function requireDocumentRenderApiKey(request: Request, response: Response, next: NextFunction): void {
@@ -27,8 +33,7 @@ export function requireDocumentRenderApiKey(request: Request, response: Response
     next();
     return;
   }
-  const presented = readPresentedKey(request);
-  if (presented && safeEqual(presented, expected)) {
+  if (hasValidDocumentRenderApiKey(request)) {
     next();
     return;
   }

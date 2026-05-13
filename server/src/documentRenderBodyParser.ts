@@ -16,7 +16,16 @@ const jsonParseErrorHandler: express.ErrorRequestHandler = (error, request, resp
   });
 };
 
-export const documentRenderJsonParser: Array<express.RequestHandler | express.ErrorRequestHandler> = [
-  express.json({ limit: '10mb' }),
+function createJsonParser(limit: string): Array<express.RequestHandler | express.ErrorRequestHandler> {
+  return [
+    express.json({ limit }),
+    jsonParseErrorHandler,
+  ];
+}
+
+export const documentRenderJsonParser: Array<express.RequestHandler | express.ErrorRequestHandler> = createJsonParser('10mb');
+
+export const documentTemplateJsonParser: Array<express.RequestHandler | express.ErrorRequestHandler> = [
+  express.json({ limit: '30mb' }),
   jsonParseErrorHandler,
 ];

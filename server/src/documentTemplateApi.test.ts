@@ -25,7 +25,7 @@ async function createDocx(text: string): Promise<Buffer> {
   return zip.generateAsync({ type: 'nodebuffer' });
 }
 
-async function startServer(): Promise<{ baseUrl: string; close: () => Promise<void>; hits: Record<string, number> }> {
+async function startServer(options: { enforceOwnership?: boolean } = {}): Promise<{ baseUrl: string; close: () => Promise<void>; hits: Record<string, number> }> {
   const dir = await mkdtemp(join(tmpdir(), 'document-template-api-'));
   const service = new DocumentTemplateService(new LocalTemplateObjectStore(dir));
   const app = express();
@@ -40,7 +40,13 @@ async function startServer(): Promise<{ baseUrl: string; close: () => Promise<vo
     hits.v2 += 1;
     response.type('application/vnd.openxmlformats-officedocument.wordprocessingml.document').send(v2);
   });
-  app.use('/api/v1/document-templates', createDocumentTemplateRouter(service));
+  app.use('/api/v1/document-templates', createDocumentTemplateRouter(service, options.enforceOwnership ? {
+    enforceOwnership: true,
+    resolveActor: async (request) => ({
+      openId: typeof request.headers['x-test-open-id'] === 'string' ? request.headers['x-test-open-id'] : undefined,
+      isAdmin: request.headers['x-test-admin'] === 'true',
+    }),
+  } : undefined));
   app.use('/api/v1/document-renders', createDocumentRenderRouter({ templateResolver: service, storageDir: dir }));
   const server = http.createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -104,6 +110,133 @@ test('模板上传后返回指定模板编号，后续按 templateId 生成且�
     assert.equal(rendered.document.title, '通用合同模板');
     assert.equal(rendered.document.previewText, '客户：上海测试科技有限公司');
     assert.equal(api.hits.v1, 1);
+  } finally {
+    restore();
+    await api.close();
+  }
+});
+
+test('模板可直接上传文件内容创建并返回真实变量', async () => {
+  const api = await startServer();
+  try {
+    const docx = await createDocx('客户：{{客户名称}}');
+    const response = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        templateId: 'upload_tpl_001',
+        name: '上传模板',
+        fileName: '上传模板.docx',
+        fileBase64: docx.toString('base64'),
+        category: '合同',
+        visibility: 'private',
+        description: '用于上传链路验证',
+      }),
+    });
+    const body = await response.json() as any;
+    assert.equal(response.status, 200);
+    assert.equal(body.template.templateId, 'upload_tpl_001');
+    assert.equal(body.template.category, '合同');
+    assert.equal(body.template.visibility, 'private');
+    assert.deepEqual(body.template.versions[0].variables, ['客户名称']);
+  } finally {
+    await api.close();
+  }
+});
+
+test('非管理员只能修改或删除自己创建的模板', async () => {
+  const restore = withPrivateTemplateUrls();
+  const api = await startServer({ enforceOwnership: true });
+  try {
+    const anonymousCreate = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        templateId: 'owner_tpl_001',
+        name: '权限模板',
+        url: `${api.baseUrl}/template-v1.docx`,
+      }),
+    });
+    assert.equal(anonymousCreate.status, 401);
+
+    const createResponse = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-open-id': 'ou_owner' },
+      body: JSON.stringify({
+        templateId: 'owner_tpl_001',
+        name: '权限模板',
+        url: `${api.baseUrl}/template-v1.docx`,
+      }),
+    });
+    const created = await createResponse.json() as any;
+    assert.equal(createResponse.status, 200);
+    assert.equal(created.template.createdByOpenId, 'ou_owner');
+
+    const otherVersion = await fetch(`${api.baseUrl}/api/v1/document-templates/owner_tpl_001/versions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-open-id': 'ou_other' },
+      body: JSON.stringify({ url: `${api.baseUrl}/template-v2.docx` }),
+    });
+    assert.equal(otherVersion.status, 403);
+
+    const ownerVersion = await fetch(`${api.baseUrl}/api/v1/document-templates/owner_tpl_001/versions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-open-id': 'ou_owner' },
+      body: JSON.stringify({ url: `${api.baseUrl}/template-v2.docx` }),
+    });
+    assert.equal(ownerVersion.status, 200);
+
+    const otherDelete = await fetch(`${api.baseUrl}/api/v1/document-templates/owner_tpl_001`, {
+      method: 'DELETE',
+      headers: { 'x-test-open-id': 'ou_other' },
+    });
+    assert.equal(otherDelete.status, 403);
+
+    const adminDelete = await fetch(`${api.baseUrl}/api/v1/document-templates/owner_tpl_001`, {
+      method: 'DELETE',
+      headers: { 'x-test-admin': 'true' },
+    });
+    assert.equal(adminDelete.status, 200);
+  } finally {
+    restore();
+    await api.close();
+  }
+});
+
+test('并发新增版本不会复用版本号或覆盖版本列表', async () => {
+  const restore = withPrivateTemplateUrls();
+  const api = await startServer();
+  try {
+    await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        templateId: 'concurrent_tpl_001',
+        name: '并发模板',
+        url: `${api.baseUrl}/template-v1.docx`,
+      }),
+    });
+    const [first, second] = await Promise.all([
+      fetch(`${api.baseUrl}/api/v1/document-templates/concurrent_tpl_001/versions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: `${api.baseUrl}/template-v2.docx` }),
+      }),
+      fetch(`${api.baseUrl}/api/v1/document-templates/concurrent_tpl_001/versions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: `${api.baseUrl}/template-v1.docx` }),
+      }),
+    ]);
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+
+    const versionsResponse = await fetch(`${api.baseUrl}/api/v1/document-templates/concurrent_tpl_001/versions`);
+    const versions = await versionsResponse.json() as any;
+    assert.deepEqual(
+      versions.versions.map((version: any) => version.versionId),
+      ['concurrent_tpl_001_v001', 'concurrent_tpl_001_v002', 'concurrent_tpl_001_v003'],
+    );
   } finally {
     restore();
     await api.close();

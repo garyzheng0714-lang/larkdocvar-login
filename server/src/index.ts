@@ -55,7 +55,21 @@ const SESSION_COOKIE_SAMESITE =
 
 const hasCredential = Boolean(appId && appSecret);
 const hasDatabaseUrl = Boolean((process.env.DATABASE_URL || '').trim());
-const documentTemplateService = new DocumentTemplateService();
+let documentTemplateServiceInstance: DocumentTemplateService | null = null;
+function getDocumentTemplateService(): DocumentTemplateService {
+  if (!documentTemplateServiceInstance) {
+    documentTemplateServiceInstance = new DocumentTemplateService();
+  }
+  return documentTemplateServiceInstance;
+}
+const documentTemplateService = {
+  listTemplates: (...args: Parameters<DocumentTemplateService['listTemplates']>) => getDocumentTemplateService().listTemplates(...args),
+  createTemplate: (...args: Parameters<DocumentTemplateService['createTemplate']>) => getDocumentTemplateService().createTemplate(...args),
+  addVersion: (...args: Parameters<DocumentTemplateService['addVersion']>) => getDocumentTemplateService().addVersion(...args),
+  getTemplate: (...args: Parameters<DocumentTemplateService['getTemplate']>) => getDocumentTemplateService().getTemplate(...args),
+  loadTemplate: (...args: Parameters<DocumentTemplateService['loadTemplate']>) => getDocumentTemplateService().loadTemplate(...args),
+  deleteTemplate: (...args: Parameters<DocumentTemplateService['deleteTemplate']>) => getDocumentTemplateService().deleteTemplate(...args),
+} as DocumentTemplateService;
 const feishuService = hasCredential
   ? new FeishuTemplateService({
       appId,
@@ -237,7 +251,7 @@ const saveConfigSchema = z.object({
 });
 
 app.use(cors(corsOptions));
-app.use('/api/v1/document-templates', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentTemplateRouter(documentTemplateService));
+app.use('/api/v1/document-templates', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentTemplateRouter(documentTemplateService, { enforceOwnership: true }));
 app.use('/api/v1/document-render-jobs', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentRenderJobRouter({ templateResolver: documentTemplateService }));
 app.use('/api/v1/document-renders', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentRenderBatchRouter({ templateResolver: documentTemplateService }));
 app.use('/api/v1/document-renders', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentRenderRouter({ templateResolver: documentTemplateService }));

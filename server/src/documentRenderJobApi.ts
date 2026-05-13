@@ -16,6 +16,8 @@ import {
 } from './documentRenderBatchApi';
 
 const MAX_JOB_RECORDS = 500;
+const DEFAULT_JOB_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_MAX_JOBS = 100;
 
 type RenderJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'partial_failed';
 
@@ -32,6 +34,7 @@ type RenderJob = {
   results: DocumentRenderBatchRecordResult[];
   createdAt: string;
   updatedAt: string;
+  expiresAt: string;
   error?: string;
 };
 
@@ -76,11 +79,47 @@ function publicJob(job: RenderJob) {
     failed: job.failed,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
+    expiresAt: job.expiresAt,
     error: job.error,
   };
 }
 
-async function runJob(job: RenderJob, storage: DocumentRenderStorage, templateResolver?: DocumentTemplateResolver): Promise<void> {
+function getJobTtlMs(value: number | undefined): number {
+  const fromEnv = Number(process.env.DOCUMENT_RENDER_JOB_TTL_SECONDS || 0);
+  if (value !== undefined) return Math.max(1, value);
+  const ttlMs = Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv * 1000 : DEFAULT_JOB_TTL_MS;
+  return Math.max(1000, ttlMs);
+}
+
+function getMaxJobs(value: number | undefined): number {
+  const fromEnv = Number(process.env.DOCUMENT_RENDER_MAX_JOBS || 0);
+  const maxJobs = value ?? (Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_MAX_JOBS);
+  return Math.max(1, Math.floor(maxJobs));
+}
+
+function refreshExpiresAt(job: RenderJob, ttlMs: number): void {
+  job.expiresAt = new Date(Date.now() + ttlMs).toISOString();
+}
+
+function isTerminalJob(job: RenderJob): boolean {
+  return ['completed', 'partial_failed', 'failed'].includes(job.status);
+}
+
+function cleanupJobs(jobs: Map<string, RenderJob>, maxJobs: number, now = Date.now()): void {
+  for (const [jobId, job] of jobs) {
+    if (isTerminalJob(job) && Date.parse(job.expiresAt) <= now) jobs.delete(jobId);
+  }
+  if (jobs.size <= maxJobs) return;
+  const removable = Array.from(jobs.values())
+    .filter(isTerminalJob)
+    .sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+  for (const job of removable) {
+    if (jobs.size <= maxJobs) return;
+    jobs.delete(job.jobId);
+  }
+}
+
+async function runJob(job: RenderJob, storage: DocumentRenderStorage, ttlMs: number, templateResolver?: DocumentTemplateResolver): Promise<void> {
   job.status = 'running';
   job.updatedAt = new Date().toISOString();
   try {
@@ -100,10 +139,12 @@ async function runJob(job: RenderJob, storage: DocumentRenderStorage, templateRe
     });
     job.status = job.failed > 0 ? 'partial_failed' : 'completed';
     job.updatedAt = new Date().toISOString();
+    refreshExpiresAt(job, ttlMs);
   } catch (error) {
     job.status = 'failed';
     job.error = error instanceof Error ? error.message : '任务执行失败。';
     job.updatedAt = new Date().toISOString();
+    refreshExpiresAt(job, ttlMs);
   }
 }
 
@@ -111,10 +152,14 @@ export function createDocumentRenderJobRouter(options: {
   storage?: DocumentRenderStorage;
   storageDir?: string;
   templateResolver?: DocumentTemplateResolver;
+  jobTtlMs?: number;
+  maxJobs?: number;
 } = {}): express.Router {
   const router = express.Router();
   const storage = options.storage || createConfiguredStorage(options.storageDir);
   const jobs = new Map<string, RenderJob>();
+  const jobTtlMs = getJobTtlMs(options.jobTtlMs);
+  const maxJobs = getMaxJobs(options.maxJobs);
   router.use(documentRenderJsonParser);
 
   router.post('/', async (request, response) => {
@@ -125,6 +170,7 @@ export function createDocumentRenderJobRouter(options: {
       return;
     }
     const now = new Date().toISOString();
+    cleanupJobs(jobs, maxJobs);
     const job: RenderJob = {
       jobId: `job_${Date.now()}_${randomUUID().slice(0, 8)}`,
       status: 'pending',
@@ -138,14 +184,17 @@ export function createDocumentRenderJobRouter(options: {
       results: [],
       createdAt: now,
       updatedAt: now,
+      expiresAt: new Date(Date.now() + jobTtlMs).toISOString(),
     };
     jobs.set(job.jobId, job);
-    setImmediate(() => { void runJob(job, storage, options.templateResolver); });
+    cleanupJobs(jobs, maxJobs);
+    setImmediate(() => { void runJob(job, storage, jobTtlMs, options.templateResolver); });
     response.status(202).json({ ok: true, requestId, job: publicJob(job) });
   });
 
   router.get('/:jobId', (request, response) => {
     const requestId = randomUUID();
+    cleanupJobs(jobs, maxJobs);
     const job = jobs.get(String(request.params.jobId || ''));
     if (!job) {
       response.status(404).json({ ok: false, requestId, error: '任务不存在。' });
@@ -156,6 +205,7 @@ export function createDocumentRenderJobRouter(options: {
 
   router.get('/:jobId/results', (request, response) => {
     const requestId = randomUUID();
+    cleanupJobs(jobs, maxJobs);
     const job = jobs.get(String(request.params.jobId || ''));
     if (!job) {
       response.status(404).json({ ok: false, requestId, error: '任务不存在。' });

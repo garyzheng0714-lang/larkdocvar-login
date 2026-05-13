@@ -1,4 +1,4 @@
-# larkdocvar-login
+# fbif-sidebar-docgen
 
 ![类型](https://img.shields.io/badge/%E7%B1%BB%E5%9E%8B-%E9%A3%9E%E4%B9%A6%E8%BE%B9%E6%A0%8F%E6%8F%92%E4%BB%B6-2563eb?style=flat-square)
 ![技术栈](https://img.shields.io/badge/%E6%8A%80%E6%9C%AF%E6%A0%88-React%20Express-0f766e?style=flat-square)
@@ -31,7 +31,7 @@
 
 - 前端：React、Vite、Tailwind CSS、lucide-react、`@lark-base-open/js-sdk`
 - 后端：Express、TypeScript、tsx、Zod、Axios
-- 存储：SQLite（`better-sqlite3`）
+- 存储：PostgreSQL
 - 飞书能力：OAuth、云文档、Wiki、多维表格、用户目录
 - 部署：Docker、Docker Compose、GitHub Actions
 
@@ -48,7 +48,7 @@
 │       └── bitableConfigSync.ts # 可选的多维表格配置同步
 ├── scripts/
 │   ├── dev-up.sh                # 本地开发启动脚本
-│   └── deploy-aliyun-docker.sh  # Docker 远程部署脚本
+│   └── deploy-fbif-sidebar-docgen.sh  # Docker 远程部署脚本
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
@@ -168,23 +168,27 @@ docker compose up -d --build
 
 默认地址：
 
-- 插件入口：`http://127.0.0.1:18080`
-- 健康检查：`http://127.0.0.1:18080/api/health`
+- 插件入口：`http://127.0.0.1:19094`（默认 `HOST_PORT`）
+- 健康检查：`http://127.0.0.1:19094/api/health`
 
 端口相关变量：
 
 - `HOST_PORT`：宿主机映射端口
 - `CONTAINER_PORT`：容器内部服务端口
+- `POSTGRES_HOST_PORT`：宿主机 PostgreSQL 映射端口
 
 ## 部署
 
 仓库提供 Docker 远程部署脚本：
 
 ```bash
-./scripts/deploy-aliyun-docker.sh \
-  --alias your-ssh-alias \
-  --app-dir /opt/larkdocvar-login \
-  --host-port 18081
+./scripts/deploy-fbif-sidebar-docgen.sh \
+  --host 121.40.214.5 \
+  --user root \
+  --identity-file "/path/to/vibecoding.pem" \
+  --app-dir /opt/fbif-sidebar-docgen \
+  --host-port 19094 \
+  --postgres-host-port 15433
 ```
 
 脚本会打包当前项目、上传到服务器、复用或生成 `.env`、检查端口冲突、执行 `docker compose up -d --build`，并访问 `/api/health` 做健康检查。

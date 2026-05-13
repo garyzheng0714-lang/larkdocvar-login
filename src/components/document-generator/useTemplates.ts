@@ -8,6 +8,10 @@ interface ServerIndexItem {
   activeVersionId: string;
   versionCount: number;
   variables: string[];
+  category?: string;
+  visibility?: 'private' | 'shared';
+  description?: string;
+  createdByOpenId?: string;
   createdAt: string;
   updatedAt: string;
   deletedAt?: string;
@@ -39,7 +43,8 @@ function toTemplate(item: ServerIndexItem): Template {
     name: item.name,
     varCount: variables.length,
     updatedAt: formatUpdatedAt(item.updatedAt),
-    category: '全部',
+    category: item.category || '全部',
+    visibility: item.visibility || 'shared',
     kind: 'doc',
     variables,
   };
