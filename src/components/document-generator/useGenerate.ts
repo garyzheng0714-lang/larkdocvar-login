@@ -9,6 +9,7 @@ import type {
   RecordItem,
   RecordSpec,
 } from './types';
+import { CUSTOM_MAPPING_VALUE } from './mapping';
 
 function computeCounts(items: RecordItem[]): Counts {
   return {
@@ -299,17 +300,17 @@ export function useGenerateReal(): GenerateRunner {
           for (const v of options.template?.variables ?? []) {
             const fieldId = options.mapping[v.name];
             if (v.kind === 'image') {
-              if (fieldId && fieldId !== '__custom__' && tableId) {
+              if (fieldId && fieldId !== CUSTOM_MAPPING_VALUE && tableId) {
                 const urls = await readAttachmentUrls(tableId, fieldId, r.id);
                 if (urls.length > 0) imageVariables[v.name] = { urls };
-              } else if (fieldId === '__custom__' || options.sourceMode === 'standalone') {
+              } else if (fieldId === CUSTOM_MAPPING_VALUE || options.sourceMode === 'standalone') {
                 const urls = parseImageUrls(options.customText[v.name]);
                 if (urls.length > 0) imageVariables[v.name] = { urls };
               }
               if (!imageVariables[v.name]) missing.push(`图片变量「${v.name}」`);
               continue;
             }
-            if (fieldId === '__custom__' || options.sourceMode === 'standalone' || !tableId) {
+            if (fieldId === CUSTOM_MAPPING_VALUE || options.sourceMode === 'standalone' || !tableId) {
               variables[v.name] = options.customText[v.name] ?? '';
             } else if (fieldId) {
               variables[v.name] = await readCellString(tableId, fieldId, r.id);

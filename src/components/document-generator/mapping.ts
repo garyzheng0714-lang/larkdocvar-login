@@ -1,5 +1,7 @@
 import type { TableField, Template, TemplateVariable } from './types';
 
+export const CUSTOM_MAPPING_VALUE = '__custom__';
+
 export function isCompatibleField(variable: TemplateVariable, field: TableField): boolean {
   return variable.kind === 'image' ? field.type === 'attachment' : field.type !== 'attachment';
 }
@@ -29,7 +31,7 @@ export function buildDefaultMapping(template: Template | null, fields: TableFiel
 
 export function buildStandaloneMapping(template: Template | null): Record<string, string> {
   if (!template?.variables) return {};
-  return Object.fromEntries(template.variables.map((v) => [v.name, '__custom__']));
+  return Object.fromEntries(template.variables.map((v) => [v.name, CUSTOM_MAPPING_VALUE]));
 }
 
 export function reconcileMapping(
@@ -43,7 +45,7 @@ export function reconcileMapping(
   for (const variable of template.variables) {
     const current = currentMapping[variable.name];
     const currentField = fields.find((f) => f.id === current);
-    if (options.allowCustom && current === '__custom__') {
+    if (options.allowCustom && current === CUSTOM_MAPPING_VALUE) {
       next[variable.name] = current;
       continue;
     }

@@ -1,8 +1,8 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Icon, FieldTypeIcon } from './icons';
 import { Dropdown } from './Dropdown';
-import { findSmartField, isCompatibleField } from './mapping';
+import { CUSTOM_MAPPING_VALUE, findSmartField, isCompatibleField } from './mapping';
 import type { PrimaryState, TableField, TemplateVariable } from './types';
 
 interface PrimaryScreenProps {
@@ -40,7 +40,9 @@ export function PrimaryScreen({
   const isStandalone = mode === 'standalone';
   const unmappedCount = tpl
     ? tplVars.filter((v) =>
-        isStandalone ? !state.customText[v.name]?.trim() : !mapping[v.name],
+        isStandalone || mapping[v.name] === CUSTOM_MAPPING_VALUE
+          ? !state.customText[v.name]?.trim()
+          : !mapping[v.name],
       ).length
     : 0;
   const canGenerate = !!tpl && unmappedCount === 0;
@@ -48,7 +50,9 @@ export function PrimaryScreen({
   return (
     <div className="screen">
       <header className="hdr">
-        <div className="hdr-title">文档生成</div>
+        <div className="hdr-title">
+          {isStandalone ? '文档生成' : '根据表格记录批量生成文档'}
+        </div>
         <div className="hdr-actions">
           <button className="hdr-icon" title="使用帮助" type="button"><Icon.Help /></button>
           {userMenu}
@@ -99,7 +103,7 @@ export function PrimaryScreen({
                           const current = next[v.name];
                           const currentField = fields.find((f) => f.id === current);
                           if (
-                            current === '__custom__'
+                            current === CUSTOM_MAPPING_VALUE
                             || (currentField && isCompatibleField(v, currentField))
                           ) {
                             return;
@@ -272,13 +276,23 @@ interface MapRowProps {
 
 function MapRow({ variable, fields, mode = 'bitable', value, onChange, customText, onCustomText }: MapRowProps) {
   const [open, setOpen] = useState(false);
+  const [bindMode, setBindMode] = useState<'field' | 'fixed'>(
+    value === CUSTOM_MAPPING_VALUE ? 'fixed' : 'field',
+  );
+  const [draft, setDraft] = useState(customText || '');
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const isImage = variable.kind === 'image';
   const candidates = fields.filter((f) =>
     isImage ? f.type === 'attachment' : f.type !== 'attachment',
   );
   const selected = fields.find((f) => f.id === value);
-  const isCustom = value === '__custom__';
+  const isCustom = value === CUSTOM_MAPPING_VALUE;
+
+  useEffect(() => {
+    if (open) return;
+    setDraft(customText || '');
+    setBindMode(isCustom ? 'fixed' : 'field');
+  }, [customText, isCustom, open]);
 
   if (mode === 'standalone') {
     return (
@@ -292,7 +306,7 @@ function MapRow({ variable, fields, mode = 'bitable', value, onChange, customTex
           placeholder={isImage ? '输入图片 URL，多个 URL 可用换行分隔' : '输入固定值'}
           value={customText || ''}
           onChange={(e) => {
-            if (value !== '__custom__') onChange('__custom__');
+            if (value !== CUSTOM_MAPPING_VALUE) onChange(CUSTOM_MAPPING_VALUE);
             onCustomText(e.target.value);
           }}
         />
@@ -308,7 +322,11 @@ function MapRow({ variable, fields, mode = 'bitable', value, onChange, customTex
           ref={triggerRef}
           type="button"
           className={'fld-trigger' + (!selected && !isCustom ? ' fld-empty' : '')}
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => {
+            setDraft(customText || '');
+            setBindMode(isCustom ? 'fixed' : 'field');
+            setOpen((o) => !o);
+          }}
         >
           {selected ? (
             <>
@@ -318,7 +336,7 @@ function MapRow({ variable, fields, mode = 'bitable', value, onChange, customTex
           ) : isCustom ? (
             <>
               <FieldTypeIcon type="text" />
-              <span className="fld-name">{customText || '自定义文本…'}</span>
+              <span className="fld-name">{customText || '固定值…'}</span>
             </>
           ) : (
             <span className="fld-placeholder">未选择</span>
@@ -331,45 +349,81 @@ function MapRow({ variable, fields, mode = 'bitable', value, onChange, customTex
           width={236}
           triggerRef={triggerRef}
         >
-          <div className="dd-sec-label">表中字段</div>
-          {candidates.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              className={'dd-item' + (f.id === value ? ' dd-item-on' : '')}
-              onClick={() => {
-                onChange(f.id);
-                setOpen(false);
-              }}
-            >
-              <FieldTypeIcon type={f.type} />
-              <span style={{ flex: 1, textAlign: 'left' }}>{f.name}</span>
-              {f.id === value && <Icon.Check />}
-            </button>
-          ))}
-          <div className="dd-divider" />
-          <button
-            type="button"
-            className={'dd-item' + (isCustom ? ' dd-item-on' : '')}
-            onClick={() => {
-              onChange('__custom__');
-              setOpen(false);
-            }}
-          >
-            <FieldTypeIcon type={isImage ? 'attachment' : 'text'} />
-            <span style={{ flex: 1, textAlign: 'left' }}>
-              {isImage ? '固定图片链接…' : '自定义文本…'}
-            </span>
-          </button>
+          <div className="bind-menu">
+            <div className="bind-tabs" role="tablist" aria-label={`${variable.name}绑定方式`}>
+              <button
+                className={'bind-tab' + (bindMode === 'field' ? ' bind-tab-on' : '')}
+                type="button"
+                role="tab"
+                aria-selected={bindMode === 'field'}
+                onClick={() => setBindMode('field')}
+              >
+                字段
+              </button>
+              <button
+                className={'bind-tab' + (bindMode === 'fixed' ? ' bind-tab-on' : '')}
+                type="button"
+                role="tab"
+                aria-selected={bindMode === 'fixed'}
+                onClick={() => setBindMode('fixed')}
+              >
+                固定值
+              </button>
+            </div>
+            {bindMode === 'field' ? (
+              <>
+                <div className="dd-sec-label">表中字段</div>
+                {candidates.length > 0 ? candidates.map((f) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className={'dd-item' + (f.id === value ? ' dd-item-on' : '')}
+                    onClick={() => {
+                      onChange(f.id);
+                      setOpen(false);
+                    }}
+                  >
+                    <FieldTypeIcon type={f.type} />
+                    <span style={{ flex: 1, textAlign: 'left' }}>{f.name}</span>
+                    {f.id === value && <Icon.Check />}
+                  </button>
+                )) : (
+                  <div className="bind-empty">当前表暂无可匹配字段</div>
+                )}
+              </>
+            ) : (
+              <div className="bind-fixed-body">
+                {isImage ? (
+                  <textarea
+                    className="custom-input bind-fixed-input bind-fixed-textarea"
+                    placeholder="输入图片 URL，多个 URL 可用换行分隔"
+                    value={draft}
+                    rows={3}
+                    onChange={(e) => setDraft(e.target.value)}
+                  />
+                ) : (
+                  <input
+                    className="custom-input bind-fixed-input"
+                    placeholder="输入文本"
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                  />
+                )}
+                <button
+                  className="btn-primary bind-fixed-save"
+                  type="button"
+                  onClick={() => {
+                    onChange(CUSTOM_MAPPING_VALUE);
+                    onCustomText(draft);
+                    setOpen(false);
+                  }}
+                >
+                  保存
+                </button>
+              </div>
+            )}
+          </div>
         </Dropdown>
-        {isCustom && (
-          <input
-            className="custom-input"
-            placeholder={isImage ? '输入图片 URL，多个 URL 可用换行分隔' : '输入固定值'}
-            value={customText || ''}
-            onChange={(e) => onCustomText(e.target.value)}
-          />
-        )}
       </div>
     </div>
   );

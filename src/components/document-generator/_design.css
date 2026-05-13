@@ -402,6 +402,58 @@ button { font: inherit; color: inherit; }
 .dd-item-on:hover { background: var(--accent-soft); }
 .dd-divider { height: 1px; background: var(--bd-2); margin: 4px 6px; }
 
+.bind-menu {
+  min-width: 0;
+}
+.bind-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 4px 4px 6px;
+  padding: 3px;
+  background: var(--bg-soft);
+  border-radius: 7px;
+}
+.bind-tab {
+  height: 28px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--txt-2);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.bind-tab-on {
+  background: #1f1b16;
+  color: #fff;
+  font-weight: 600;
+}
+.bind-fixed-body {
+  padding: 4px 6px 6px;
+}
+.custom-input.bind-fixed-input {
+  margin-top: 0;
+  width: 100%;
+  height: 34px;
+  border-radius: 7px;
+}
+.custom-input.bind-fixed-textarea {
+  height: auto;
+  min-height: 72px;
+  resize: vertical;
+  line-height: 1.5;
+}
+.bind-fixed-save {
+  width: 100%;
+  margin-top: 8px;
+}
+.bind-empty {
+  padding: 12px 8px;
+  color: var(--txt-3);
+  font-size: 12px;
+  text-align: center;
+}
+
 .custom-input {
   width: 100%;
   margin-top: 6px;

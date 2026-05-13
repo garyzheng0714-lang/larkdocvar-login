@@ -115,7 +115,7 @@ export function DocumentGeneratorApp({
     if (mode === 'standalone') return;
     setState((s) => {
       if (!s.template) return s;
-      const nextMapping = reconcileMapping(s.template, fields, s.mapping);
+      const nextMapping = reconcileMapping(s.template, fields, s.mapping, { allowCustom: true });
       const writeBackFieldExists = fields.some((f) => f.id === s.writeBackField && f.type === 'attachment');
       const nextWriteBackField = writeBackFieldExists ? s.writeBackField : '';
       const mappingChanged = !isSameMapping(s.mapping, nextMapping);
