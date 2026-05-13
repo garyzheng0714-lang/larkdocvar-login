@@ -161,7 +161,7 @@ button { font: inherit; color: inherit; }
 .hdr-title { flex: 1; font-size: 15px; font-weight: 600; color: var(--txt-1); }
 .hdr-with-back { padding-left: 4px; }
 .hdr-with-back .hdr-title { text-align: left; }
-.hdr-actions { display: flex; gap: 2px; }
+.hdr-actions { display: flex; gap: 2px; padding-right: 16px; }
 .hdr-icon {
   width: 32px; height: 32px;
   display: flex; align-items: center; justify-content: center;
