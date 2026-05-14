@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { AddressInfo } from 'node:net';
+import axios from 'axios';
 import express from 'express';
 
 import {
@@ -190,5 +191,54 @@ test('OAuth state 不依赖浏览器 cookie，签名 state 可独立通过校验
       verifySignedOAuthState(state.replace(/\.[^.]+$/, '.tampered'), config, 'button'),
       false,
     );
+  });
+});
+
+test('OAuth 回调没有 state cookie 时，签名 state 仍会进入 token 交换流程', async () => {
+  await withEnvAsync({
+    FEISHU_FBIF_APP_ID: 'cli_test',
+    FEISHU_FBIF_APP_SECRET: 'app_secret',
+    FEISHU_REDIRECT_BASE: 'https://fbif-sidebar-docgen.fbif.com',
+    FRONTEND_POST_LOGIN_URL: 'https://fbif-sidebar-docgen.fbif.com/',
+    OAUTH_STATE_SIGNING_SECRET: 'test-state-secret',
+  }, async () => {
+    const config = {
+      appKey: 'fbif' as const,
+      appId: 'cli_test',
+      appSecret: 'app_secret',
+      redirectUri: 'https://fbif-sidebar-docgen.fbif.com/auth/feishu/fbif/callback',
+      qrRedirectUri: 'https://fbif-sidebar-docgen.fbif.com/auth/feishu/fbif/qr-callback',
+      scope: 'contact:user.base:readonly',
+    };
+    const state = createSignedOAuthState(config, 'button');
+    const originalPost = axios.post;
+    let tokenExchangeCalled = false;
+
+    (axios as unknown as { post: typeof axios.post }).post = (async () => {
+      tokenExchangeCalled = true;
+      return {
+        data: { code: 99991663, msg: 'mock token failed' },
+      };
+    }) as typeof axios.post;
+
+    try {
+      const app = express();
+      registerOAuthRoutes(app);
+
+      await withTestServer(app, async (baseUrl) => {
+        const response = await fetch(
+          `${baseUrl}/auth/feishu/fbif/callback?code=fake_code&state=${encodeURIComponent(state)}`,
+          { redirect: 'manual' },
+        );
+        const location = response.headers.get('location') || '';
+        const redirectUrl = new URL(location);
+
+        assert.equal(tokenExchangeCalled, true);
+        assert.equal(response.status, 302);
+        assert.equal(redirectUrl.searchParams.get('auth_error'), '飞书登录失败，请重新点击登录。');
+      });
+    } finally {
+      (axios as unknown as { post: typeof axios.post }).post = originalPost;
+    }
   });
 });
