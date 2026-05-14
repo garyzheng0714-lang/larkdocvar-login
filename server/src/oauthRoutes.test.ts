@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import type { AddressInfo } from 'node:net';
+import express from 'express';
 
 import {
   getFeishuAppCredentials,
   normalizeFeishuOAuthAppKey,
 } from './auth';
-import { buildFeishuOAuthRedirectUri } from './oauthRoutes';
+import {
+  buildFeishuOAuthRedirectUri,
+  buildFrontendLoginErrorRedirectUrl,
+  registerOAuthRoutes,
+} from './oauthRoutes';
 
 const ENV_KEYS = [
   'FEISHU_APP_ID',
@@ -19,6 +25,7 @@ const ENV_KEYS = [
   'FEISHU_FBIF_QR_REDIRECT_URI',
   'FEISHU_FUDE_OAUTH_REDIRECT_URI',
   'FEISHU_FUDE_QR_REDIRECT_URI',
+  'FRONTEND_POST_LOGIN_URL',
 ] as const;
 
 function withEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>, run: () => void): void {
@@ -37,6 +44,43 @@ function withEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>, run
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
+  }
+}
+
+async function withEnvAsync<T>(
+  values: Partial<Record<(typeof ENV_KEYS)[number], string>>,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = new Map<string, string | undefined>();
+  for (const key of ENV_KEYS) {
+    previous.set(key, process.env[key]);
+    delete process.env[key];
+  }
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined) process.env[key] = value;
+  }
+  try {
+    return await run();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function withTestServer<T>(app: express.Express, run: (baseUrl: string) => Promise<T>): Promise<T> {
+  const server = app.listen(0);
+  await new Promise<void>((resolve) => server.once('listening', resolve));
+  try {
+    const address = server.address();
+    assert.equal(typeof address, 'object');
+    assert.ok(address);
+    return await run(`http://127.0.0.1:${(address as AddressInfo).port}`);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
   }
 }
 
@@ -84,5 +128,41 @@ test('飞书 OAuth 回调地址使用新域名路径生成并支持单应用覆�
       buildFeishuOAuthRedirectUri('fude', 'qr'),
       'https://custom.example.com/fude/qr',
     );
+  });
+});
+
+test('登录失败回跳前端登录页并携带可读错误，不暴露 JSON 回调响应', () => {
+  withEnv({
+    FRONTEND_POST_LOGIN_URL: 'https://fbif-sidebar-docgen.fbif.com/?from=sidebar',
+  }, () => {
+    const redirectUrl = buildFrontendLoginErrorRedirectUrl('登录状态已失效，请重新点击登录。', 'fbif');
+    const url = new URL(redirectUrl);
+
+    assert.equal(url.origin, 'https://fbif-sidebar-docgen.fbif.com');
+    assert.equal(url.searchParams.get('from'), 'sidebar');
+    assert.equal(url.searchParams.get('auth_error'), '登录状态已失效，请重新点击登录。');
+    assert.equal(url.searchParams.get('auth_org'), 'fbif');
+  });
+});
+
+test('OAuth 回调 state 失效时返回 302 到前端，不把错误文本留在 iframe', async () => {
+  await withEnvAsync({
+    FRONTEND_POST_LOGIN_URL: 'https://fbif-sidebar-docgen.fbif.com/',
+  }, async () => {
+    const app = express();
+    registerOAuthRoutes(app);
+
+    await withTestServer(app, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/auth/feishu/fbif/callback?code=fake&state=missing`, {
+        redirect: 'manual',
+      });
+      const location = response.headers.get('location') || '';
+      const redirectUrl = new URL(location);
+
+      assert.equal(response.status, 302);
+      assert.equal(redirectUrl.origin, 'https://fbif-sidebar-docgen.fbif.com');
+      assert.equal(redirectUrl.searchParams.get('auth_error'), '登录状态已失效，请重新点击登录。');
+      assert.notEqual(response.headers.get('content-type'), 'application/json; charset=utf-8');
+    });
   });
 });

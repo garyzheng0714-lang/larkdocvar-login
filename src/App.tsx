@@ -196,12 +196,26 @@ function toErrorMessage(error: unknown): string {
   return String(error);
 }
 
-async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  return fetch(input, {
-    ...init,
-    credentials: "include",
-    headers: new Headers(init?.headers),
-  });
+function formatAuthFetchError(error: unknown): string {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return "登录检查超时，请稍后重试。";
+  }
+  return toErrorMessage(error);
+}
+
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit, timeoutMs = 10_000): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, {
+      ...init,
+      credentials: "include",
+      headers: new Headers(init?.headers),
+      signal: init?.signal ?? controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 export default function App() {
@@ -246,6 +260,15 @@ export default function App() {
     try {
       const response = await apiFetch("/api/auth/session", { cache: "no-store" });
       if (!response.ok) {
+        if (!options?.silent) {
+          try {
+            const data = (await response.json()) as { error?: string };
+            setAuthError(data.error || "登录检查失败，请稍后重试。");
+          } catch {
+            setAuthError("登录检查失败，请稍后重试。");
+          }
+        }
+        setAuthUser(null);
         setIsAuthenticated(false);
         return;
       }
@@ -262,7 +285,7 @@ export default function App() {
       }
     } catch (error) {
       if (!options?.silent) {
-        setAuthError(toErrorMessage(error));
+        setAuthError(formatAuthFetchError(error));
       }
       setAuthUser(null);
       setIsAuthenticated(false);
@@ -274,15 +297,30 @@ export default function App() {
 
   useEffect(() => {
     try {
-      if (new URLSearchParams(window.location.search).get("mock") === "1") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("mock") === "1") {
         setAuthLoading(false);
+        return;
+      }
+      const loginError = params.get("auth_error");
+      if (loginError) {
+        setAuthError(loginError);
+        setAuthUser(null);
+        setIsAuthenticated(false);
+        setAuthLoading(false);
+        clearAuthPendingFlag();
+        params.delete("auth_error");
+        params.delete("auth_org");
+        const nextQuery = params.toString();
+        const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`;
+        window.history.replaceState(null, "", nextUrl);
         return;
       }
     } catch {
       // ignore — proceed to real auth check
     }
     void checkAuthSession();
-  }, [checkAuthSession]);
+  }, [checkAuthSession, clearAuthPendingFlag]);
 
   useEffect(() => {
     const recheckOnResume = () => {

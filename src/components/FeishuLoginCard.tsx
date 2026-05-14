@@ -520,7 +520,7 @@ function QRView({
 export interface FeishuLoginCardProps {
   /** 登录前的预备工作（例如 markAuthPending） */
   onBeforeLogin?: () => void;
-  /** 顶部错误信息（例如 session 检查失败） */
+  /** 顶部错误信息（登录回调或 session 检查失败） */
   authError?: string | null;
 }
 
@@ -558,7 +558,7 @@ export function FeishuLoginCard({ onBeforeLogin, authError }: FeishuLoginCardPro
 
         {authError ? (
           <div className="mb-4 w-full rounded-[10px] bg-[#fff1f0] text-[#f54a45] px-3 py-2 text-[13px] border border-[#ffd6d3]">
-            登录检查失败：{authError}
+            登录失败：{authError}
           </div>
         ) : null}
 

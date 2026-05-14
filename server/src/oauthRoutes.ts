@@ -63,6 +63,56 @@ function safeOAuthErrorMessage(error: unknown): string {
   return String(error);
 }
 
+const GENERIC_LOGIN_ERROR = '飞书登录失败，请重新点击登录。';
+const GENERIC_QR_LOGIN_ERROR = '飞书扫码登录失败，请重新扫码。';
+const STALE_LOGIN_ERROR = '登录状态已失效，请重新点击登录。';
+const CONFIG_LOGIN_ERROR = '登录服务配置不完整，请联系管理员。';
+
+export function buildFrontendLoginErrorRedirectUrl(
+  message: string,
+  appKey?: FeishuOAuthAppKey,
+): string {
+  const target = process.env.FRONTEND_POST_LOGIN_URL || FRONTEND_POST_LOGIN_URL || '/';
+  const appendParams = (pathname: string, search: string, hash: string): string => {
+    const params = new URLSearchParams(search);
+    params.set('auth_error', message);
+    if (appKey) {
+      params.set('auth_org', appKey);
+    }
+    const query = params.toString();
+    return `${pathname || '/'}${query ? `?${query}` : ''}${hash}`;
+  };
+
+  try {
+    if (target.startsWith('http://') || target.startsWith('https://')) {
+      const url = new URL(target);
+      url.searchParams.set('auth_error', message);
+      if (appKey) {
+        url.searchParams.set('auth_org', appKey);
+      }
+      return url.toString();
+    }
+
+    const hashIndex = target.indexOf('#');
+    const beforeHash = hashIndex >= 0 ? target.slice(0, hashIndex) : target;
+    const hash = hashIndex >= 0 ? target.slice(hashIndex) : '';
+    const queryIndex = beforeHash.indexOf('?');
+    const pathname = queryIndex >= 0 ? beforeHash.slice(0, queryIndex) : beforeHash;
+    const search = queryIndex >= 0 ? beforeHash.slice(queryIndex + 1) : '';
+    return appendParams(pathname, search, hash);
+  } catch {
+    return `/?auth_error=${encodeURIComponent(message)}${appKey ? `&auth_org=${appKey}` : ''}`;
+  }
+}
+
+function redirectToLoginWithError(
+  response: express.Response,
+  message: string,
+  appKey?: FeishuOAuthAppKey,
+): void {
+  response.redirect(buildFrontendLoginErrorRedirectUrl(message, appKey));
+}
+
 type FeishuOAuthTokens = {
   accessToken: string;
   refreshToken: string;
@@ -184,11 +234,22 @@ function sendMissingOAuthConfig(
   });
 }
 
+function redirectMissingOAuthConfig(
+  response: express.Response,
+  appKey: FeishuOAuthAppKey,
+  missing: string,
+): void {
+  // eslint-disable-next-line no-console
+  console.error(`[auth] missing ${appKey} OAuth config: ${missing}`);
+  redirectToLoginWithError(response, CONFIG_LOGIN_ERROR, appKey);
+}
+
 /**
  * Common login finalization shared by button-mode v2 callback and QR-mode v1
  * qr-callback. Given OAuth tokens, fetches user_info, enforces tenant
  * allowlist, persists user + session, sets session cookie, and redirects to
- * the frontend. Writes 5xx/403 directly on failure.
+ * the frontend. On failure it redirects back to the login page with a readable
+ * error so the iframe never exposes raw API responses.
  */
 async function finalizeFeishuLogin(
   response: express.Response,
@@ -203,10 +264,9 @@ async function finalizeFeishuLogin(
   const userInfoBody = userInfoResponse.data as Record<string, unknown>;
   if (typeof userInfoBody.code === 'number' && userInfoBody.code !== 0) {
     const errMsg = String(userInfoBody.msg || 'user_info request failed');
-    response.status(500).json({
-      ok: false,
-      error: `飞书获取用户信息失败：[code=${userInfoBody.code}] ${errMsg}`,
-    });
+    // eslint-disable-next-line no-console
+    console.error(`[auth] user_info failed: [code=${userInfoBody.code}] ${errMsg}`);
+    redirectToLoginWithError(response, GENERIC_LOGIN_ERROR, appKey);
     return;
   }
 
@@ -222,10 +282,9 @@ async function finalizeFeishuLogin(
   };
 
   if (!userInfo.open_id) {
-    response.status(500).json({
-      ok: false,
-      error: '飞书获取用户信息返回无效：缺少 open_id。',
-    });
+    // eslint-disable-next-line no-console
+    console.error('[auth] user_info missing open_id');
+    redirectToLoginWithError(response, GENERIC_LOGIN_ERROR, appKey);
     return;
   }
 
@@ -234,7 +293,7 @@ async function finalizeFeishuLogin(
     console.log(
       `[auth] login denied for tenant_key=${userInfo.tenant_key} open_id=${userInfo.open_id}`,
     );
-    response.status(403).send(UNAUTHORIZED_TENANT_MESSAGE);
+    redirectToLoginWithError(response, UNAUTHORIZED_TENANT_MESSAGE, appKey);
     return;
   }
 
@@ -287,7 +346,7 @@ export function registerOAuthRoutes(app: express.Express): void {
   function startButtonLogin(appKey: FeishuOAuthAppKey, response: express.Response): void {
     const config = getOAuthAppConfig(appKey);
     if (!config.appId || !config.redirectUri) {
-      sendMissingOAuthConfig(
+      redirectMissingOAuthConfig(
         response,
         appKey,
         !config.appId ? `${appEnvPrefix(appKey)}_APP_ID` : 'OAuth callback URL',
@@ -318,7 +377,7 @@ export function registerOAuthRoutes(app: express.Express): void {
       const code = request.query.code as string | undefined;
       const state = typeof request.query.state === 'string' ? request.query.state : '';
       if (!code) {
-        response.status(400).json({ ok: false, error: '缺少 code 参数。' });
+        redirectToLoginWithError(response, STALE_LOGIN_ERROR, appKey);
         return;
       }
       if (!consumeOAuthStateCookie(
@@ -327,11 +386,11 @@ export function registerOAuthRoutes(app: express.Express): void {
         stateCookieName(OAUTH_BUTTON_STATE_COOKIE_PREFIX, appKey),
         state,
       )) {
-        response.status(403).send('登录安全校验失败（state mismatch），请重新登录。');
+        redirectToLoginWithError(response, STALE_LOGIN_ERROR, appKey);
         return;
       }
       if (!config.appId || !config.appSecret || !config.redirectUri) {
-        sendMissingOAuthConfig(
+        redirectMissingOAuthConfig(
           response,
           appKey,
           !config.appId
@@ -358,20 +417,18 @@ export function registerOAuthRoutes(app: express.Express): void {
       const tokenBody = tokenResponse.data as Record<string, unknown>;
       if (typeof tokenBody.code === 'number' && tokenBody.code !== 0) {
         const errMsg = String(tokenBody.msg || tokenBody.message || 'token exchange failed');
-        response.status(500).json({
-          ok: false,
-          error: `飞书 OAuth token 交换失败：[code=${tokenBody.code}] ${errMsg}`,
-        });
+        // eslint-disable-next-line no-console
+        console.error(`[auth] OAuth token exchange failed: [code=${tokenBody.code}] ${errMsg}`);
+        redirectToLoginWithError(response, GENERIC_LOGIN_ERROR, appKey);
         return;
       }
 
       const tokenData = extractOAuthTokenData(tokenBody);
       const oauthAccessToken = tokenData.access_token as string | undefined;
       if (!oauthAccessToken) {
-        response.status(500).json({
-          ok: false,
-          error: '飞书 OAuth token 交换返回无效：缺少 access_token。',
-        });
+        // eslint-disable-next-line no-console
+        console.error('[auth] OAuth token exchange missing access_token');
+        redirectToLoginWithError(response, GENERIC_LOGIN_ERROR, appKey);
         return;
       }
 
@@ -386,10 +443,7 @@ export function registerOAuthRoutes(app: express.Express): void {
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Feishu OAuth callback error:', safeOAuthErrorMessage(error));
-      response.status(500).json({
-        ok: false,
-        error: '飞书登录失败，请稍后重试。',
-      });
+      redirectToLoginWithError(response, GENERIC_LOGIN_ERROR, appKey);
     }
   }
 
@@ -457,7 +511,7 @@ export function registerOAuthRoutes(app: express.Express): void {
       const code = request.query.code as string | undefined;
       const state = typeof request.query.state === 'string' ? request.query.state : '';
       if (!code) {
-        response.status(400).json({ ok: false, error: '缺少 code 参数。' });
+        redirectToLoginWithError(response, STALE_LOGIN_ERROR, appKey);
         return;
       }
       if (!consumeOAuthStateCookie(
@@ -466,11 +520,11 @@ export function registerOAuthRoutes(app: express.Express): void {
         stateCookieName(OAUTH_QR_STATE_COOKIE_PREFIX, appKey),
         state,
       )) {
-        response.status(403).send('登录安全校验失败（state mismatch），请重新登录。');
+        redirectToLoginWithError(response, STALE_LOGIN_ERROR, appKey);
         return;
       }
       if (!config.appId || !config.appSecret) {
-        sendMissingOAuthConfig(
+        redirectMissingOAuthConfig(
           response,
           appKey,
           !config.appId ? `${appEnvPrefix(appKey)}_APP_ID` : `${appEnvPrefix(appKey)}_APP_SECRET`,
@@ -484,10 +538,7 @@ export function registerOAuthRoutes(app: express.Express): void {
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Feishu QR callback error:', safeOAuthErrorMessage(error));
-      response.status(500).json({
-        ok: false,
-        error: '飞书扫码登录失败，请稍后重试。',
-      });
+      redirectToLoginWithError(response, GENERIC_QR_LOGIN_ERROR, appKey);
     }
   }
 
