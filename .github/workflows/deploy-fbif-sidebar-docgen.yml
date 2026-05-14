@@ -176,6 +176,41 @@ jobs:
               fi
             }
 
+            read_env_value() {
+              local key="$1"
+              if [[ ! -f "${RELEASE_DIR}/.env" ]]; then
+                return 0
+              fi
+              grep -E "^${key}=" "${RELEASE_DIR}/.env" | tail -n 1 | cut -d= -f2-
+            }
+
+            resolve_postgres_data_dir() {
+              local configured
+              configured="$(read_env_value "POSTGRES_DATA_DIR")"
+              if [[ -n "${configured}" ]]; then
+                printf '%s' "${configured}"
+                return 0
+              fi
+
+              local stable_dir="${APP_ROOT}/data/postgres"
+              local existing_source=""
+              existing_source="$(docker inspect "${POSTGRES_CONTAINER_NAME_VALUE}" --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+
+              if [[ -n "${existing_source}" && "${existing_source}" != "${APP_ROOT}/releases/"* ]]; then
+                printf '%s' "${existing_source}"
+                return 0
+              fi
+
+              if [[ -n "${existing_source}" && "${existing_source}" == "${APP_ROOT}/releases/"* && -f "${existing_source}/PG_VERSION" && ! -f "${stable_dir}/PG_VERSION" ]]; then
+                echo "Migrating legacy PostgreSQL data directory to ${stable_dir}" >&2
+                mkdir -p "${stable_dir}"
+                docker stop "${POSTGRES_CONTAINER_NAME_VALUE}" >/dev/null 2>&1 || true
+                cp -a "${existing_source}/." "${stable_dir}/"
+              fi
+
+              printf '%s' "${stable_dir}"
+            }
+
             upsert_env "APP_NAME" "${APP_NAME_VALUE}"
             upsert_env "HOST_PORT" "${HOST_PORT_VALUE}"
             upsert_env "CONTAINER_PORT" "${CONTAINER_PORT_VALUE}"
@@ -183,6 +218,10 @@ jobs:
             upsert_env "POSTGRES_CONTAINER_NAME" "${POSTGRES_CONTAINER_NAME_VALUE}"
             upsert_env "PORT" "${CONTAINER_PORT_VALUE}"
             upsert_env "HOST" "0.0.0.0"
+            POSTGRES_DATA_DIR_VALUE="$(resolve_postgres_data_dir)"
+            mkdir -p "${POSTGRES_DATA_DIR_VALUE}"
+            upsert_env "POSTGRES_DATA_DIR" "${POSTGRES_DATA_DIR_VALUE}"
+            echo "POSTGRES_DATA_DIR=${POSTGRES_DATA_DIR_VALUE}"
             upsert_env "SESSION_COOKIE_SECURE" "true"
             upsert_env "FRONTEND_POST_LOGIN_URL" "https://${APP_DOMAIN_VALUE}"
             upsert_env "DOCUMENT_RENDER_PUBLIC_BASE_URL" "https://${APP_DOMAIN_VALUE}"

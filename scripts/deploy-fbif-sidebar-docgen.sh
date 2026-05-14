@@ -175,6 +175,41 @@ upsert_env() {
   fi
 }
 
+read_env_value() {
+  local key="$1"
+  if [[ ! -f "${RELEASE_DIR}/.env" ]]; then
+    return 0
+  fi
+  grep -E "^${key}=" "${RELEASE_DIR}/.env" | tail -n 1 | cut -d= -f2-
+}
+
+resolve_postgres_data_dir() {
+  local configured
+  configured="$(read_env_value "POSTGRES_DATA_DIR")"
+  if [[ -n "${configured}" ]]; then
+    printf '%s' "${configured}"
+    return 0
+  fi
+
+  local stable_dir="${APP_DIR}/data/postgres"
+  local existing_source=""
+  existing_source="$(docker inspect "${POSTGRES_CONTAINER_NAME}" --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
+
+  if [[ -n "${existing_source}" && "${existing_source}" != "${APP_DIR}/releases/"* ]]; then
+    printf '%s' "${existing_source}"
+    return 0
+  fi
+
+  if [[ -n "${existing_source}" && "${existing_source}" == "${APP_DIR}/releases/"* && -f "${existing_source}/PG_VERSION" && ! -f "${stable_dir}/PG_VERSION" ]]; then
+    echo "[remote] Migrating legacy PostgreSQL data directory to ${stable_dir}" >&2
+    mkdir -p "${stable_dir}"
+    docker stop "${POSTGRES_CONTAINER_NAME}" >/dev/null 2>&1 || true
+    cp -a "${existing_source}/." "${stable_dir}/"
+  fi
+
+  printf '%s' "${stable_dir}"
+}
+
 upsert_env "HOST_PORT" "${HOST_PORT}"
 upsert_env "CONTAINER_PORT" "${CONTAINER_PORT}"
 upsert_env "APP_NAME" "${APP_NAME}"
@@ -182,6 +217,10 @@ upsert_env "POSTGRES_HOST_PORT" "${POSTGRES_HOST_PORT}"
 upsert_env "POSTGRES_CONTAINER_NAME" "${POSTGRES_CONTAINER_NAME}"
 upsert_env "PORT" "${CONTAINER_PORT}"
 upsert_env "HOST" "0.0.0.0"
+POSTGRES_DATA_DIR_VALUE="$(resolve_postgres_data_dir)"
+mkdir -p "${POSTGRES_DATA_DIR_VALUE}"
+upsert_env "POSTGRES_DATA_DIR" "${POSTGRES_DATA_DIR_VALUE}"
+echo "[remote] POSTGRES_DATA_DIR=${POSTGRES_DATA_DIR_VALUE}"
 
 if ss -ltn "( sport = :${HOST_PORT} )" | grep -q LISTEN; then
   if docker ps --filter "name=^/${APP_NAME}$" --format '{{.Ports}}' | grep -q ":${HOST_PORT}->"; then

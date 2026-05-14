@@ -1522,6 +1522,7 @@ button { font: inherit; color: inherit; }
   .tpl-row-action {
     padding: 4px 6px;
   }
+}
 
 @media (max-width: 640px) {
   .app-standalone {
