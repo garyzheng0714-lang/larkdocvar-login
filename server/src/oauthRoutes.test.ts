@@ -10,7 +10,9 @@ import {
 import {
   buildFeishuOAuthRedirectUri,
   buildFrontendLoginErrorRedirectUrl,
+  createSignedOAuthState,
   registerOAuthRoutes,
+  verifySignedOAuthState,
 } from './oauthRoutes';
 
 const ENV_KEYS = [
@@ -26,6 +28,7 @@ const ENV_KEYS = [
   'FEISHU_FUDE_OAUTH_REDIRECT_URI',
   'FEISHU_FUDE_QR_REDIRECT_URI',
   'FRONTEND_POST_LOGIN_URL',
+  'OAUTH_STATE_SIGNING_SECRET',
 ] as const;
 
 function withEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>, run: () => void): void {
@@ -164,5 +167,28 @@ test('OAuth 回调 state 失效时返回 302 到前端，不把错误文本留�
       assert.equal(redirectUrl.searchParams.get('auth_error'), '登录状态已失效，请重新点击登录。');
       assert.notEqual(response.headers.get('content-type'), 'application/json; charset=utf-8');
     });
+  });
+});
+
+test('OAuth state 不依赖浏览器 cookie，签名 state 可独立通过校验', () => {
+  withEnv({
+    OAUTH_STATE_SIGNING_SECRET: 'test-state-secret',
+  }, () => {
+    const config = {
+      appKey: 'fbif' as const,
+      appId: 'cli_test',
+      appSecret: 'app_secret',
+      redirectUri: 'https://fbif-sidebar-docgen.fbif.com/auth/feishu/fbif/callback',
+      qrRedirectUri: 'https://fbif-sidebar-docgen.fbif.com/auth/feishu/fbif/qr-callback',
+      scope: 'contact:user.base:readonly',
+    };
+    const state = createSignedOAuthState(config, 'button');
+
+    assert.equal(verifySignedOAuthState(state, config, 'button'), true);
+    assert.equal(verifySignedOAuthState(state, config, 'qr'), false);
+    assert.equal(
+      verifySignedOAuthState(state.replace(/\.[^.]+$/, '.tampered'), config, 'button'),
+      false,
+    );
   });
 });

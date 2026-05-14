@@ -32,9 +32,11 @@ const SESSION_COOKIE_SAMESITE: 'lax' | 'strict' | 'none' =
     ? (SESSION_COOKIE_SAMESITE_RAW as 'strict' | 'none')
     : 'lax';
 const FRONTEND_POST_LOGIN_URL = process.env.FRONTEND_POST_LOGIN_URL || '/';
+const EMBEDDED_AUTH_HASH_PARAM = process.env.EMBEDDED_AUTH_HASH_PARAM || 'session_token';
 
 const OAUTH_BUTTON_STATE_COOKIE_PREFIX = 'feishu_oauth_state';
 const OAUTH_QR_STATE_COOKIE_PREFIX = 'feishu_qr_state';
+const OAUTH_STATE_TTL_SECONDS = 10 * 60;
 const PUBLIC_CALLBACK_PATH = '/auth/feishu';
 
 // ---------------------------------------------------------------------------
@@ -113,6 +115,16 @@ function redirectToLoginWithError(
   response.redirect(buildFrontendLoginErrorRedirectUrl(message, appKey));
 }
 
+function appendHashParamToUrl(baseUrl: string, key: string, value: string): string {
+  const hashIndex = baseUrl.indexOf('#');
+  const beforeHash = hashIndex >= 0 ? baseUrl.slice(0, hashIndex) : baseUrl;
+  const rawHash = hashIndex >= 0 ? baseUrl.slice(hashIndex + 1) : '';
+  const hashParams = new URLSearchParams(rawHash);
+  hashParams.set(key, value);
+  const nextHash = hashParams.toString();
+  return nextHash ? `${beforeHash}#${nextHash}` : beforeHash;
+}
+
 type FeishuOAuthTokens = {
   accessToken: string;
   refreshToken: string;
@@ -130,6 +142,14 @@ type OAuthAppConfig = {
   redirectUri: string;
   qrRedirectUri: string;
   scope: string;
+};
+
+type SignedOAuthStatePayload = {
+  v: 1;
+  appKey: FeishuOAuthAppKey;
+  kind: OAuthCallbackKind;
+  nonce: string;
+  exp: number;
 };
 
 function appEnvPrefix(appKey: FeishuOAuthAppKey): 'FEISHU_FBIF' | 'FEISHU_FUDE' {
@@ -207,8 +227,72 @@ function getOAuthAppConfig(appKey: FeishuOAuthAppKey): OAuthAppConfig {
   };
 }
 
+function getOAuthStateSigningSecret(config: OAuthAppConfig): string {
+  return process.env.OAUTH_STATE_SIGNING_SECRET || config.appSecret || config.appId;
+}
+
+function signOAuthStateBody(body: string, secret: string): string {
+  return crypto.createHmac('sha256', secret).update(body).digest('base64url');
+}
+
+export function createSignedOAuthState(config: OAuthAppConfig, kind: OAuthCallbackKind): string {
+  const secret = getOAuthStateSigningSecret(config);
+  const payload: SignedOAuthStatePayload = {
+    v: 1,
+    appKey: config.appKey,
+    kind,
+    nonce: crypto.randomBytes(24).toString('base64url'),
+    exp: Math.floor(Date.now() / 1000) + OAUTH_STATE_TTL_SECONDS,
+  };
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = signOAuthStateBody(body, secret);
+  return `${body}.${signature}`;
+}
+
+export function verifySignedOAuthState(
+  state: string,
+  config: OAuthAppConfig,
+  kind: OAuthCallbackKind,
+): boolean {
+  const secret = getOAuthStateSigningSecret(config);
+  if (!state || !secret) return false;
+  const [body, signature] = state.split('.');
+  if (!body || !signature) return false;
+
+  const expected = signOAuthStateBody(body, secret);
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length) return false;
+  if (!crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return false;
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Partial<SignedOAuthStatePayload>;
+    return (
+      payload.v === 1 &&
+      payload.appKey === config.appKey &&
+      payload.kind === kind &&
+      typeof payload.exp === 'number' &&
+      payload.exp >= Math.floor(Date.now() / 1000)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function stateCookieName(prefix: string, appKey: FeishuOAuthAppKey): string {
   return `${prefix}_${appKey}`;
+}
+
+function consumeOAuthState(
+  request: express.Request,
+  response: express.Response,
+  cookieName: string,
+  state: string,
+  config: OAuthAppConfig,
+  kind: OAuthCallbackKind,
+): boolean {
+  const cookieOk = consumeOAuthStateCookie(request, response, cookieName, state);
+  return cookieOk || verifySignedOAuthState(state, config, kind);
 }
 
 function resolveRouteAppKey(
@@ -333,7 +417,7 @@ async function finalizeFeishuLogin(
     path: '/',
   });
 
-  response.redirect(FRONTEND_POST_LOGIN_URL);
+  response.redirect(appendHashParamToUrl(FRONTEND_POST_LOGIN_URL, EMBEDDED_AUTH_HASH_PARAM, sessionToken));
 }
 
 // ---------------------------------------------------------------------------
@@ -345,15 +429,19 @@ export function registerOAuthRoutes(app: express.Express): void {
 
   function startButtonLogin(appKey: FeishuOAuthAppKey, response: express.Response): void {
     const config = getOAuthAppConfig(appKey);
-    if (!config.appId || !config.redirectUri) {
+    if (!config.appId || !config.appSecret || !config.redirectUri) {
       redirectMissingOAuthConfig(
         response,
         appKey,
-        !config.appId ? `${appEnvPrefix(appKey)}_APP_ID` : 'OAuth callback URL',
+        !config.appId
+          ? `${appEnvPrefix(appKey)}_APP_ID`
+          : !config.appSecret
+            ? `${appEnvPrefix(appKey)}_APP_SECRET`
+            : 'OAuth callback URL',
       );
       return;
     }
-    const state = crypto.randomBytes(24).toString('hex');
+    const state = createSignedOAuthState(config, 'button');
     setOAuthStateCookie(response, stateCookieName(OAUTH_BUTTON_STATE_COOKIE_PREFIX, appKey), state);
 
     const params = new URLSearchParams({
@@ -380,11 +468,13 @@ export function registerOAuthRoutes(app: express.Express): void {
         redirectToLoginWithError(response, STALE_LOGIN_ERROR, appKey);
         return;
       }
-      if (!consumeOAuthStateCookie(
+      if (!consumeOAuthState(
         request,
         response,
         stateCookieName(OAUTH_BUTTON_STATE_COOKIE_PREFIX, appKey),
         state,
+        config,
+        'button',
       )) {
         redirectToLoginWithError(response, STALE_LOGIN_ERROR, appKey);
         return;
@@ -483,7 +573,7 @@ export function registerOAuthRoutes(app: express.Express): void {
       );
       return;
     }
-    const state = crypto.randomBytes(24).toString('hex');
+    const state = createSignedOAuthState(config, 'qr');
     setOAuthStateCookie(response, stateCookieName(OAUTH_QR_STATE_COOKIE_PREFIX, appKey), state);
 
     const params = new URLSearchParams({
@@ -514,11 +604,13 @@ export function registerOAuthRoutes(app: express.Express): void {
         redirectToLoginWithError(response, STALE_LOGIN_ERROR, appKey);
         return;
       }
-      if (!consumeOAuthStateCookie(
+      if (!consumeOAuthState(
         request,
         response,
         stateCookieName(OAUTH_QR_STATE_COOKIE_PREFIX, appKey),
         state,
+        config,
+        'qr',
       )) {
         redirectToLoginWithError(response, STALE_LOGIN_ERROR, appKey);
         return;

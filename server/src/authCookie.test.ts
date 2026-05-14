@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   consumeOAuthStateCookie,
   getOAuthStateCookieOptions,
+  resolveSessionTokenFromRequest,
   setOAuthStateCookie,
 } from './auth';
 
@@ -42,6 +43,56 @@ test('正式环境 OAuth state cookie 使用嵌入式侧边栏可回传的 SameS
       maxAge: 600000,
     });
   });
+});
+
+test('嵌入式侧边栏 cookie 被拦截时可用请求头携带 session token', () => {
+  const request = {
+    headers: {},
+    header(name: string) {
+      return name.toLowerCase() === 'x-session-token' ? 'header-session-token' : '';
+    },
+    query: {},
+  };
+
+  assert.equal(resolveSessionTokenFromRequest(request as never), 'header-session-token');
+});
+
+test('session token 优先使用 cookie，兼容 Bearer 和 query 兜底', () => {
+  assert.equal(
+    resolveSessionTokenFromRequest({
+      headers: {
+        cookie: 'larkdocvar_session=cookie-token',
+        authorization: 'Bearer bearer-token',
+      },
+      header() {
+        return 'header-token';
+      },
+      query: { session_token: 'query-token' },
+    } as never),
+    'cookie-token',
+  );
+
+  assert.equal(
+    resolveSessionTokenFromRequest({
+      headers: { authorization: 'Bearer bearer-token' },
+      header() {
+        return '';
+      },
+      query: {},
+    } as never),
+    'bearer-token',
+  );
+
+  assert.equal(
+    resolveSessionTokenFromRequest({
+      headers: {},
+      header() {
+        return '';
+      },
+      query: { session_token: 'query-token' },
+    } as never),
+    'query-token',
+  );
 });
 
 test('非 HTTPS 本地环境不会写出浏览器会拒收的 SameSite=None cookie', () => {

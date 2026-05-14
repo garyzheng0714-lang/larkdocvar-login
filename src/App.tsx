@@ -3,6 +3,13 @@ import type { ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { FeishuLoginCard } from "./components/FeishuLoginCard";
 import {
+  clearStoredEmbeddedAuthToken,
+  consumeEmbeddedAuthTokenFromHash,
+  installEmbeddedAuthFetchFallback,
+  setStoredEmbeddedAuthToken,
+  withEmbeddedAuthHeader,
+} from "./authSessionToken";
+import {
   DocumentGeneratorApp,
   useBitable,
   useTemplates,
@@ -13,6 +20,8 @@ import {
   MOCK_ROWS,
 } from "./components/document-generator";
 import type { PrimaryState, RecordSpec } from "./components/document-generator";
+
+installEmbeddedAuthFetchFallback();
 
 function useMockMode(): boolean {
   return useMemo(() => {
@@ -206,11 +215,11 @@ function formatAuthFetchError(error: unknown): string {
 async function apiFetch(input: RequestInfo | URL, init?: RequestInit, timeoutMs = 10_000): Promise<Response> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  const requestInit = withEmbeddedAuthHeader(input, init);
   try {
     return await fetch(input, {
-      ...init,
+      ...requestInit,
       credentials: "include",
-      headers: new Headers(init?.headers),
       signal: init?.signal ?? controller.signal,
     });
   } finally {
@@ -268,6 +277,7 @@ export default function App() {
             setAuthError("登录检查失败，请稍后重试。");
           }
         }
+        clearStoredEmbeddedAuthToken();
         setAuthUser(null);
         setIsAuthenticated(false);
         return;
@@ -280,6 +290,7 @@ export default function App() {
         setIsAuthenticated(true);
         clearAuthPendingFlag();
       } else {
+        clearStoredEmbeddedAuthToken();
         setAuthUser(null);
         setIsAuthenticated(false);
       }
@@ -297,6 +308,11 @@ export default function App() {
 
   useEffect(() => {
     try {
+      const embeddedToken = consumeEmbeddedAuthTokenFromHash();
+      if (embeddedToken) {
+        setStoredEmbeddedAuthToken(embeddedToken);
+        clearAuthPendingFlag();
+      }
       const params = new URLSearchParams(window.location.search);
       if (params.get("mock") === "1") {
         setAuthLoading(false);
@@ -372,6 +388,7 @@ export default function App() {
     } catch {
       // ignore network failure; still drop client session
     }
+    clearStoredEmbeddedAuthToken();
     setAuthUser(null);
     setIsAuthenticated(false);
     setAuthError(null);
