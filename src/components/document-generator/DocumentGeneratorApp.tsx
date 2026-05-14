@@ -14,6 +14,7 @@ import {
 import type {
   AccentKey,
   Accent,
+  GeneratorKind,
   GenerateRunner,
   PrimaryState,
   RecordSpec,
@@ -47,6 +48,8 @@ export interface DocumentGeneratorAppProps {
   createAttachmentField?: (name?: string) => Promise<TableField>;
   runner: GenerateRunner;
   recordsFor: (state: PrimaryState) => RecordSpec[];
+  generatorKind: GeneratorKind;
+  onGeneratorKindChange: (value: GeneratorKind) => void;
 }
 
 export function DocumentGeneratorApp({
@@ -65,6 +68,8 @@ export function DocumentGeneratorApp({
   createAttachmentField,
   runner,
   recordsFor,
+  generatorKind,
+  onGeneratorKindChange,
 }: DocumentGeneratorAppProps) {
   const accent = ACCENTS[accentKey] || ACCENTS.blue;
   const initialTemplate = templates[0] ?? null;
@@ -163,6 +168,8 @@ export function DocumentGeneratorApp({
           }}
           accent={accent.primary}
           userMenu={userMenu}
+          generatorKind={generatorKind}
+          onGeneratorKindChange={onGeneratorKindChange}
         />
         {(bitableError || templatesError) && (
           <div

@@ -11,6 +11,7 @@ import {
 } from "./authSessionToken";
 import {
   DocumentGeneratorApp,
+  CloudDocGeneratorApp,
   useBitable,
   useTemplates,
   useGenerateMock,
@@ -19,7 +20,7 @@ import {
   MOCK_TEMPLATES,
   MOCK_ROWS,
 } from "./components/document-generator";
-import type { PrimaryState, RecordSpec } from "./components/document-generator";
+import type { GeneratorKind, PrimaryState, RecordSpec } from "./components/document-generator";
 
 installEmbeddedAuthFetchFallback();
 
@@ -43,9 +44,20 @@ function useStandalonePreviewMode(): boolean {
   }, []);
 }
 
+function getInitialGeneratorKind(): GeneratorKind {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const value = params.get("doc") || params.get("template");
+    return value === "feishu" || value === "cloud" ? "feishu" : "word";
+  } catch {
+    return "word";
+  }
+}
+
 function V2MockRoute({ userMenu, standalone = false }: { userMenu: ReactNode; standalone?: boolean }) {
   const runner = useGenerateMock();
   const [mockFields, setMockFields] = useState(MOCK_FIELDS);
+  const [generatorKind, setGeneratorKind] = useState<GeneratorKind>(getInitialGeneratorKind);
   const recordsFor = useCallback(
     (state: PrimaryState): RecordSpec[] =>
       standalone
@@ -58,6 +70,24 @@ function V2MockRoute({ userMenu, standalone = false }: { userMenu: ReactNode; st
           ),
     [standalone],
   );
+  if (generatorKind === 'feishu') {
+    const mockRecordIds = standalone ? ['manual-1'] : MOCK_ROWS.map((_, i) => `mock-${i + 1}`);
+    return (
+      <CloudDocGeneratorApp
+        userMenu={userMenu}
+        mode={standalone ? 'standalone' : 'bitable'}
+        fields={standalone ? [] : mockFields}
+        selectedRecordIds={standalone ? ['manual-1'] : mockRecordIds.slice(0, 6)}
+        allRecordIds={mockRecordIds}
+        selectedCount={standalone ? 1 : 6}
+        totalRecordCount={standalone ? 1 : mockRecordIds.length}
+        bitableAvailable={!standalone}
+        demo
+        generatorKind={generatorKind}
+        onGeneratorKindChange={setGeneratorKind}
+      />
+    );
+  }
   return (
     <DocumentGeneratorApp
       userMenu={userMenu}
@@ -78,6 +108,8 @@ function V2MockRoute({ userMenu, standalone = false }: { userMenu: ReactNode; st
       }}
       runner={runner}
       recordsFor={recordsFor}
+      generatorKind={generatorKind}
+      onGeneratorKindChange={setGeneratorKind}
     />
   );
 }
@@ -86,6 +118,7 @@ function V2RealRoute({ userMenu }: { userMenu: ReactNode }) {
   const base = useBitable();
   const templates = useTemplates();
   const runner = useGenerateReal();
+  const [generatorKind, setGeneratorKind] = useState<GeneratorKind>(getInitialGeneratorKind);
   const standalone = !base.loading && !base.available;
   const recordsFor = useCallback(
     (_state: PrimaryState): RecordSpec[] => {
@@ -97,6 +130,25 @@ function V2RealRoute({ userMenu }: { userMenu: ReactNode }) {
     },
     [standalone, base.selectedRecordIds, base.allRecordIds],
   );
+  if (generatorKind === 'feishu') {
+    return (
+      <CloudDocGeneratorApp
+        userMenu={userMenu}
+        mode={standalone ? 'standalone' : 'bitable'}
+        fields={standalone ? [] : base.fields}
+        activeTableId={standalone ? null : base.activeTableId}
+        selectedRecordIds={standalone ? [] : base.selectedRecordIds}
+        allRecordIds={standalone ? [] : base.allRecordIds}
+        selectedCount={standalone ? 0 : base.selectedCount}
+        totalRecordCount={standalone ? 0 : base.totalRecordCount}
+        bitableAvailable={base.available}
+        bitableError={standalone ? null : base.error}
+        refreshBitable={base.refresh}
+        generatorKind={generatorKind}
+        onGeneratorKindChange={setGeneratorKind}
+      />
+    );
+  }
   return (
     <DocumentGeneratorApp
       userMenu={userMenu}
@@ -113,6 +165,8 @@ function V2RealRoute({ userMenu }: { userMenu: ReactNode }) {
       createAttachmentField={base.createAttachmentField}
       runner={runner}
       recordsFor={recordsFor}
+      generatorKind={generatorKind}
+      onGeneratorKindChange={setGeneratorKind}
     />
   );
 }

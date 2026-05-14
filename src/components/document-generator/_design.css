@@ -220,6 +220,39 @@ button { font: inherit; color: inherit; }
   background: transparent; border: 0; cursor: pointer;
   font-size: 13px; color: var(--accent); padding: 6px 10px;
 }
+.doc-kind-switch {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+  margin-left: 8px;
+  margin-right: 6px;
+  border-radius: 999px;
+  background: var(--bg-soft);
+  border: 1px solid var(--bd-2);
+  flex: 0 0 auto;
+  min-width: 168px;
+}
+.doc-kind-option {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--txt-2);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.doc-kind-option:hover {
+  color: var(--txt-1);
+}
+.doc-kind-option.is-active {
+  background: #fff;
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(20, 30, 60, 0.12);
+}
 
 /* ─── Scroll area ──────────────────────────────────────────────── */
 .scroll {
@@ -1192,6 +1225,22 @@ button { font: inherit; color: inherit; }
     padding-left: 14px;
     padding-right: 14px;
   }
+  .doc-kind-switch {
+    min-width: 136px;
+    margin-left: 6px;
+    margin-right: 4px;
+  }
+  .doc-kind-option {
+    padding-left: 7px;
+    padding-right: 7px;
+    font-size: 11.5px;
+  }
+  .cloud-url-row {
+    flex-direction: column;
+  }
+  .cloud-extract-btn {
+    width: 100%;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1412,6 +1461,154 @@ button { font: inherit; color: inherit; }
   font-size: 11.5px; color: var(--txt-3);
   background: var(--bg-soft);
   padding: 1px 7px; border-radius: 8px;
+}
+
+/* Feishu cloud document flow */
+.cloud-url-card {
+  background: #fff;
+  border: 1px solid var(--bd-2);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 1px 2px rgba(20,30,60,.03);
+}
+.cloud-url-label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--txt-2);
+  margin-bottom: 8px;
+}
+.cloud-url-row {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.cloud-url-input {
+  height: 36px;
+  min-width: 0;
+  flex: 1;
+}
+.cloud-extract-btn {
+  min-width: 86px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.cloud-template-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12.5px;
+  color: var(--txt-2);
+  min-width: 0;
+}
+.cloud-template-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cloud-notice {
+  margin: 10px 14px 0;
+  padding: 9px 10px;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.cloud-notice-info {
+  color: #255a86;
+  background: #edf5ff;
+  border: 1px solid #cfe3ff;
+}
+.cloud-notice-success {
+  color: var(--ok);
+  background: #eef8f3;
+  border: 1px solid #cfebdd;
+}
+.cloud-notice-error {
+  color: var(--err);
+  background: #fff4f2;
+  border: 1px solid #f1c7c1;
+}
+.cloud-range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.cloud-range-option {
+  min-width: 0;
+  height: 42px;
+  border: 1px solid var(--bd-2);
+  background: var(--bg-soft);
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--txt-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.cloud-range-option span {
+  color: var(--txt-3);
+  font-variant-numeric: tabular-nums;
+}
+.cloud-range-option.is-active {
+  background: #fff;
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.cloud-range-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.cloud-progress-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  color: var(--txt-2);
+}
+.cloud-progress-head b {
+  font-weight: 600;
+  color: var(--txt-1);
+  font-variant-numeric: tabular-nums;
+}
+.cloud-result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cloud-result-row {
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--bd-2);
+  font-size: 12.5px;
+}
+.cloud-result-row:last-child {
+  border-bottom: 0;
+}
+.cloud-result-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cloud-result-error {
+  flex: 1;
+  min-width: 0;
+  color: var(--err);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
 }
 
 /* AutoInput sizer — keep measurement span out of layout */

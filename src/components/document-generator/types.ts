@@ -12,6 +12,7 @@ export interface TableField {
   name: string;
   type: FieldKind;
   icon: string;
+  rawType?: number;
 }
 
 export interface TemplateVariable {
@@ -46,6 +47,8 @@ export interface Accent {
   primary: string;
   soft: string;
 }
+
+export type GeneratorKind = 'word' | 'feishu';
 
 export type Phase = 'idle' | 'running' | 'paused' | 'done' | 'terminated';
 export type RecordStatus = 'pending' | 'processing' | 'succeeded' | 'failed';

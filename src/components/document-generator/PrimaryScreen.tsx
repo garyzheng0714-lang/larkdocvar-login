@@ -2,8 +2,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Icon, FieldTypeIcon } from './icons';
 import { Dropdown } from './Dropdown';
+import { GeneratorModeSwitch } from './GeneratorModeSwitch';
 import { CUSTOM_MAPPING_VALUE, findSmartField, isCompatibleField } from './mapping';
-import type { PrimaryState, TableField, TemplateVariable } from './types';
+import type { GeneratorKind, PrimaryState, TableField, TemplateVariable } from './types';
 
 interface PrimaryScreenProps {
   state: PrimaryState;
@@ -15,6 +16,8 @@ interface PrimaryScreenProps {
   startGenerate: () => void;
   accent: string;
   userMenu?: React.ReactNode;
+  generatorKind: GeneratorKind;
+  onGeneratorKindChange: (value: GeneratorKind) => void;
 }
 
 export function PrimaryScreen({
@@ -27,6 +30,8 @@ export function PrimaryScreen({
   startGenerate,
   accent,
   userMenu,
+  generatorKind,
+  onGeneratorKindChange,
 }: PrimaryScreenProps) {
   const tpl = state.template;
   const mapping = state.mapping;
@@ -53,6 +58,7 @@ export function PrimaryScreen({
         <div className="hdr-title">
           {isStandalone ? '文档生成' : '根据表格记录批量生成文档'}
         </div>
+        <GeneratorModeSwitch value={generatorKind} onChange={onGeneratorKindChange} />
         <div className="hdr-actions">
           <button className="hdr-icon" title="使用帮助" type="button"><Icon.Help /></button>
           {userMenu}

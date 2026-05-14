@@ -1,5 +1,6 @@
 export { DocumentGeneratorApp } from './DocumentGeneratorApp';
 export type { DocumentGeneratorAppProps } from './DocumentGeneratorApp';
+export { CloudDocGeneratorApp } from './CloudDocGeneratorApp';
 export { useBitable } from './useBitable';
 export type { BitableContext } from './useBitable';
 export { useTemplates } from './useTemplates';
@@ -14,6 +15,7 @@ export type {
   AccentKey,
   Counts,
   FieldKind,
+  GeneratorKind,
   GenerateOptions,
   GenerateRunner,
   Phase,

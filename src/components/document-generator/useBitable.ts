@@ -48,11 +48,13 @@ function normalizeField(raw: unknown): TableField | null {
   const name = (v.name ?? v.fieldName) as string | undefined;
   if (!id || !name) return null;
   const typeNum = Number(v.type ?? v.fieldType ?? FieldType.Text);
+  const rawType = Number.isFinite(typeNum) ? typeNum : FieldType.Text;
   return {
     id,
     name,
-    type: mapBitableType(Number.isFinite(typeNum) ? typeNum : FieldType.Text),
+    type: mapBitableType(rawType),
     icon: '',
+    rawType,
   };
 }
 
