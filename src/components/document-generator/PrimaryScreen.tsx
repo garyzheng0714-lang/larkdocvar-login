@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Icon, FieldTypeIcon } from './icons';
 import { Dropdown } from './Dropdown';
-import { GeneratorModeSwitch } from './GeneratorModeSwitch';
+import { GeneratorHeader } from './GeneratorHeader';
 import { CUSTOM_MAPPING_VALUE, findSmartField, isCompatibleField } from './mapping';
 import type { GeneratorKind, PrimaryState, TableField, TemplateVariable } from './types';
 
@@ -54,16 +54,11 @@ export function PrimaryScreen({
 
   return (
     <div className="screen">
-      <header className="hdr">
-        <div className="hdr-title">
-          {isStandalone ? '文档生成' : '根据表格记录批量生成文档'}
-        </div>
-        <GeneratorModeSwitch value={generatorKind} onChange={onGeneratorKindChange} />
-        <div className="hdr-actions">
-          <button className="hdr-icon" title="使用帮助" type="button"><Icon.Help /></button>
-          {userMenu}
-        </div>
-      </header>
+      <GeneratorHeader
+        userMenu={userMenu}
+        generatorKind={generatorKind}
+        onGeneratorKindChange={onGeneratorKindChange}
+      />
 
       <div className="scroll">
         <div className="block block-tpl">
@@ -125,7 +120,7 @@ export function PrimaryScreen({
                   </button>
                 )}
               </div>
-              <div className="map-table">
+              <div className="map-table mapping-table">
                 {tplVars.map((v) => (
                   <MapRow
                     key={v.name}
@@ -282,10 +277,7 @@ interface MapRowProps {
 
 function MapRow({ variable, fields, mode = 'bitable', value, onChange, customText, onCustomText }: MapRowProps) {
   const [open, setOpen] = useState(false);
-  const [bindMode, setBindMode] = useState<'field' | 'fixed'>(
-    value === CUSTOM_MAPPING_VALUE ? 'fixed' : 'field',
-  );
-  const [draft, setDraft] = useState(customText || '');
+  const [query, setQuery] = useState('');
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const isImage = variable.kind === 'image';
   const candidates = fields.filter((f) =>
@@ -293,57 +285,124 @@ function MapRow({ variable, fields, mode = 'bitable', value, onChange, customTex
   );
   const selected = fields.find((f) => f.id === value);
   const isCustom = value === CUSTOM_MAPPING_VALUE;
+  const bindMode = isCustom ? 'fixed' : 'field';
+  const filteredCandidates = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return candidates;
+    return candidates.filter((field) => field.name.toLowerCase().includes(keyword));
+  }, [candidates, query]);
 
   useEffect(() => {
     if (open) return;
-    setDraft(customText || '');
-    setBindMode(isCustom ? 'fixed' : 'field');
-  }, [customText, isCustom, open]);
+    setQuery('');
+  }, [open]);
+
+  function switchBindMode(nextMode: 'field' | 'fixed') {
+    setOpen(false);
+    if (nextMode === 'fixed') {
+      onChange(CUSTOM_MAPPING_VALUE);
+      return;
+    }
+    if (isCustom) onChange('');
+  }
 
   if (mode === 'standalone') {
     return (
-      <label className="mrow mrow-manual">
-        <span className="mrow-var">
-          {variable.name}
-          <span className="manual-required">*</span>
-        </span>
-        <input
-          className="custom-input manual-input"
-          placeholder={isImage ? '输入图片 URL，多个 URL 可用换行分隔' : '输入固定值'}
-          value={customText || ''}
-          onChange={(e) => {
-            if (value !== CUSTOM_MAPPING_VALUE) onChange(CUSTOM_MAPPING_VALUE);
-            onCustomText(e.target.value);
-          }}
-        />
-      </label>
+      <div className="mapping-card mapping-card-manual">
+        <div className="mapping-head">
+          <span className="mapping-label">
+            {variable.name}
+            <span className="mapping-required">*</span>
+          </span>
+        </div>
+        {isImage ? (
+          <textarea
+            className="custom-input mapping-fixed-input mapping-fixed-textarea"
+            placeholder="输入图片 URL，多个 URL 可用换行分隔"
+            value={customText || ''}
+            rows={3}
+            onChange={(e) => {
+              if (value !== CUSTOM_MAPPING_VALUE) onChange(CUSTOM_MAPPING_VALUE);
+              onCustomText(e.target.value);
+            }}
+          />
+        ) : (
+          <input
+            className="custom-input mapping-fixed-input"
+            placeholder="输入固定值"
+            value={customText || ''}
+            onChange={(e) => {
+              if (value !== CUSTOM_MAPPING_VALUE) onChange(CUSTOM_MAPPING_VALUE);
+              onCustomText(e.target.value);
+            }}
+          />
+        )}
+      </div>
     );
   }
 
   return (
-    <div className="mrow">
-      <span className="mrow-var">{variable.name}</span>
-      <div className="mrow-field">
+    <div className="mapping-card">
+      <div className="mapping-head">
+        <span className="mapping-label">
+          {variable.name}
+          <span className="mapping-required">*</span>
+        </span>
+        <div className="mapping-mode-switch" role="tablist" aria-label={`${variable.name}绑定方式`}>
+          <button
+            className={'mapping-mode-option' + (bindMode === 'field' ? ' is-active' : '')}
+            type="button"
+            role="tab"
+            aria-selected={bindMode === 'field'}
+            onClick={() => switchBindMode('field')}
+          >
+            字段
+          </button>
+          <button
+            className={'mapping-mode-option' + (bindMode === 'fixed' ? ' is-active' : '')}
+            type="button"
+            role="tab"
+            aria-selected={bindMode === 'fixed'}
+            onClick={() => switchBindMode('fixed')}
+          >
+            固定值
+          </button>
+        </div>
+      </div>
+      <div className="mapping-control">
+        {bindMode === 'fixed' ? (
+          isImage ? (
+            <textarea
+              className="custom-input mapping-fixed-input mapping-fixed-textarea"
+              placeholder="输入图片 URL，多个 URL 可用换行分隔"
+              value={customText || ''}
+              rows={3}
+              onChange={(e) => onCustomText(e.target.value)}
+            />
+          ) : (
+            <input
+              className="custom-input mapping-fixed-input"
+              placeholder="输入固定值"
+              value={customText || ''}
+              onChange={(e) => onCustomText(e.target.value)}
+            />
+          )
+        ) : (
+          <>
         <button
           ref={triggerRef}
           type="button"
-          className={'fld-trigger' + (!selected && !isCustom ? ' fld-empty' : '')}
+              className={
+                'fld-trigger mapping-field-trigger'
+                + (open ? ' is-open' : '')
+                + (!selected ? ' fld-empty' : '')
+              }
           onClick={() => {
-            setDraft(customText || '');
-            setBindMode(isCustom ? 'fixed' : 'field');
             setOpen((o) => !o);
           }}
         >
           {selected ? (
-            <>
-              <FieldTypeIcon type={selected.type} />
-              <span className="fld-name">{selected.name}</span>
-            </>
-          ) : isCustom ? (
-            <>
-              <FieldTypeIcon type="text" />
-              <span className="fld-name">{customText || '固定值…'}</span>
-            </>
+                <span className="fld-name">{selected.name}</span>
           ) : (
             <span className="fld-placeholder">未选择</span>
           )}
@@ -352,84 +411,40 @@ function MapRow({ variable, fields, mode = 'bitable', value, onChange, customTex
         <Dropdown
           open={open}
           onClose={() => setOpen(false)}
-          width={236}
           triggerRef={triggerRef}
         >
-          <div className="bind-menu">
-            <div className="bind-tabs" role="tablist" aria-label={`${variable.name}绑定方式`}>
-              <button
-                className={'bind-tab' + (bindMode === 'field' ? ' bind-tab-on' : '')}
-                type="button"
-                role="tab"
-                aria-selected={bindMode === 'field'}
-                onClick={() => setBindMode('field')}
-              >
-                字段
-              </button>
-              <button
-                className={'bind-tab' + (bindMode === 'fixed' ? ' bind-tab-on' : '')}
-                type="button"
-                role="tab"
-                aria-selected={bindMode === 'fixed'}
-                onClick={() => setBindMode('fixed')}
-              >
-                固定值
-              </button>
-            </div>
-            {bindMode === 'field' ? (
-              <>
-                <div className="dd-sec-label">表中字段</div>
-                {candidates.length > 0 ? candidates.map((f) => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    className={'dd-item' + (f.id === value ? ' dd-item-on' : '')}
-                    onClick={() => {
-                      onChange(f.id);
-                      setOpen(false);
-                    }}
-                  >
-                    <FieldTypeIcon type={f.type} />
-                    <span style={{ flex: 1, textAlign: 'left' }}>{f.name}</span>
-                    {f.id === value && <Icon.Check />}
-                  </button>
-                )) : (
-                  <div className="bind-empty">当前表暂无可匹配字段</div>
-                )}
-              </>
-            ) : (
-              <div className="bind-fixed-body">
-                {isImage ? (
-                  <textarea
-                    className="custom-input bind-fixed-input bind-fixed-textarea"
-                    placeholder="输入图片 URL，多个 URL 可用换行分隔"
-                    value={draft}
-                    rows={3}
-                    onChange={(e) => setDraft(e.target.value)}
-                  />
-                ) : (
+              <div className="mapping-field-menu">
+                <label className="mapping-field-search">
+                  <Icon.Search />
                   <input
-                    className="custom-input bind-fixed-input"
-                    placeholder="输入文本"
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
+                    value={query}
+                    placeholder="搜索字段"
+                    onChange={(event) => setQuery(event.target.value)}
                   />
-                )}
-                <button
-                  className="btn-primary bind-fixed-save"
-                  type="button"
-                  onClick={() => {
-                    onChange(CUSTOM_MAPPING_VALUE);
-                    onCustomText(draft);
-                    setOpen(false);
-                  }}
-                >
-                  保存
-                </button>
-              </div>
-            )}
-          </div>
+                </label>
+                <div className="mapping-field-options">
+                  {filteredCandidates.length > 0 ? filteredCandidates.map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      className={'dd-item mapping-field-option' + (f.id === value ? ' dd-item-on' : '')}
+                      onClick={() => {
+                        onChange(f.id);
+                        setOpen(false);
+                      }}
+                    >
+                      <span>{f.name}</span>
+                    </button>
+                  )) : (
+                    <div className="bind-empty">
+                      {candidates.length > 0 ? '没有匹配的字段' : '当前表暂无可匹配字段'}
+                    </div>
+                  )}
+                </div>
+            </div>
         </Dropdown>
+          </>
+        )}
       </div>
     </div>
   );

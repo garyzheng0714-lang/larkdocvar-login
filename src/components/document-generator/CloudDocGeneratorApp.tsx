@@ -4,7 +4,7 @@ import { FieldType, bitable } from '@lark-base-open/js-sdk';
 import type { ITable } from '@lark-base-open/js-sdk';
 import { Dropdown } from './Dropdown';
 import { FieldTypeIcon, Icon } from './icons';
-import { GeneratorModeSwitch } from './GeneratorModeSwitch';
+import { GeneratorHeader } from './GeneratorHeader';
 import type { Accent, GeneratorKind, TableField } from './types';
 
 interface CloudDocGeneratorAppProps {
@@ -422,14 +422,11 @@ export function CloudDocGeneratorApp({
     >
       <aside className="sidebar" data-screen-label="01 Sidebar — 飞书云文档生成">
         <div className="screen">
-          <header className="hdr">
-            <div className="hdr-title">{mode === 'standalone' ? '文档生成' : '根据表格记录批量生成文档'}</div>
-            <GeneratorModeSwitch value={generatorKind} onChange={onGeneratorKindChange} />
-            <div className="hdr-actions">
-              <button className="hdr-icon" title="使用帮助" type="button"><Icon.Help /></button>
-              {userMenu}
-            </div>
-          </header>
+          <GeneratorHeader
+            userMenu={userMenu}
+            generatorKind={generatorKind}
+            onGeneratorKindChange={onGeneratorKindChange}
+          />
 
           <div className="scroll">
             <div className="block block-tpl">

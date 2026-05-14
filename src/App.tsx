@@ -201,34 +201,34 @@ function AccountMenu({ user, onLogout }: AccountMenuProps) {
   }, [open]);
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="account-menu" ref={ref}>
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="h-9 pl-1.5 pr-2 inline-flex items-center gap-2 rounded-full border border-[#dee0e3] bg-white hover:border-[#bfd0ff] transition-colors"
+        className="account-trigger"
       >
         {user.avatarUrl ? (
-          <img src={user.avatarUrl} alt="" className="w-7 h-7 rounded-full object-cover bg-gray-100" />
+          <img src={user.avatarUrl} alt="" className="account-avatar-img" />
         ) : (
           <span
-            className="w-7 h-7 rounded-full text-white text-[12px] font-semibold flex items-center justify-center"
+            className="account-avatar-fallback"
             style={{ backgroundColor: avatarColor }}
           >
             {avatarText}
           </span>
         )}
-        <span className="max-w-[96px] truncate text-[12px] font-medium text-[#1f2329]">{name}</span>
-        <ChevronDown className={`w-[14px] h-[14px] text-[#8f959e] transition-transform ${open ? "rotate-180" : ""}`} />
+        <span className="account-name">{name}</span>
+        <ChevronDown className={`account-chevron ${open ? "is-open" : ""}`} />
       </button>
       {open ? (
-        <div className="absolute right-0 top-[calc(100%+8px)] w-[180px] bg-white border border-[#dfe2e6] rounded-[10px] shadow-[0_10px_24px_rgba(0,0,0,0.12)] overflow-hidden z-40">
+        <div className="account-popover">
           <button
             type="button"
             onClick={() => {
               setOpen(false);
               onLogout();
             }}
-            className="w-full px-4 py-3 text-left text-[15px] font-medium text-[#f54a45] hover:bg-[#fff4f4]"
+            className="account-logout"
           >
             退出登录
           </button>
