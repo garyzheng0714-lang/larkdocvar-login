@@ -184,29 +184,46 @@ jobs:
               grep -E "^${key}=" "${RELEASE_DIR}/.env" | tail -n 1 | cut -d= -f2-
             }
 
+            is_unstable_postgres_data_dir() {
+              local value="$1"
+              [[ "${value}" == "${APP_ROOT}/current/"* || "${value}" == "${APP_ROOT}/releases/"* ]]
+            }
+
+            copy_postgres_data_if_needed() {
+              local source_dir="$1"
+              local target_dir="$2"
+              if [[ -n "${source_dir}" && -f "${source_dir}/PG_VERSION" && ! -f "${target_dir}/PG_VERSION" ]]; then
+                echo "Migrating PostgreSQL data directory to ${target_dir}" >&2
+                mkdir -p "${target_dir}"
+                docker stop "${POSTGRES_CONTAINER_NAME_VALUE}" >/dev/null 2>&1 || true
+                cp -a "${source_dir}/." "${target_dir}/"
+              fi
+            }
+
             resolve_postgres_data_dir() {
               local configured
               configured="$(read_env_value "POSTGRES_DATA_DIR")"
-              if [[ -n "${configured}" ]]; then
-                printf '%s' "${configured}"
-                return 0
-              fi
-
               local stable_dir="${APP_ROOT}/data/postgres"
               local existing_source=""
               existing_source="$(docker inspect "${POSTGRES_CONTAINER_NAME_VALUE}" --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
 
-              if [[ -n "${existing_source}" && "${existing_source}" != "${APP_ROOT}/releases/"* ]]; then
+              if [[ -n "${configured}" ]]; then
+                if is_unstable_postgres_data_dir "${configured}"; then
+                  copy_postgres_data_if_needed "${existing_source}" "${stable_dir}"
+                  copy_postgres_data_if_needed "${configured}" "${stable_dir}"
+                  printf '%s' "${stable_dir}"
+                  return 0
+                fi
+                printf '%s' "${configured}"
+                return 0
+              fi
+
+              if [[ -n "${existing_source}" ]] && ! is_unstable_postgres_data_dir "${existing_source}"; then
                 printf '%s' "${existing_source}"
                 return 0
               fi
 
-              if [[ -n "${existing_source}" && "${existing_source}" == "${APP_ROOT}/releases/"* && -f "${existing_source}/PG_VERSION" && ! -f "${stable_dir}/PG_VERSION" ]]; then
-                echo "Migrating legacy PostgreSQL data directory to ${stable_dir}" >&2
-                mkdir -p "${stable_dir}"
-                docker stop "${POSTGRES_CONTAINER_NAME_VALUE}" >/dev/null 2>&1 || true
-                cp -a "${existing_source}/." "${stable_dir}/"
-              fi
+              copy_postgres_data_if_needed "${existing_source}" "${stable_dir}"
 
               printf '%s' "${stable_dir}"
             }

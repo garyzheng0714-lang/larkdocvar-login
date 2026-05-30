@@ -66,6 +66,12 @@ export const Icon = {
       <path d="M5.5 8h5M5.5 10.5h4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
     </svg>
   ),
+  Copy: (p: IP) => (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" {...p}>
+      <rect x="5" y="3" width="8" height="10" rx="1.4" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M3 11V5.2C3 4 4 3 5.2 3H10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  ),
   Warn: (p: IP) => (
     <svg viewBox="0 0 16 16" width="13" height="13" fill="none" {...p}>
       <path d="M8 2.4l6 10.6H2L8 2.4z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />

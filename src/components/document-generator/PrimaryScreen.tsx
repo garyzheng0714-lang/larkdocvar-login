@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { Icon, FieldTypeIcon } from './icons';
 import { Dropdown } from './Dropdown';
 import { GeneratorHeader } from './GeneratorHeader';
+import { copyText } from './copyText';
 import { CUSTOM_MAPPING_VALUE, findSmartField, isCompatibleField } from './mapping';
 import type { GeneratorKind, PrimaryState, TableField, TemplateVariable } from './types';
 
@@ -63,18 +64,33 @@ export function PrimaryScreen({
       <div className="scroll">
         <div className="block block-tpl">
           {tpl ? (
-            <button className="tpl-row" onClick={openPicker} type="button">
-              <span className="tpl-row-thumb"><DocThumb /></span>
-              <span className="tpl-row-info">
-                <span className="tpl-row-name">{tpl.name}</span>
-                <span className="tpl-row-meta">
-                  <span>{tpl.updatedAt}更新</span>
+            <div className="tpl-row-shell">
+              <button className="tpl-row" onClick={openPicker} title={tpl.name} type="button">
+                <span className="tpl-row-thumb"><DocThumb /></span>
+                <span className="tpl-row-info">
+                  <span className="tpl-name-line">
+                    <span className="tpl-row-name" title={tpl.name}>{tpl.name}</span>
+                  </span>
+                  <span className="tpl-row-meta">
+                    <span>{tpl.updatedAt}更新</span>
+                  </span>
                 </span>
-              </span>
-              <span className="tpl-row-action">
-                替换 <Icon.ChevronR />
-              </span>
-            </button>
+                <span className="tpl-row-action">
+                  替换 <Icon.ChevronR />
+                </span>
+              </button>
+              <button
+                className="template-copy-btn tpl-row-copy"
+                type="button"
+                title={`复制模板名称：${tpl.name}`}
+                aria-label={`复制模板名称：${tpl.name}`}
+                onClick={() => {
+                  void copyText(tpl.name);
+                }}
+              >
+                <Icon.Copy />
+              </button>
+            </div>
           ) : (
             <button className="tpl-empty" onClick={openPicker} type="button">
               <span className="tpl-empty-glyph"><Icon.Doc /></span>

@@ -312,10 +312,19 @@ function sendMissingOAuthConfig(
   appKey: FeishuOAuthAppKey,
   missing: string,
 ): void {
+  // eslint-disable-next-line no-console
+  console.error(`[auth] missing ${appKey} OAuth config: ${missing}`);
   response.status(500).json({
     ok: false,
-    error: `${appKey === 'fude' ? '富的' : 'FBIF'}飞书登录配置不完整：缺少 ${missing}。`,
+    error: CONFIG_LOGIN_ERROR,
   });
+}
+
+function sanitizeDiagnosticValue(value: unknown): string | boolean | null {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') return value.slice(0, 240);
+  if (value === null || value === undefined) return null;
+  return String(value).slice(0, 240);
 }
 
 function redirectMissingOAuthConfig(
@@ -339,18 +348,33 @@ async function finalizeFeishuLogin(
   response: express.Response,
   tokens: FeishuOAuthTokens,
   appKey: FeishuOAuthAppKey,
+  options?: {
+    callbackKind?: OAuthCallbackKind;
+    state?: string;
+    responseMode?: 'redirect' | 'json';
+  },
 ): Promise<void> {
+  const responseMode = options?.responseMode ?? 'redirect';
+  const failLogin = (message: string): void => {
+    if (responseMode === 'json') {
+      response.status(401).json({ ok: false, error: message });
+      return;
+    }
+    redirectToLoginWithError(response, message, appKey);
+  };
+
   const userInfoResponse = await axios.get(
     'https://open.feishu.cn/open-apis/authen/v1/user_info',
-    { headers: { Authorization: `Bearer ${tokens.accessToken}` } },
+    { headers: { Authorization: `Bearer ${tokens.accessToken}` }, timeout: 20000 },
   );
+  const genericError = options?.callbackKind === 'qr' ? GENERIC_QR_LOGIN_ERROR : GENERIC_LOGIN_ERROR;
 
   const userInfoBody = userInfoResponse.data as Record<string, unknown>;
   if (typeof userInfoBody.code === 'number' && userInfoBody.code !== 0) {
     const errMsg = String(userInfoBody.msg || 'user_info request failed');
     // eslint-disable-next-line no-console
     console.error(`[auth] user_info failed: [code=${userInfoBody.code}] ${errMsg}`);
-    redirectToLoginWithError(response, GENERIC_LOGIN_ERROR, appKey);
+    failLogin(genericError);
     return;
   }
 
@@ -368,7 +392,7 @@ async function finalizeFeishuLogin(
   if (!userInfo.open_id) {
     // eslint-disable-next-line no-console
     console.error('[auth] user_info missing open_id');
-    redirectToLoginWithError(response, GENERIC_LOGIN_ERROR, appKey);
+    failLogin(genericError);
     return;
   }
 
@@ -377,7 +401,7 @@ async function finalizeFeishuLogin(
     console.log(
       `[auth] login denied for tenant_key=${userInfo.tenant_key} open_id=${userInfo.open_id}`,
     );
-    redirectToLoginWithError(response, UNAUTHORIZED_TENANT_MESSAGE, appKey);
+    failLogin(UNAUTHORIZED_TENANT_MESSAGE);
     return;
   }
 
@@ -417,6 +441,20 @@ async function finalizeFeishuLogin(
     path: '/',
   });
 
+  if (responseMode === 'json') {
+    response.set('Cache-Control', 'no-store').json({
+      ok: true,
+      session_token: sessionToken,
+      user: {
+        openId: userInfo.open_id,
+        name: userInfo.name ?? '',
+        enName: userInfo.en_name ?? null,
+        email: userInfo.email ?? null,
+        avatarUrl: userInfo.avatar_url ?? null,
+      },
+    });
+    return;
+  }
   response.redirect(appendHashParamToUrl(FRONTEND_POST_LOGIN_URL, EMBEDDED_AUTH_HASH_PARAM, sessionToken));
 }
 
@@ -427,9 +465,34 @@ async function finalizeFeishuLogin(
 export function registerOAuthRoutes(app: express.Express): void {
   // -------- Button mode: v2 OAuth (open.feishu.cn authorize + v2 token) --------
 
-  function startButtonLogin(appKey: FeishuOAuthAppKey, response: express.Response): void {
+  function buildButtonLoginStart(appKey: FeishuOAuthAppKey): {
+    config: OAuthAppConfig;
+    state: string;
+    authorizeUrl: string;
+  } | null {
     const config = getOAuthAppConfig(appKey);
     if (!config.appId || !config.appSecret || !config.redirectUri) {
+      return null;
+    }
+    const state = createSignedOAuthState(config, 'button');
+    const params = new URLSearchParams({
+      app_id: config.appId,
+      redirect_uri: config.redirectUri,
+      response_type: 'code',
+      scope: config.scope,
+      state,
+    });
+    return {
+      config,
+      state,
+      authorizeUrl: `https://open.feishu.cn/open-apis/authen/v1/authorize?${params.toString()}`,
+    };
+  }
+
+  function startButtonLogin(appKey: FeishuOAuthAppKey, response: express.Response): void {
+    const start = buildButtonLoginStart(appKey);
+    if (!start) {
+      const config = getOAuthAppConfig(appKey);
       redirectMissingOAuthConfig(
         response,
         appKey,
@@ -441,18 +504,9 @@ export function registerOAuthRoutes(app: express.Express): void {
       );
       return;
     }
-    const state = createSignedOAuthState(config, 'button');
-    setOAuthStateCookie(response, stateCookieName(OAUTH_BUTTON_STATE_COOKIE_PREFIX, appKey), state);
 
-    const params = new URLSearchParams({
-      app_id: config.appId,
-      redirect_uri: config.redirectUri,
-      response_type: 'code',
-      scope: config.scope,
-      state,
-    });
-    const authorizeUrl = `https://open.feishu.cn/open-apis/authen/v1/authorize?${params.toString()}`;
-    response.redirect(authorizeUrl);
+    setOAuthStateCookie(response, stateCookieName(OAUTH_BUTTON_STATE_COOKIE_PREFIX, appKey), start.state);
+    response.redirect(start.authorizeUrl);
   }
 
   async function handleButtonCallback(
@@ -501,7 +555,7 @@ export function registerOAuthRoutes(app: express.Express): void {
           code,
           redirect_uri: config.redirectUri,
         },
-        { headers: { 'Content-Type': 'application/json' } },
+        { headers: { 'Content-Type': 'application/json' }, timeout: 20000 },
       );
 
       const tokenBody = tokenResponse.data as Record<string, unknown>;
@@ -529,13 +583,115 @@ export function registerOAuthRoutes(app: express.Express): void {
         expiresIn: Number(tokenData.expires_in) || 0,
         refreshExpiresIn:
           Number(tokenData.refresh_expires_in ?? tokenData.refresh_token_expires_in) || 0,
-      }, appKey);
+      }, appKey, { callbackKind: 'button', state });
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Feishu OAuth callback error:', safeOAuthErrorMessage(error));
       redirectToLoginWithError(response, GENERIC_LOGIN_ERROR, appKey);
     }
   }
+
+  app.get('/api/auth/feishu/:appKey/start', (request, response) => {
+    const appKey = resolveRouteAppKey(request, response);
+    if (!appKey) return;
+
+    response.status(410).set('Cache-Control', 'no-store').json({
+      ok: false,
+      error: '该登录接回方式已停用，请使用当前页面登录。',
+    });
+  });
+
+  app.get('/api/auth/feishu/:appKey/login-status', (request, response) => {
+    const appKey = resolveRouteAppKey(request, response);
+    if (!appKey) return;
+
+    response.status(410).set('Cache-Control', 'no-store').json({
+      ok: false,
+      status: 'disabled',
+      error: '该登录接回方式已停用，请使用当前页面登录。',
+    });
+  });
+
+  app.get('/api/auth/feishu/:appKey/client-config', (request, response) => {
+    const appKey = resolveRouteAppKey(request, response);
+    if (!appKey) return;
+
+    const config = getOAuthAppConfig(appKey);
+    if (!config.appId || !config.appSecret) {
+      sendMissingOAuthConfig(
+        response,
+        appKey,
+        !config.appId ? `${appEnvPrefix(appKey)}_APP_ID` : `${appEnvPrefix(appKey)}_APP_SECRET`,
+      );
+      return;
+    }
+
+    response.set('Cache-Control', 'no-store').json({
+      ok: true,
+      app_id: config.appId,
+    });
+  });
+
+  app.post('/api/auth/feishu/:appKey/client-diagnostics', (request, response) => {
+    const appKey = resolveRouteAppKey(request, response);
+    if (!appKey) return;
+
+    const body = request.body && typeof request.body === 'object'
+      ? request.body as Record<string, unknown>
+      : {};
+    const diagnostic = {
+      appKey,
+      stage: sanitizeDiagnosticValue(body.stage),
+      message: sanitizeDiagnosticValue(body.message),
+      hasH5Sdk: sanitizeDiagnosticValue(body.hasH5Sdk),
+      hasTt: sanitizeDiagnosticValue(body.hasTt),
+      hasRequestAccess: sanitizeDiagnosticValue(body.hasRequestAccess),
+      hasRequestAuthCode: sanitizeDiagnosticValue(body.hasRequestAuthCode),
+      hasLark: sanitizeDiagnosticValue(body.hasLark),
+      hasTtJSBridge: sanitizeDiagnosticValue(body.hasTtJSBridge),
+      hasWebkitInvoke: sanitizeDiagnosticValue(body.hasWebkitInvoke),
+      hasWebViewJavascriptBridge: sanitizeDiagnosticValue(body.hasWebViewJavascriptBridge),
+      hasLarkWebViewJavaScriptBridge: sanitizeDiagnosticValue(body.hasLarkWebViewJavaScriptBridge),
+      userAgentHasWebApp: sanitizeDiagnosticValue(body.userAgentHasWebApp),
+      isIframe: sanitizeDiagnosticValue(body.isIframe),
+      referrerOrigin: sanitizeDiagnosticValue(body.referrerOrigin),
+      userAgent: sanitizeDiagnosticValue(body.userAgent),
+    };
+    // eslint-disable-next-line no-console
+    console.warn('[auth] Feishu client-side login unavailable:', JSON.stringify(diagnostic));
+    response.set('Cache-Control', 'no-store').json({ ok: true });
+  });
+
+  app.post('/api/auth/feishu/:appKey/client-code', async (request, response) => {
+    const appKey = resolveRouteAppKey(request, response);
+    if (!appKey) return;
+
+    const config = getOAuthAppConfig(appKey);
+    if (!config.appId || !config.appSecret) {
+      sendMissingOAuthConfig(
+        response,
+        appKey,
+        !config.appId ? `${appEnvPrefix(appKey)}_APP_ID` : `${appEnvPrefix(appKey)}_APP_SECRET`,
+      );
+      return;
+    }
+
+    const code = typeof request.body?.code === 'string' ? request.body.code.trim() : '';
+    if (!code || code.length > 512) {
+      response.status(400).json({ ok: false, error: '飞书客户端授权码无效，请重新登录。' });
+      return;
+    }
+
+    try {
+      const appAccessToken = await getAppAccessToken(config.appId, config.appSecret);
+      const tokens = await exchangeCodeV1(code, appAccessToken);
+      await finalizeFeishuLogin(response, tokens, appKey, { responseMode: 'json' });
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Feishu client-side login error:', safeOAuthErrorMessage(error));
+      response.status(401).json({ ok: false, error: GENERIC_LOGIN_ERROR });
+    }
+  });
 
   app.get('/auth/feishu/:appKey/login', (request, response) => {
     const appKey = resolveRouteAppKey(request, response);
@@ -626,7 +782,7 @@ export function registerOAuthRoutes(app: express.Express): void {
 
       const appAccessToken = await getAppAccessToken(config.appId, config.appSecret);
       const tokens = await exchangeCodeV1(code, appAccessToken);
-      await finalizeFeishuLogin(response, tokens, appKey);
+      await finalizeFeishuLogin(response, tokens, appKey, { callbackKind: 'qr', state });
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Feishu QR callback error:', safeOAuthErrorMessage(error));

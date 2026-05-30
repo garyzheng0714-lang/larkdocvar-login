@@ -99,21 +99,30 @@ function parseBearerToken(header: string | string[] | undefined): string {
   return match?.[1]?.trim() || '';
 }
 
-export function resolveSessionTokenFromRequest(request: express.Request): string {
+export function resolveSessionTokenCandidatesFromRequest(request: express.Request): string[] {
+  const candidates: string[] = [];
+  const addCandidate = (token: string): void => {
+    const trimmed = token.trim();
+    if (trimmed && !candidates.includes(trimmed)) {
+      candidates.push(trimmed);
+    }
+  };
+
   const cookies = parseCookies(request.headers.cookie);
   const cookieToken = (cookies[SESSION_COOKIE_NAME] || '').trim();
-  if (cookieToken) return cookieToken;
+  addCandidate(cookieToken);
 
   const headerToken = (request.header('X-Session-Token') || '').trim();
-  if (headerToken) return headerToken;
+  addCandidate(headerToken);
 
   const bearerToken = parseBearerToken(request.headers.authorization);
-  if (bearerToken) return bearerToken;
+  addCandidate(bearerToken);
 
-  const queryToken = typeof request.query.session_token === 'string'
-    ? request.query.session_token.trim()
-    : '';
-  return queryToken;
+  return candidates;
+}
+
+export function resolveSessionTokenFromRequest(request: express.Request): string {
+  return resolveSessionTokenCandidatesFromRequest(request)[0] || '';
 }
 
 // ---------------------------------------------------------------------------
@@ -355,27 +364,31 @@ async function ensureValidAccessToken(session: AuthSessionRow): Promise<AuthSess
 async function resolveSession(
   request: express.Request,
 ): Promise<{ session: AuthSessionRow; user: UserRow } | null> {
-  const sessionToken = resolveSessionTokenFromRequest(request);
-  if (!sessionToken) return null;
+  const sessionTokens = resolveSessionTokenCandidatesFromRequest(request);
+  if (!sessionTokens.length) return null;
 
-  const rawSession = await getSessionByToken(sessionToken);
-  if (!rawSession) return null;
+  for (const sessionToken of sessionTokens) {
+    const rawSession = await getSessionByToken(sessionToken);
+    if (!rawSession) continue;
 
-  let session: AuthSessionRow;
-  try {
-    session = await ensureValidAccessToken(rawSession);
-  } catch {
-    await deleteSessionByToken(rawSession.token).catch(() => undefined);
-    return null;
+    let session: AuthSessionRow;
+    try {
+      session = await ensureValidAccessToken(rawSession);
+    } catch {
+      await deleteSessionByToken(rawSession.token).catch(() => undefined);
+      continue;
+    }
+
+    const user = await getUserByOpenId(session.open_id);
+    if (!user) {
+      await deleteSessionByToken(session.token).catch(() => undefined);
+      continue;
+    }
+
+    return { session, user };
   }
 
-  const user = await getUserByOpenId(session.open_id);
-  if (!user) {
-    await deleteSessionByToken(session.token).catch(() => undefined);
-    return null;
-  }
-
-  return { session, user };
+  return null;
 }
 
 // ---------------------------------------------------------------------------

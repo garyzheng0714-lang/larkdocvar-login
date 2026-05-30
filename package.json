@@ -24,6 +24,7 @@
     "start": "node --import tsx server/src/index.ts",
     "start:prod": "NODE_ENV=production node --import tsx server/src/index.ts",
     "migrate:bitable-to-pg": "node --import tsx server/src/scripts/migrateBitableToPostgres.ts",
+    "backup:postgres": "bash scripts/backup-postgres.sh",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",

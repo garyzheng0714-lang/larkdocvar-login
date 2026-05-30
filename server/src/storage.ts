@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { runMigrations } from './migrations';
 
 interface UserRow {
   open_id: string;
@@ -32,52 +33,22 @@ interface SavedConfigRow {
   updated_at: string;
 }
 
-const SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS users (
-  open_id     TEXT PRIMARY KEY,
-  name        TEXT NOT NULL DEFAULT '',
-  en_name     TEXT,
-  email       TEXT,
-  avatar_url  TEXT,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS auth_sessions (
-  token               TEXT PRIMARY KEY,
-  oauth_app_key       TEXT NOT NULL DEFAULT 'fbif',
-  open_id             TEXT NOT NULL REFERENCES users(open_id) ON DELETE CASCADE,
-  access_token        TEXT NOT NULL,
-  refresh_token       TEXT NOT NULL DEFAULT '',
-  token_type          TEXT NOT NULL DEFAULT 'Bearer',
-  expires_at          TIMESTAMPTZ NOT NULL,
-  refresh_expires_at  TIMESTAMPTZ,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-ALTER TABLE auth_sessions
-  ADD COLUMN IF NOT EXISTS oauth_app_key TEXT NOT NULL DEFAULT 'fbif';
-
-CREATE INDEX IF NOT EXISTS idx_auth_sessions_open_id ON auth_sessions(open_id);
-CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at);
-
-CREATE TABLE IF NOT EXISTS saved_configs (
-  id            BIGSERIAL PRIMARY KEY,
-  open_id       TEXT NOT NULL REFERENCES users(open_id) ON DELETE CASCADE,
-  config_name   TEXT NOT NULL,
-  payload_json  TEXT NOT NULL DEFAULT '{}',
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(open_id, config_name)
-);
-
-CREATE INDEX IF NOT EXISTS idx_saved_configs_open_id ON saved_configs(open_id);
-CREATE INDEX IF NOT EXISTS idx_saved_configs_updated_at ON saved_configs(updated_at DESC);
-`;
-
 let pool: pg.Pool | null = null;
 let initPromise: Promise<pg.Pool> | null = null;
+
+const REQUIRED_TABLES = ['users', 'auth_sessions', 'saved_configs', 'schema_migrations'] as const;
+
+type DatabaseReadiness = {
+  ready: boolean;
+  missingTables: string[];
+};
+
+interface Queryable {
+  query<T extends pg.QueryResultRow = pg.QueryResultRow>(
+    queryText: string,
+    values?: unknown[],
+  ): Promise<pg.QueryResult<T>>;
+}
 
 function toIsoString(value: unknown): string {
   if (value instanceof Date) {
@@ -145,7 +116,7 @@ async function initDatabase(): Promise<pg.Pool> {
   initPromise = (async () => {
     const database = pool as pg.Pool;
     await database.query('SELECT 1');
-    await database.query(SCHEMA_SQL);
+    await runMigrations(database);
     return database;
   })().catch(async (error) => {
     initPromise = null;
@@ -157,6 +128,27 @@ async function initDatabase(): Promise<pg.Pool> {
   });
 
   return initPromise;
+}
+
+async function queryDatabaseReadiness(db: Queryable): Promise<DatabaseReadiness> {
+  const { rows } = await db.query<{ table_name: string }>(
+    `SELECT table_name
+     FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_name = ANY($1::text[])`,
+    [[...REQUIRED_TABLES]],
+  );
+  const existing = new Set(rows.map((row) => row.table_name));
+  const missingTables = REQUIRED_TABLES.filter((table) => !existing.has(table));
+  return {
+    ready: missingTables.length === 0,
+    missingTables,
+  };
+}
+
+async function checkDatabaseReady(): Promise<DatabaseReadiness> {
+  const db = await initDatabase();
+  return queryDatabaseReadiness(db);
 }
 
 async function upsertUser(user: {
@@ -332,6 +324,7 @@ async function deleteSavedConfig(openId: string, configId: string): Promise<bool
 
 export {
   initDatabase,
+  checkDatabaseReady,
   upsertUser,
   getUserByOpenId,
   upsertSession,
@@ -346,3 +339,8 @@ export {
 };
 
 export type { UserRow, AuthSessionRow, SavedConfigRow };
+
+export const __test__ = {
+  REQUIRED_TABLES,
+  queryDatabaseReadiness,
+};

@@ -1,12 +1,11 @@
 import './env';
-import axios from 'axios';
 import cors, { CorsOptions } from 'cors';
 import express from 'express';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { FeishuTemplateService, GenerateInput } from './feishu';
+import { FeishuApiError, FeishuTemplateService, GenerateInput } from './feishu';
 import { createDocumentRenderRouter } from './documentRenderApi';
 import { createDocumentRenderBatchRouter } from './documentRenderBatchApi';
 import { createDocumentRenderJobRouter } from './documentRenderJobApi';
@@ -14,8 +13,10 @@ import { createDocumentTemplateRouter } from './documentTemplateApi';
 import { DocumentTemplateService } from './documentTemplateService';
 import { requireDocumentRenderApiKey } from './documentRenderApiKeyGuard';
 import { createMutationOriginGuard } from './browserOriginGuard';
+import { createBitableSidebarAuthGuard } from './bitableSidebarAuth';
 import {
   initDatabase,
+  checkDatabaseReady,
   deleteSessionByToken,
   listSavedConfigs,
   getSavedConfig,
@@ -122,11 +123,52 @@ const enforceDocumentRenderBrowserOrigin = createMutationOriginGuard({
   allowedOrigins: corsAllowedOrigins,
   requireOriginOrReferer: false,
 });
+const requireBitableSidebarAuth = createBitableSidebarAuthGuard();
+const requireCloudDocAccess: express.RequestHandler = async (request, response, next) => {
+  try {
+    const session = await peekSessionForRequest(request);
+    if (session) {
+      next();
+      return;
+    }
+  } catch {
+    // Fall through to the sidebar credential path. A broken cookie must not
+    // block the no-manual-login path in the Feishu sidebar.
+  }
+  return requireBitableSidebarAuth(request, response, next);
+};
 
 function sendInternalError(response: express.Response, context: string, error: unknown): void {
   // eslint-disable-next-line no-console
   console.error(`[${context}]`, error instanceof Error ? error.message : String(error));
   response.status(500).json({ ok: false, error: INTERNAL_ERROR_MESSAGE });
+}
+
+function sendFeishuTemplateError(response: express.Response, context: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes('无法从模板链接中解析') ||
+    normalized.includes('模板文档链接为空') ||
+    normalized.includes('field validation failed')
+  ) {
+    response.status(400).json({ ok: false, error: '无效的飞书云文档链接。' });
+    return;
+  }
+
+  if (
+    error instanceof FeishuApiError &&
+    (
+      normalized.includes('forbidden') ||
+      normalized.includes('permission') ||
+      normalized.includes('无权')
+    )
+  ) {
+    response.status(403).json({ ok: false, error: '应用暂无权限读取该模板，请确认模板已授权给当前飞书应用。' });
+    return;
+  }
+
+  sendInternalError(response, context, error);
 }
 
 function parsePayload(payloadJson: string): Record<string, unknown> {
@@ -271,70 +313,6 @@ function extractDocumentIdFromUrl(input: string): string {
     if (match?.[1]) return match[1];
   }
   return '';
-}
-
-class TemplateReadAccessError extends Error {
-  constructor() {
-    super('当前账号无权读取模板文档，或模板链接无效。');
-  }
-}
-
-function throwIfFeishuReadDenied(body: { code?: number; msg?: string }): void {
-  if (typeof body.code === 'number' && body.code !== 0) {
-    throw new TemplateReadAccessError();
-  }
-}
-
-async function readTemplateByUserToken(templateUrl: string, userAccessToken: string): Promise<{ documentId: string; templateTitle: string; content: string }> {
-  const documentId = extractDocumentIdFromUrl(templateUrl);
-  if (!documentId) {
-    throw new TemplateReadAccessError();
-  }
-
-  try {
-    const [docInfoResp, rawResp] = await Promise.all([
-      axios.get(`https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}`, {
-        headers: { Authorization: `Bearer ${userAccessToken}` },
-        timeout: 20000,
-      }),
-      axios.get(`https://open.feishu.cn/open-apis/docx/v1/documents/${documentId}/raw_content`, {
-        headers: { Authorization: `Bearer ${userAccessToken}` },
-        timeout: 20000,
-      }),
-    ]);
-
-    const docInfoBody = docInfoResp.data as { code?: number; msg?: string; data?: { document?: { title?: string } } };
-    throwIfFeishuReadDenied(docInfoBody);
-
-    const rawBody = rawResp.data as { code?: number; msg?: string; data?: { content?: string } };
-    throwIfFeishuReadDenied(rawBody);
-
-    return {
-      documentId,
-      templateTitle: docInfoBody.data?.document?.title?.trim() || '模板文档',
-      content: rawBody.data?.content ?? '',
-    };
-  } catch (error) {
-    if (error instanceof TemplateReadAccessError) {
-      throw error;
-    }
-    if (axios.isAxiosError(error)) {
-      throw new TemplateReadAccessError();
-    }
-    throw error;
-  }
-}
-
-async function extractTemplateVariablesByUserToken(templateUrl: string, userAccessToken: string): Promise<{ documentId: string; templateTitle: string; variables: string[]; }> {
-  const { documentId, templateTitle, content } = await readTemplateByUserToken(templateUrl, userAccessToken);
-  const matches = content.match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
-  const variables = Array.from(new Set(matches.map((m) => m.replace(/^\{\{\s*/, '').replace(/\s*\}\}$/, '').trim()).filter(Boolean)));
-
-  return {
-    documentId,
-    templateTitle,
-    variables,
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -628,15 +606,40 @@ app.post('/api/configs', async (request, response) => {
   }
 });
 
-app.get('/api/health', (_request, response) => {
+app.get('/api/health', async (_request, response) => {
+  let databaseReady = false;
+  let missingTables: string[] = [];
+
+  if (hasDatabaseUrl) {
+    try {
+      const readiness = await checkDatabaseReady();
+      databaseReady = readiness.ready;
+      missingTables = readiness.missingTables;
+    } catch (error) {
+      console.error('[health] database readiness check failed:', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  if (hasDatabaseUrl && !databaseReady) {
+    response.status(500).json({
+      ok: false,
+      configured: hasCredential,
+      databaseConfigured: hasDatabaseUrl,
+      databaseReady,
+      missingTables,
+    });
+    return;
+  }
+
   response.json({
     ok: true,
     configured: hasCredential,
-    databaseConfigured: hasDatabaseUrl
+    databaseConfigured: hasDatabaseUrl,
+    databaseReady,
   });
 });
 
-app.post('/api/template/variables', async (request, response) => {
+app.post('/api/template/variables', requireCloudDocAccess, async (request, response) => {
   try {
     if (!feishuService) {
       response.status(500).json({
@@ -645,9 +648,6 @@ app.post('/api/template/variables', async (request, response) => {
       });
       return;
     }
-    const ctx = await requireAuth(request, response);
-    if (!ctx) return;
-
     const parsed = extractVariablesSchema.safeParse(request.body);
     if (!parsed.success) {
       response.status(400).json({
@@ -656,17 +656,13 @@ app.post('/api/template/variables', async (request, response) => {
       });
       return;
     }
-    const result = await extractTemplateVariablesByUserToken(parsed.data.templateUrl, ctx.accessToken);
+    const result = await feishuService.extractTemplateVariables(parsed.data.templateUrl);
     response.json({
       ok: true,
       ...result
     });
   } catch (error) {
-    if (error instanceof TemplateReadAccessError) {
-      response.status(403).json({ ok: false, error: error.message });
-      return;
-    }
-    sendInternalError(response, 'extract-template-variables', error);
+    sendFeishuTemplateError(response, 'extract-template-variables', error);
   }
 });
 
@@ -705,7 +701,7 @@ app.get('/api/users/search', async (request, response) => {
   }
 });
 
-app.post('/api/documents/generate', async (request, response) => {
+app.post('/api/documents/generate', requireCloudDocAccess, async (request, response) => {
   try {
     if (!feishuService) {
       response.status(500).json({
@@ -723,25 +719,12 @@ app.post('/api/documents/generate', async (request, response) => {
       return;
     }
 
-    const ctx = await requireAuth(request, response);
-    if (!ctx) return;
-
-    try {
-      await readTemplateByUserToken(parsed.data.templateUrl, ctx.accessToken);
-    } catch (error) {
-      if (error instanceof TemplateReadAccessError) {
-        response.status(403).json({ ok: false, error: error.message });
-        return;
-      }
-      throw error;
-    }
-
     const payload: GenerateInput = {
       templateUrl: parsed.data.templateUrl,
       records: parsed.data.records,
-      permissionMode: parsed.data.options?.permissionMode ?? 'tenant_readable',
-      ownerTransfer: parsed.data.options?.ownerTransferEnabled === false ? undefined : parsed.data.options?.ownerTransfer,
-      collaborators: parsed.data.options?.collaborators
+      permissionMode: parsed.data.options?.permissionMode === 'closed' ? 'closed' : 'tenant_readable',
+      ownerTransfer: undefined,
+      collaborators: undefined
     };
     const results = await feishuService.generateDocuments(payload);
     response.json({
@@ -749,7 +732,7 @@ app.post('/api/documents/generate', async (request, response) => {
       results
     });
   } catch (error) {
-    sendInternalError(response, 'generate-documents', error);
+    sendFeishuTemplateError(response, 'generate-documents', error);
   }
 });
 

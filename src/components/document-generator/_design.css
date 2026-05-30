@@ -819,7 +819,12 @@ button { font: inherit; color: inherit; }
   grid-template-columns: 1fr 1fr;
   gap: 12px;
 }
+.tcard-shell {
+  position: relative;
+  min-width: 0;
+}
 .tcard {
+  width: 100%;
   text-align: left;
   background: #fff;
   border: 1px solid var(--bd-2);
@@ -844,7 +849,30 @@ button { font: inherit; color: inherit; }
 .tcard-name {
   font-size: 13px; font-weight: 500; color: var(--txt-1);
   margin-top: 8px;
+  padding-right: 22px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.template-copy-btn {
+  width: 24px; height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--txt-3);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.template-copy-btn:hover {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.template-copy-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.tcard-copy {
+  position: absolute;
+  right: 7px;
+  bottom: 22px;
 }
 .tcard-meta {
   font-size: 11.5px; color: var(--txt-3);
@@ -1141,6 +1169,9 @@ button { font: inherit; color: inherit; }
 .ghost-link:hover { background: var(--accent-soft); }
 
 /* Template hero row */
+.tpl-row-shell {
+  position: relative;
+}
 .tpl-row {
   width: 100%;
   display: flex; align-items: center; gap: 12px;
@@ -1155,9 +1186,19 @@ button { font: inherit; color: inherit; }
 .tpl-row:hover { border-color: var(--accent); box-shadow: 0 2px 10px rgba(43,95,237,.08); }
 .tpl-row-thumb { width: 40px; height: 48px; flex-shrink: 0; }
 .tpl-row-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.tpl-name-line {
+  display: flex; align-items: center;
+  min-width: 0;
+  padding-right: 28px;
+}
 .tpl-row-name { font-size: 14px; font-weight: 600; color: var(--txt-1);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tpl-row-meta { font-size: 11.5px; color: var(--txt-3); display: flex; align-items: center; gap: 6px; }
+.tpl-row-copy {
+  position: absolute;
+  top: 24px;
+  right: 62px;
+}
 .tpl-row-action {
   display: inline-flex; align-items: center; gap: 2px;
   font-size: 12px; color: var(--txt-3);
@@ -1521,6 +1562,42 @@ button { font: inherit; color: inherit; }
   }
   .tpl-row-action {
     padding: 4px 6px;
+  }
+  .tpl-row-copy {
+    right: 54px;
+  }
+  .mrow {
+    grid-template-columns: minmax(68px, 27%) minmax(0, 1fr);
+    gap: 8px;
+  }
+  .ftr {
+    gap: 8px;
+    padding: 10px 10px;
+  }
+  .btn-primary {
+    min-width: 86px;
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .doc-kind-switch {
+    min-width: 136px;
+    margin-left: 6px;
+    margin-right: 4px;
+  }
+  .hdr-mode-row .doc-kind-switch {
+    width: 218px;
+    margin: 0;
+  }
+  .doc-kind-option {
+    padding-left: 7px;
+    padding-right: 7px;
+    font-size: 11.5px;
+  }
+  .cloud-url-row {
+    flex-direction: column;
+  }
+  .cloud-extract-btn {
+    width: 100%;
   }
 }
 

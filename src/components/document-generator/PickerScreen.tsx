@@ -1,6 +1,7 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Icon } from './icons';
-import type { Template } from './types';
+import { copyText } from './copyText';
+import type { Template, TemplateThumbnail } from './types';
 
 interface PickerScreenProps {
   templates: Template[];
@@ -99,13 +100,26 @@ export function PickerScreen({
         ) : (
           <div className="picker-grid">
             {list.map((t) => (
-              <TemplateCard
-                key={t.id}
-                t={t}
-                selected={t.id === selectedId}
-                accent={accent}
-                onClick={() => setSelectedId(t.id)}
-              />
+              <div className="tcard-shell" key={t.id}>
+                <TemplateCard
+                  t={t}
+                  selected={t.id === selectedId}
+                  accent={accent}
+                  onClick={() => setSelectedId(t.id)}
+                />
+                <button
+                  className="template-copy-btn tcard-copy"
+                  type="button"
+                  title={`复制模板名称：${t.name}`}
+                  aria-label={`复制模板名称：${t.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void copyText(t.name);
+                  }}
+                >
+                  <Icon.Copy />
+                </button>
+              </div>
             ))}
           </div>
         )}
@@ -142,6 +156,7 @@ function TemplateCard({ t, selected, accent, onClick }: TemplateCardProps) {
     <button
       type="button"
       className={'tcard' + (selected ? ' tcard-on' : '')}
+      title={t.name}
       onClick={onClick}
       style={
         selected
@@ -157,7 +172,7 @@ function TemplateCard({ t, selected, accent, onClick }: TemplateCardProps) {
           </span>
         )}
       </div>
-      <div className="tcard-name">{t.name}</div>
+      <div className="tcard-name" title={t.name}>{t.name}</div>
       <div className="tcard-meta">
         <span>{t.varCount} 变量</span>
         <span className="dot-sep" />
@@ -168,57 +183,88 @@ function TemplateCard({ t, selected, accent, onClick }: TemplateCardProps) {
 }
 
 function TemplateThumb({ t }: { t: Template }) {
-  const variant = t.id.charCodeAt(t.id.length - 1) % 4;
+  const thumbnail = t.thumbnail || buildFallbackThumbnail(t);
+  const lines = thumbnail.lines.length > 0 ? thumbnail.lines : buildFallbackThumbnail(t).lines;
+  const titleIndex = Math.max(0, lines.findIndex((line) => line.role === 'title'));
+  const title = lines[titleIndex] || lines[0];
+  const bodyLines = lines.filter((_line, index) => index !== titleIndex).slice(0, 5);
+  const variableNames = thumbnail.variableNames.slice(0, 3);
+
   return (
     <svg viewBox="0 0 120 88" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
       <rect x="14" y="6" width="92" height="76" rx="3" fill="#fff" />
-      {variant === 0 && (
+      <rect x="14" y="6" width="92" height="76" rx="3" fill="none" stroke="#ebeef3" strokeWidth="1" />
+      {thumbnail.hasImagePlaceholders && (
         <>
-          <rect x="22" y="14" width="44" height="5" rx="1.5" fill="#cfd3da" />
-          <rect x="22" y="24" width="76" height="2.5" rx="1" fill="#e3e6ec" />
-          <rect x="22" y="30" width="68" height="2.5" rx="1" fill="#e3e6ec" />
-          <rect x="22" y="36" width="74" height="2.5" rx="1" fill="#e3e6ec" />
-          <rect x="22" y="42" width="40" height="2.5" rx="1" fill="#e3e6ec" />
-          <rect x="22" y="52" width="76" height="2.5" rx="1" fill="#e3e6ec" />
-          <rect x="22" y="58" width="62" height="2.5" rx="1" fill="#e3e6ec" />
-          <rect x="22" y="68" width="30" height="6" rx="1" fill="#dbdfe6" />
-          <rect x="56" y="68" width="20" height="6" rx="1" fill="#dbdfe6" />
+          <rect x="24" y="13" width="18" height="14" rx="2" fill="#edf2ff" stroke="#d7e0ff" strokeWidth="0.8" />
+          <circle cx="31" cy="19" r="2.2" fill="#c3cdea" />
+          <path d="M25.5 25 L31.5 20 L36 24 L40.5 18.8 L40.5 25 Z" fill="#d7def4" />
         </>
       )}
-      {variant === 1 && (
-        <>
-          <circle cx="60" cy="22" r="10" fill="#dadde3" />
-          <rect x="36" y="38" width="48" height="3" rx="1.2" fill="#cfd3da" />
-          <rect x="32" y="46" width="56" height="2" rx="1" fill="#e3e6ec" />
-          <rect x="28" y="54" width="64" height="2" rx="1" fill="#e3e6ec" />
-          <rect x="32" y="60" width="56" height="2" rx="1" fill="#e3e6ec" />
-          <rect x="40" y="68" width="40" height="2" rx="1" fill="#e3e6ec" />
-        </>
-      )}
-      {variant === 2 && (
-        <>
-          <rect x="22" y="14" width="38" height="4" rx="1.2" fill="#cfd3da" />
-          {[24, 32, 40, 48, 56, 64].map((y, i) => (
-            <Fragment key={i}>
-              <rect x="22" y={y} width="76" height="0.8" fill="#dfe2e8" />
-              <rect x="22" y={y + 2.5} width="20" height="2" rx="0.8" fill="#e7eaef" />
-              <rect x="48" y={y + 2.5} width="20" height="2" rx="0.8" fill="#e7eaef" />
-              <rect x="74" y={y + 2.5} width="20" height="2" rx="0.8" fill="#e7eaef" />
-            </Fragment>
-          ))}
-        </>
-      )}
-      {variant === 3 && (
-        <>
-          <rect x="38" y="14" width="44" height="4" rx="1.2" fill="#cfd3da" />
-          <rect x="46" y="24" width="28" height="2" rx="1" fill="#e3e6ec" />
-          <rect x="28" y="36" width="64" height="2.2" rx="1" fill="#e3e6ec" />
-          <rect x="24" y="44" width="72" height="2.2" rx="1" fill="#e3e6ec" />
-          <rect x="32" y="52" width="56" height="2.2" rx="1" fill="#e3e6ec" />
-          <rect x="60" y="66" width="22" height="8" rx="1" fill="#e0e3e9" />
-          <circle cx="36" cy="70" r="6" fill="none" stroke="#dadde3" strokeWidth="1.2" />
-        </>
-      )}
+      <text
+        x="60"
+        y={thumbnail.hasImagePlaceholders ? 23 : 19}
+        textAnchor="middle"
+        fontSize="5.2"
+        fontWeight="600"
+        fill="#9aa3af"
+      >
+        {truncateSvgText(title?.text || t.name, 14)}
+      </text>
+      {(bodyLines.length > 0 ? bodyLines : lines.slice(0, 5)).map((line, index) => {
+        const y = 34 + index * 7;
+        const width = lineWidth(line.text, index);
+        return (
+          <rect
+            key={`${line.text}-${index}`}
+            x={(120 - width) / 2}
+            y={y}
+            width={width}
+            height="2.4"
+            rx="1.2"
+            fill={index === 0 ? '#d6dbe3' : '#e5e8ed'}
+          />
+        );
+      })}
+      {variableNames.map((name, index) => {
+        const width = Math.min(26, Math.max(13, name.length * 3.3 + 8));
+        const x = 22 + index * 25;
+        return (
+          <rect
+            key={name}
+            x={x}
+            y="69"
+            width={width}
+            height="6"
+            rx="1.5"
+            fill={index === 0 ? '#dfe6f8' : '#e2e6ec'}
+          />
+        );
+      })}
     </svg>
   );
+}
+
+function buildFallbackThumbnail(t: Template): TemplateThumbnail {
+  const variableNames = (t.variables || []).map((variable) => variable.name).filter(Boolean).slice(0, 6);
+  return {
+    kind: 'docx-outline',
+    pageRatio: 1.414,
+    lines: [
+      { text: t.name, role: 'title' },
+      ...variableNames.slice(0, 4).map((text) => ({ text, role: 'body' as const })),
+    ],
+    variableNames,
+    hasImagePlaceholders: Boolean(t.variables?.some((variable) => variable.kind === 'image')),
+  };
+}
+
+function truncateSvgText(input: string, maxLength: number): string {
+  return input.length > maxLength ? `${input.slice(0, maxLength - 3)}...` : input;
+}
+
+function lineWidth(input: string, index: number): number {
+  const base = Math.min(76, Math.max(30, input.length * 4.2));
+  const taper = index % 3 === 2 ? 12 : index % 3 === 1 ? 6 : 0;
+  return Math.max(26, base - taper);
 }

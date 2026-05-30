@@ -3,6 +3,7 @@ import path from 'node:path';
 import { DOCX_CONTENT_TYPE, ensureDocxExtension, sanitizeFileName } from './documentRenderFile';
 import { UserFacingError } from './documentRenderStorageErrors';
 import { downloadTemplateDocx, renderDocx } from './documentRenderApi';
+import { isImagePlaceholderName } from './documentRenderImages';
 import { convertCommentAnnotationsToTemplate } from './documentTemplateAnnotations';
 import { TemplateObjectNotFoundError, createConfiguredTemplateObjectStore, type TemplateObjectStore } from './documentTemplateStorage';
 
@@ -19,7 +20,21 @@ export type DocumentTemplateVersion = {
   sha256: string;
   size: number;
   variables: string[];
+  thumbnail?: DocumentTemplateThumbnail;
   createdAt: string;
+};
+
+export type DocumentTemplateThumbnailLine = {
+  text: string;
+  role: 'title' | 'body';
+};
+
+export type DocumentTemplateThumbnail = {
+  kind: 'docx-outline';
+  pageRatio: number;
+  lines: DocumentTemplateThumbnailLine[];
+  variableNames: string[];
+  hasImagePlaceholders: boolean;
 };
 
 export type DocumentTemplateRecord = {
@@ -55,6 +70,7 @@ export type DocumentTemplateIndexItem = {
   activeVersionId: string;
   versionCount: number;
   variables: string[];
+  thumbnail?: DocumentTemplateThumbnail;
   createdAt: string;
   updatedAt: string;
   deletedAt?: string;
@@ -148,7 +164,57 @@ function decodeUploadedTemplate(input: CreateDocumentTemplateInput | UpdateDocum
 function publicTemplate(record: DocumentTemplateRecord): PublicDocumentTemplateRecord {
   return {
     ...record,
-    versions: record.versions.map(({ sourceUrl: _sourceUrl, ...version }) => ({ ...version })),
+    versions: record.versions.map(({ sourceUrl: _sourceUrl, ...version }) => ({
+      ...version,
+      thumbnail: version.thumbnail || buildTemplateThumbnail(record.name, version.variables),
+    })),
+  };
+}
+
+function stripImagePrefix(input: string): string {
+  return input.trim().replace(/^(image:|图片:)/i, '').trim();
+}
+
+function normalizeThumbnailText(input: string): string {
+  return input
+    .replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_match, rawName: string) => stripImagePrefix(rawName))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function truncateText(input: string, maxLength: number): string {
+  return input.length > maxLength ? `${input.slice(0, maxLength - 3)}...` : input;
+}
+
+function buildTemplateThumbnail(previewText: string, variables: string[]): DocumentTemplateThumbnail {
+  const lines = previewText
+    .split(/\r?\n/)
+    .map((line) => truncateText(normalizeThumbnailText(line), 42))
+    .filter(Boolean)
+    .slice(0, 8)
+    .map((text, index): DocumentTemplateThumbnailLine => ({
+      text,
+      role: index === 0 && text.length <= 24 ? 'title' : 'body',
+    }));
+  const variableNames = variables
+    .filter((name) => !isImagePlaceholderName(name))
+    .map(stripImagePrefix)
+    .filter(Boolean)
+    .slice(0, 6);
+
+  return {
+    kind: 'docx-outline',
+    pageRatio: 1.414,
+    lines: lines.length > 0 ? lines : variableNames.slice(0, 3).map((text) => ({ text, role: 'body' })),
+    variableNames,
+    hasImagePlaceholders: variables.some(isImagePlaceholderName),
+  };
+}
+
+function indexItemWithThumbnail(item: DocumentTemplateIndexItem): DocumentTemplateIndexItem {
+  return {
+    ...item,
+    thumbnail: item.thumbnail || buildTemplateThumbnail(item.name, item.variables || []),
   };
 }
 
@@ -173,6 +239,7 @@ export class DocumentTemplateService {
     const index = await this.readIndex();
     return index
       .filter((item) => options.includeDeleted || item.status !== 'deleted')
+      .map(indexItemWithThumbnail)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
@@ -283,6 +350,7 @@ export class DocumentTemplateService {
     const annotated = await convertCommentAnnotationsToTemplate(downloadedBuffer);
     const buffer = annotated.buffer;
     const rendered = await renderDocx(buffer, {});
+    const variables = annotated.variables.length > 0 ? annotated.variables : rendered.found;
     const fileName = ensureDocxExtension(sanitizeFileName(input.fileName || input.name || '模板.docx', '模板.docx'));
     return {
       versionId: buildVersionId(templateId, versionNumber),
@@ -292,7 +360,8 @@ export class DocumentTemplateService {
       sourceUrl: sourceUrl || 'uploaded',
       sha256: sha256(buffer),
       size: buffer.length,
-      variables: annotated.variables.length > 0 ? annotated.variables : rendered.found,
+      variables,
+      thumbnail: buildTemplateThumbnail(rendered.previewText, variables),
       createdAt: new Date().toISOString(),
     };
   }
@@ -319,6 +388,7 @@ export class DocumentTemplateService {
       activeVersionId: record.activeVersionId,
       versionCount: record.versions.length,
       variables: activeVersion?.variables || [],
+      thumbnail: activeVersion?.thumbnail || buildTemplateThumbnail(record.name, activeVersion?.variables || []),
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
       deletedAt: record.deletedAt,

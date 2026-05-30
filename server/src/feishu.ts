@@ -227,7 +227,7 @@ interface FeishuClientOptions {
   appSecret: string;
 }
 
-class FeishuApiError extends Error {
+export class FeishuApiError extends Error {
   code?: number;
   status?: number;
   logId?: string;

@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FBIF 飞书边栏插件项目结构体检报告</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #647083;
+      --line: #dfe5ee;
+      --paper: #ffffff;
+      --bg: #f5f7fb;
+      --blue: #2457d6;
+      --green: #16825d;
+      --orange: #b85b16;
+      --red: #c43b38;
+      --purple: #6653c6;
+      --soft-blue: #eaf0ff;
+      --soft-green: #e7f6ef;
+      --soft-orange: #fff1e5;
+      --soft-red: #ffe9e8;
+      --soft-purple: #f0edff;
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.65;
+      font-size: 15px;
+    }
+    header {
+      background: #101827;
+      color: white;
+      padding: 38px 22px 32px;
+    }
+    .wrap {
+      max-width: 1120px;
+      margin: 0 auto;
+    }
+    .eyebrow {
+      color: #a9b7d0;
+      font-size: 13px;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: clamp(28px, 5vw, 46px);
+      line-height: 1.18;
+    }
+    .lead {
+      max-width: 860px;
+      margin: 0;
+      color: #d9e2f4;
+      font-size: 18px;
+    }
+    main {
+      padding: 24px 22px 64px;
+    }
+    section {
+      margin: 22px 0;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 22px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, .05);
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 24px;
+      line-height: 1.3;
+    }
+    h3 {
+      margin: 18px 0 8px;
+      font-size: 17px;
+    }
+    p { margin: 8px 0; }
+    code {
+      padding: 2px 5px;
+      border-radius: 5px;
+      background: #eef2f7;
+      color: #263448;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 14px;
+    }
+    .card {
+      grid-column: span 4;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px;
+      background: #fbfcff;
+    }
+    .card h3 { margin-top: 0; }
+    .span-6 { grid-column: span 6; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+    .pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      margin: 2px 4px 2px 0;
+      border: 1px solid transparent;
+    }
+    .ok { color: var(--green); background: var(--soft-green); border-color: #b9e6d1; }
+    .warn { color: var(--orange); background: var(--soft-orange); border-color: #ffd2aa; }
+    .bad { color: var(--red); background: var(--soft-red); border-color: #ffc4c0; }
+    .info { color: var(--blue); background: var(--soft-blue); border-color: #c8d6ff; }
+    .purple { color: var(--purple); background: var(--soft-purple); border-color: #d8d1ff; }
+    .score {
+      display: grid;
+      grid-template-columns: 150px 1fr;
+      gap: 18px;
+      align-items: center;
+      margin-top: 8px;
+    }
+    .score-ring {
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at center, white 0 53%, transparent 54%),
+        conic-gradient(var(--green) 0 82%, #e4e9f1 82% 100%);
+      display: grid;
+      place-items: center;
+      color: var(--green);
+      font-size: 34px;
+      font-weight: 800;
+      border: 1px solid var(--line);
+    }
+    .table-wrap { overflow-x: auto; margin-top: 10px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 9px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f0f4fa;
+      color: #29384f;
+      white-space: nowrap;
+    }
+    .note {
+      border-left: 4px solid var(--blue);
+      background: #f7faff;
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin-top: 12px;
+    }
+    .danger {
+      border-left-color: var(--red);
+      background: #fff7f6;
+    }
+    .metaphor {
+      background: #101827;
+      color: #f8fbff;
+      border-color: #101827;
+    }
+    .metaphor h2, .metaphor h3 { color: white; }
+    .metaphor .muted { color: #b9c4d7; }
+    .muted { color: var(--muted); }
+    .flow {
+      width: 100%;
+      min-height: 300px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fbfdff;
+      margin-top: 12px;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .tree {
+      margin: 0;
+      padding: 14px;
+      background: #0f1724;
+      color: #d8e2f1;
+      border-radius: 10px;
+      overflow-x: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.65;
+    }
+    .risk-list {
+      display: grid;
+      gap: 12px;
+    }
+    .risk {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 13px 14px;
+      background: #fff;
+    }
+    .risk strong { display: block; margin-bottom: 4px; }
+    .footer {
+      text-align: center;
+      color: var(--muted);
+      margin-top: 28px;
+      font-size: 13px;
+    }
+    @media (max-width: 860px) {
+      .card, .span-6, .span-8 { grid-column: span 12; }
+      .score { grid-template-columns: 1fr; }
+      .score-ring { width: 120px; height: 120px; }
+      section { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <div class="eyebrow">项目结构体检报告 · 2026-05-13</div>
+      <h1>FBIF 飞书边栏插件：从“柜台工具”走向“文档生成工厂”</h1>
+      <p class="lead">我检查了本地代码、GitHub 远端、部署脚本、Docker 配置、数据库建表代码和 API 文档。结论：项目主干方向是对的，测试基础不错；报告中的数据库目录、迁移机制、备份说明和过期文档问题已完成首轮修复。</p>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+      <section>
+        <h2>一句话结论</h2>
+        <div class="score">
+          <div class="score-ring">82</div>
+          <div>
+            <p><strong>整体健康度：82 / 100。</strong> 这不是“烂摊子”，更像是一套已经能营业的文档复印店：柜台、账本、仓库、出货流程都有了；本次已把账本位置、账本改版规则和备份工具补上，剩下主要是任务持久化、安全加固和大文件治理。</p>
+            <p>
+              <span class="pill ok">测试 176/176 通过</span>
+              <span class="pill ok">构建通过</span>
+              <span class="pill ok">密钥扫描通过</span>
+              <span class="pill warn">服务器 SSH 未连上</span>
+              <span class="pill ok">PostgreSQL 数据目录风险已修复</span>
+            </p>
+          </div>
+        </div>
+        <div class="note">
+          <strong>已执行的关键修复：</strong>Docker 本地默认改为 named volume；生产部署脚本和 GitHub Actions 会自动写入稳定的 <code>POSTGRES_DATA_DIR</code>，并兼容旧 release 目录里的 PostgreSQL 数据迁移。
+        </div>
+      </section>
+
+      <section class="metaphor">
+        <h2>一针见血的比喻：这是一家文档复印店</h2>
+        <div class="grid">
+          <div class="card span-6">
+            <h3>飞书边栏 = 前台柜台</h3>
+            <p class="muted">用户在多维表格旁边点按钮、选模板、配字段、开始生成。它负责收单和展示进度，不应该自己私藏核心逻辑。</p>
+          </div>
+          <div class="card span-6">
+            <h3>Express 后端 = 车间师傅</h3>
+            <p class="muted">真正干活的是后端：登录、读飞书模板、替换 Docx 变量、生成文件、写回链接。前端只是把需求交给后端。</p>
+          </div>
+          <div class="card span-6">
+            <h3>PostgreSQL = 账本</h3>
+            <p class="muted">记谁登录过、会话 token、用户保存过哪些模板配置。账本不能随 release 目录到处搬。</p>
+          </div>
+          <div class="card span-6">
+            <h3>TOS / OSS = 仓库</h3>
+            <p class="muted">原始 Docx 模板和生成后的 Docx 文件不适合塞进数据库，而是放对象存储；数据库只记索引和配置。</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>我实际检查了什么</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>来源</th><th>检查结果</th><th>说明</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>本地仓库</td>
+                <td><span class="pill ok">已检查</span></td>
+                <td>当前路径：<code>/Users/simba/Agentic-Engineering/飞书边栏插件-云文档变量批量生成</code>。</td>
+              </tr>
+              <tr>
+                <td>GitHub</td>
+                <td><span class="pill ok">已检查</span></td>
+                <td>仓库：<code>garyzheng0714-lang/larkdocvar-login</code>，公开仓库，默认分支 <code>main</code>，主语言 TypeScript，远端文件约 151 个。</td>
+              </tr>
+              <tr>
+                <td>最近提交</td>
+                <td><span class="pill info">2026-05-13 有活跃提交</span></td>
+                <td>最近提交包括 TOS 前缀、字段固定值、侧边栏宽度、登录和写回等修复，说明项目还在快速迭代。</td>
+              </tr>
+              <tr>
+                <td>生产服务器</td>
+                <td><span class="pill warn">未能进入</span></td>
+                <td>按部署脚本默认地址 <code>121.40.214.5</code> 只读探测，SSH 返回 <code>Permission denied (publickey)</code>。当前报告不能证明线上容器和线上数据库真实状态。</td>
+              </tr>
+              <tr>
+                <td>验证命令</td>
+                <td><span class="pill ok">通过</span></td>
+                <td><code>npm test</code> 176 项通过；<code>npm run build</code> 通过；<code>npm run verify:secrets</code> 通过。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>1. 当前项目结构和框架</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>前端</h3>
+            <p><code>src/components/document-generator/</code></p>
+            <p>React + TypeScript + Vite。负责飞书多维表格边栏 UI：模板选择、字段映射、生成进度、写回附件。</p>
+          </div>
+          <div class="card">
+            <h3>后端</h3>
+            <p><code>server/src/</code></p>
+            <p>Express + TypeScript。负责 OAuth 登录、飞书 API、Docx 模板 API、批量生成 API、数据库访问。</p>
+          </div>
+          <div class="card">
+            <h3>部署</h3>
+            <p><code>Dockerfile</code> + <code>docker-compose.yml</code></p>
+            <p>一个应用容器 + 一个 PostgreSQL 容器。GitHub Actions 推送 main 后可自动部署。</p>
+          </div>
+        </div>
+        <pre class="tree">项目根目录
+├── src/                          前端边栏插件
+│   └── components/document-generator/
+│       ├── DocumentGeneratorApp.tsx   总控页面
+│       ├── PrimaryScreen.tsx          主操作页
+│       ├── PickerScreen.tsx           模板选择页
+│       ├── NewTemplateScreen.tsx      新建模板页
+│       ├── useBitable.ts              读取飞书多维表格字段/记录
+│       ├── useTemplates.ts            读取后端模板 API
+│       └── useGenerate.ts             批量生成与写回
+├── server/src/                    后端服务
+│   ├── index.ts                   Express 入口和旧云文档路径
+│   ├── auth.ts / oauthRoutes.ts   飞书登录和会话
+│   ├── storage.ts                 PostgreSQL 建表和读写
+│   ├── feishu.ts                  飞书云文档/用户/生成逻辑
+│   ├── documentTemplate*.ts       Docx 模板资产
+│   └── documentRender*.ts         Docx 生成、批量、任务、对象存储
+├── docs/                          API、架构、运维文档
+├── .github/workflows/             GitHub Actions 部署
+├── Dockerfile
+└── docker-compose.yml</pre>
+
+        <svg class="flow" viewBox="0 0 1080 340" role="img" aria-label="系统架构图">
+          <defs>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#607089"></path>
+            </marker>
+          </defs>
+          <rect x="40" y="40" width="190" height="82" rx="12" fill="#eaf0ff" stroke="#9bb4ff"></rect>
+          <text x="135" y="75" text-anchor="middle" font-size="18" font-weight="700" fill="#17356f">飞书多维表格</text>
+          <text x="135" y="102" text-anchor="middle" font-size="13" fill="#52617a">用户原始业务数据</text>
+
+          <rect x="40" y="210" width="190" height="82" rx="12" fill="#e7f6ef" stroke="#9bd8bc"></rect>
+          <text x="135" y="245" text-anchor="middle" font-size="18" font-weight="700" fill="#145d42">React 边栏</text>
+          <text x="135" y="272" text-anchor="middle" font-size="13" fill="#52617a">选择模板/字段映射</text>
+
+          <rect x="330" y="124" width="210" height="92" rx="12" fill="#fff1e5" stroke="#ffc18b"></rect>
+          <text x="435" y="160" text-anchor="middle" font-size="18" font-weight="700" fill="#7a360e">Express 后端</text>
+          <text x="435" y="187" text-anchor="middle" font-size="13" fill="#52617a">API / OAuth / 生成调度</text>
+
+          <rect x="650" y="34" width="185" height="74" rx="12" fill="#f0edff" stroke="#c7bcff"></rect>
+          <text x="742" y="66" text-anchor="middle" font-size="17" font-weight="700" fill="#47379b">飞书开放平台</text>
+          <text x="742" y="90" text-anchor="middle" font-size="13" fill="#52617a">登录/云文档/用户</text>
+
+          <rect x="650" y="136" width="185" height="74" rx="12" fill="#eaf0ff" stroke="#9bb4ff"></rect>
+          <text x="742" y="168" text-anchor="middle" font-size="17" font-weight="700" fill="#17356f">PostgreSQL</text>
+          <text x="742" y="192" text-anchor="middle" font-size="13" fill="#52617a">用户/会话/配置</text>
+
+          <rect x="650" y="238" width="185" height="74" rx="12" fill="#fff1e5" stroke="#ffc18b"></rect>
+          <text x="742" y="270" text-anchor="middle" font-size="17" font-weight="700" fill="#7a360e">TOS / OSS</text>
+          <text x="742" y="294" text-anchor="middle" font-size="13" fill="#52617a">模板和生成文件</text>
+
+          <rect x="905" y="136" width="135" height="74" rx="12" fill="#ffe9e8" stroke="#ffb8b2"></rect>
+          <text x="972" y="168" text-anchor="middle" font-size="17" font-weight="700" fill="#8a2220">下载链接</text>
+          <text x="972" y="192" text-anchor="middle" font-size="13" fill="#52617a">回写表格附件</text>
+
+          <line x1="135" y1="122" x2="135" y2="210" stroke="#607089" stroke-width="2" marker-end="url(#arrow)"></line>
+          <line x1="230" y1="251" x2="330" y2="184" stroke="#607089" stroke-width="2" marker-end="url(#arrow)"></line>
+          <line x1="540" y1="152" x2="650" y2="76" stroke="#607089" stroke-width="2" marker-end="url(#arrow)"></line>
+          <line x1="540" y1="170" x2="650" y2="170" stroke="#607089" stroke-width="2" marker-end="url(#arrow)"></line>
+          <line x1="540" y1="192" x2="650" y2="270" stroke="#607089" stroke-width="2" marker-end="url(#arrow)"></line>
+          <line x1="835" y1="275" x2="905" y2="180" stroke="#607089" stroke-width="2" marker-end="url(#arrow)"></line>
+          <line x1="905" y1="160" x2="230" y2="82" stroke="#607089" stroke-width="2" stroke-dasharray="6 6" marker-end="url(#arrow)"></line>
+        </svg>
+      </section>
+
+      <section>
+        <h2>2. 框架是否健康</h2>
+        <div class="grid">
+          <div class="card span-6">
+            <h3>健康的地方</h3>
+            <p><span class="pill ok">API 边界清楚</span> Docx API 已经作为底层契约维护，侧边栏开始只消费 API。</p>
+            <p><span class="pill ok">测试覆盖强</span> 后端测试 176 项通过，覆盖生成、批量、对象存储、安全和错误处理。</p>
+            <p><span class="pill ok">部署链路完整</span> 有 Docker、Compose、GitHub Actions、健康检查。</p>
+            <p><span class="pill ok">安全意识较好</span> 有 API Key、Origin 校验、模板 URL 内网拦截、密钥扫描。</p>
+          </div>
+          <div class="card span-6">
+            <h3>不健康或需要补强的地方</h3>
+            <p><span class="pill ok">数据库目录风险已修复</span> 本地用 named volume，生产部署固定到稳定目录。</p>
+            <p><span class="pill ok">迁移系统已补上</span> 表结构进入 <code>server/migrations/</code>，执行记录进入 <code>schema_migrations</code>。</p>
+            <p><span class="pill warn">任务状态存在内存</span> 异步任务服务重启后会消失。</p>
+            <p><span class="pill warn">文件偏大</span> <code>feishu.ts</code> 1533 行、CSS 1477 行，后续维护成本较高。</p>
+          </div>
+        </div>
+        <div class="risk-list">
+          <div class="risk">
+            <strong><span class="pill ok">已修复</span> 固定 PostgreSQL 数据目录</strong>
+            <p>本地 Docker 默认改为 named volume；生产部署脚本会写入 <code>{APP_DIR}/data/postgres</code>，避免每次部署切 release 后“换了一本新账本”。</p>
+          </div>
+          <div class="risk">
+            <strong><span class="pill ok">已修复</span> 引入数据库迁移</strong>
+            <p>新增 <code>server/migrations/001_initial_schema.sql</code> 和 <code>server/src/migrations.ts</code>，服务启动时执行未应用版本并写入 <code>schema_migrations</code>。</p>
+          </div>
+          <div class="risk">
+            <strong><span class="pill warn">P1 建议</span> 会话 token 加密或降敏</strong>
+            <p><code>auth_sessions</code> 里保存飞书 access token 和 refresh token。功能上合理，但安全上应限制数据库访问、缩短生命周期，并考虑加密存储。</p>
+          </div>
+          <div class="risk">
+            <strong><span class="pill warn">P1 建议</span> 异步任务持久化</strong>
+            <p>现在 <code>/api/v1/document-render-jobs</code> 的任务状态在进程内存里。单机短任务可以接受；如果用户希望重启后还能查进度，需要落 PostgreSQL。</p>
+          </div>
+          <div class="risk">
+            <strong><span class="pill warn">P2 建议</span> 模板索引从 JSON 逐步迁到数据库</strong>
+            <p>模板文件放 TOS 是正确的，但 <code>_index.json</code> 在单实例下可以，多实例或高并发时会有覆盖风险。后续模板列表元数据可进 PostgreSQL，TOS 只存文件。</p>
+          </div>
+          <div class="risk">
+            <strong><span class="pill ok">已修复</span> 修正文档里的旧信息</strong>
+            <p>README、架构文档、运维手册和交接文档已改为 PostgreSQL、migration、备份脚本和 <code>src/components/document-generator/</code> 的真实结构。</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>3. 数据怎么存、存在哪里</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>数据类型</th><th>存放位置</th><th>存什么</th><th>我的判断</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>登录用户</td>
+                <td>PostgreSQL 表 <code>users</code></td>
+                <td>飞书 open_id、姓名、邮箱、头像。</td>
+                <td><span class="pill ok">合理</span> 用户基础信息放数据库正确。</td>
+              </tr>
+              <tr>
+                <td>登录会话</td>
+                <td>PostgreSQL 表 <code>auth_sessions</code></td>
+                <td>浏览器 cookie 对应的 session token，以及飞书 access token / refresh token。</td>
+                <td><span class="pill warn">需保护</span> 这是敏感数据，建议加密或至少强化备份和权限。</td>
+              </tr>
+              <tr>
+                <td>用户保存的模板配置</td>
+                <td>PostgreSQL 表 <code>saved_configs</code></td>
+                <td>某个用户在某张表里怎么绑定模板变量、文件名、协作者等配置，存在 <code>payload_json</code>。</td>
+                <td><span class="pill ok">当前可用</span> 但 JSON 字段多后可考虑拆出常查字段。</td>
+              </tr>
+              <tr>
+                <td>原始业务记录</td>
+                <td>飞书多维表格</td>
+                <td>客户名、金额、日期、附件图片等真正的业务数据。</td>
+                <td><span class="pill ok">合理</span> 插件不复制整张业务表，只在生成时读取。</td>
+              </tr>
+              <tr>
+                <td>Docx 模板资产</td>
+                <td>TOS 对象存储，生产必须配置</td>
+                <td><code>templates/_index.json</code>、<code>metadata.json</code>、<code>versions/v001/source.docx</code>。</td>
+                <td><span class="pill ok">方向正确</span> 大文件放对象存储，不塞数据库。</td>
+              </tr>
+              <tr>
+                <td>最终生成的 Docx</td>
+                <td>TOS 或 OSS 对象存储</td>
+                <td>按记录生成出的 Word 文件，返回有有效期的下载链接。</td>
+                <td><span class="pill ok">方向正确</span> 生产不应落本机临时目录。</td>
+              </tr>
+              <tr>
+                <td>异步任务进度</td>
+                <td>当前 Node 进程内存</td>
+                <td>任务 id、进度、结果列表。</td>
+                <td><span class="pill warn">短期可用</span> 重启会丢，后续应持久化。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <svg class="flow" viewBox="0 0 1080 320" role="img" aria-label="数据存储分布图">
+          <defs>
+            <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0 L10 5 L0 10 z" fill="#607089"></path>
+            </marker>
+          </defs>
+          <rect x="40" y="40" width="190" height="86" rx="12" fill="#eaf0ff" stroke="#9bb4ff"></rect>
+          <text x="135" y="75" text-anchor="middle" font-size="17" font-weight="700" fill="#17356f">飞书多维表格</text>
+          <text x="135" y="100" text-anchor="middle" font-size="13" fill="#52617a">原始业务记录</text>
+
+          <rect x="310" y="40" width="190" height="86" rx="12" fill="#e7f6ef" stroke="#9bd8bc"></rect>
+          <text x="405" y="75" text-anchor="middle" font-size="17" font-weight="700" fill="#145d42">PostgreSQL</text>
+          <text x="405" y="100" text-anchor="middle" font-size="13" fill="#52617a">用户 / 会话 / 配置</text>
+
+          <rect x="580" y="40" width="190" height="86" rx="12" fill="#fff1e5" stroke="#ffc18b"></rect>
+          <text x="675" y="75" text-anchor="middle" font-size="17" font-weight="700" fill="#7a360e">TOS 模板仓</text>
+          <text x="675" y="100" text-anchor="middle" font-size="13" fill="#52617a">source.docx / metadata</text>
+
+          <rect x="850" y="40" width="190" height="86" rx="12" fill="#f0edff" stroke="#c7bcff"></rect>
+          <text x="945" y="75" text-anchor="middle" font-size="17" font-weight="700" fill="#47379b">TOS / OSS 成品仓</text>
+          <text x="945" y="100" text-anchor="middle" font-size="13" fill="#52617a">生成 Docx 下载链接</text>
+
+          <rect x="310" y="200" width="460" height="70" rx="12" fill="#ffe9e8" stroke="#ffb8b2"></rect>
+          <text x="540" y="230" text-anchor="middle" font-size="17" font-weight="700" fill="#8a2220">内存里的任务队列</text>
+          <text x="540" y="254" text-anchor="middle" font-size="13" fill="#52617a">适合短任务；服务重启后历史进度消失</text>
+
+          <line x1="230" y1="83" x2="310" y2="83" stroke="#607089" stroke-width="2" marker-end="url(#arrow2)"></line>
+          <line x1="500" y1="83" x2="580" y2="83" stroke="#607089" stroke-width="2" marker-end="url(#arrow2)"></line>
+          <line x1="770" y1="83" x2="850" y2="83" stroke="#607089" stroke-width="2" marker-end="url(#arrow2)"></line>
+          <line x1="540" y1="126" x2="540" y2="200" stroke="#607089" stroke-width="2" marker-end="url(#arrow2)"></line>
+        </svg>
+      </section>
+
+      <section>
+        <h2>4. 数据表结构</h2>
+        <h3>PostgreSQL：真实数据库表</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>表</th><th>字段</th><th>主键 / 约束</th><th>人话解释</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>users</code></td>
+                <td><code>open_id</code>, <code>name</code>, <code>en_name</code>, <code>email</code>, <code>avatar_url</code>, <code>created_at</code>, <code>updated_at</code></td>
+                <td><code>open_id</code> 主键</td>
+                <td>每个飞书用户一本“用户档案”。</td>
+              </tr>
+              <tr>
+                <td><code>auth_sessions</code></td>
+                <td><code>token</code>, <code>oauth_app_key</code>, <code>open_id</code>, <code>access_token</code>, <code>refresh_token</code>, <code>token_type</code>, <code>expires_at</code>, <code>refresh_expires_at</code>, <code>created_at</code>, <code>updated_at</code></td>
+                <td><code>token</code> 主键；<code>open_id</code> 外键到 <code>users</code>；有 open_id 和 expires_at 索引</td>
+                <td>浏览器 cookie 对应的“入场券”，里面还保存飞书访问令牌。</td>
+              </tr>
+              <tr>
+                <td><code>saved_configs</code></td>
+                <td><code>id</code>, <code>open_id</code>, <code>config_name</code>, <code>payload_json</code>, <code>created_at</code>, <code>updated_at</code></td>
+                <td><code>id</code> 主键；<code>open_id</code> 外键；<code>UNIQUE(open_id, config_name)</code>；有 open_id 和 updated_at 索引</td>
+                <td>用户保存过的模板绑定方案。比如“这个模板的客户名称绑定到表格的客户列”。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>对象存储：不是数据库表，但也是核心数据</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>对象</th><th>典型路径</th><th>内容</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>模板索引</td>
+                <td><code>templates/_index.json</code></td>
+                <td>模板列表：templateId、名称、状态、当前版本、变量、缩略图、时间。</td>
+              </tr>
+              <tr>
+                <td>模板详情</td>
+                <td><code>templates/{templateId}/metadata.json</code></td>
+                <td>模板完整记录：版本列表、变量、缩略图、创建人、删除状态等。</td>
+              </tr>
+              <tr>
+                <td>模板源文件</td>
+                <td><code>templates/{templateId}/versions/v001/source.docx</code></td>
+                <td>真正的 Word 模板文件。</td>
+              </tr>
+              <tr>
+                <td>生成文件</td>
+                <td><code>renders/YYYY/MM/DD/{requestId}.docx</code></td>
+                <td>已经替换变量的成品 Word 文件。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>可选飞书多维表格同步表</h3>
+        <p>如果启用 <code>BITABLE_SYNC_ENABLED</code>，后端会把配置同步到一张飞书多维表格。字段包括：</p>
+        <p>
+          <code>user_open_id</code>
+          <code>table_id</code>
+          <code>config_name</code>
+          <code>template_id</code>
+          <code>template_title</code>
+          <code>template_url</code>
+          <code>payload_json</code>
+          <code>created_at</code>
+          <code>updated_at</code>
+        </p>
+      </section>
+
+      <section>
+        <h2>接下来建议怎么做</h2>
+        <div class="grid">
+          <div class="card span-6">
+            <h3>本周就该做</h3>
+            <p>1. 部署一次，确认远端 `.env` 出现稳定的 <code>POSTGRES_DATA_DIR</code>。</p>
+            <p>2. 在服务器上跑一次 <code>npm run backup:postgres</code>，确认备份文件可生成。</p>
+            <p>3. 把备份目录接入定时任务或服务器快照策略。</p>
+          </div>
+          <div class="card span-6">
+            <h3>下一阶段做</h3>
+            <p>1. 把异步任务状态持久化到 PostgreSQL。</p>
+            <p>2. 加密或降敏保存飞书 access token / refresh token。</p>
+            <p>3. 拆分 <code>feishu.ts</code> 和大 CSS 文件，降低维护成本。</p>
+          </div>
+        </div>
+        <div class="note">
+          <strong>给非技术负责人的判断：</strong>项目现在可以继续运营，且“账本位置”和“账本改版规则”已经固定下来。下一步要让排队任务和敏感令牌也进入更稳的生产级管理。
+        </div>
+      </section>
+
+      <div class="footer">
+        报告生成自本地代码、GitHub 元数据、Docker / GitHub Actions 配置和测试结果；未读取或展示任何真实密钥。
+      </div>
+    </div>
+  </main>
+</body>
+</html>

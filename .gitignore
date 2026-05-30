@@ -1,6 +1,7 @@
 node_modules
 dist
 tmp
+backups/
 .DS_Store
 .env
 .env.*

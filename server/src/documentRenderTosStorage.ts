@@ -1,4 +1,5 @@
-import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import { normalizeObjectPrefix, sanitizeObjectRequestId } from './objectStorageKeys';
 import { DOCX_CONTENT_TYPE, buildContentDisposition, ensureDocxExtension, sanitizeFileName } from './documentRenderFile';
 import { UserFacingError } from './documentRenderStorageErrors';
 import type { DocumentRenderStorage, SaveGeneratedDocxInput, SavedGeneratedDocx } from './documentRenderApi';
@@ -51,10 +52,8 @@ export function normalizeTosEndpoint(region: string, endpoint = ''): string {
   return rawEndpoint.replace(/^https?:\/\//, '').replace(/\/+$/, '');
 }
 
-export function normalizeTosPrefix(prefix: string): string {
-  const cleaned = prefix.split(/[\\/]+/).map((item) => item.trim()).filter((item) => item && item !== '.' && item !== '..').join('/');
-  return cleaned ? `${cleaned}/` : '';
-}
+// 前缀归一与 OSS 侧共用同一实现，从中性模块 re-export 保留既有导出名和外部引用。
+export const normalizeTosPrefix = normalizeObjectPrefix;
 
 export function buildTosPrefix(rootPrefix: string, prefix: string): string {
   return `${normalizeTosPrefix(rootPrefix)}${normalizeTosPrefix(prefix)}`;
@@ -182,23 +181,12 @@ export async function deleteTosObject(config: TosStorageConfig, key: string): Pr
   await assertTosResponseOk(response, 'delete');
 }
 
-function sanitizeTosRequestId(input: string): string {
-  const cleaned = input
-    .trim()
-    .slice(0, 256)
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/\.\.+/g, '.')
-    .replace(/^[.-]+|[.-]+$/g, '')
-    .slice(0, 128);
-  return cleaned || randomUUID();
-}
-
 export class TosDocumentRenderStorage implements DocumentRenderStorage {
   constructor(private readonly config: TosStorageConfig) {}
 
   async saveDocx(input: SaveGeneratedDocxInput): Promise<SavedGeneratedDocx> {
     const safeFileName = ensureDocxExtension(sanitizeFileName(input.fileName, '生成文档.docx'));
-    const safeRequestId = sanitizeTosRequestId(input.requestId);
+    const safeRequestId = sanitizeObjectRequestId(input.requestId);
     const objectName = `${this.config.prefix}${formatTosDatePath()}/${safeRequestId}.docx`;
     const contentDisposition = buildContentDisposition(safeFileName);
     const createdAt = new Date().toISOString();

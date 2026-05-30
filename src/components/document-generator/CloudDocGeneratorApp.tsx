@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { FieldType, bitable } from '@lark-base-open/js-sdk';
 import type { ITable } from '@lark-base-open/js-sdk';
 import { Dropdown } from './Dropdown';
+import { findBestMatchedField, stringifyCellValue } from './cloudFieldMapping';
 import { FieldTypeIcon, Icon } from './icons';
 import { GeneratorHeader } from './GeneratorHeader';
 import type { Accent, GeneratorKind, TableField } from './types';
@@ -63,25 +64,6 @@ const ACCENTS: Record<NonNullable<CloudDocGeneratorAppProps['accentKey']>, Accen
 const BATCH_SIZE = 10;
 const AUTO_OUTPUT_FIELD = '__auto_output_field__';
 
-function normalizeName(input: string): string {
-  return input
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '')
-    .replace(/[【】[\]()（）{}<>《》_.\-]/g, '');
-}
-
-function findBestMatchedField(variable: string, fields: TableField[]): TableField | undefined {
-  const normalizedVariable = normalizeName(variable);
-  if (!normalizedVariable) return undefined;
-  const exact = fields.find((field) => normalizeName(field.name) === normalizedVariable);
-  if (exact) return exact;
-  return fields.find((field) => {
-    const normalizedField = normalizeName(field.name);
-    return normalizedField.includes(normalizedVariable) || normalizedVariable.includes(normalizedField);
-  });
-}
-
 function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -108,6 +90,26 @@ async function resolveTable(activeTableId?: string | null): Promise<ITable> {
   return bitable.base.getActiveTable();
 }
 
+async function buildBitableSidebarHeaders(activeTableId?: string | null): Promise<Record<string, string>> {
+  const [selection, baseUserId, tenantKey] = await Promise.all([
+    bitable.base.getSelection().catch(() => null),
+    bitable.bridge.getBaseUserId().catch(() => ''),
+    bitable.bridge.getTenantKey().catch(() => ''),
+  ]);
+  const baseId = selection?.baseId || '';
+  const tableId = activeTableId || selection?.tableId || '';
+  if (!baseId || !tableId) {
+    throw new Error('请在飞书多维表格侧边栏中打开插件后再操作。');
+  }
+  return {
+    'Content-Type': 'application/json',
+    'X-Bitable-Base-Id': baseId,
+    'X-Bitable-Table-Id': tableId,
+    ...(baseUserId ? { 'X-Bitable-Base-User-Id': baseUserId } : {}),
+    ...(tenantKey ? { 'X-Bitable-Tenant-Key': tenantKey } : {}),
+  };
+}
+
 async function getAllRecordIds(table: ITable): Promise<string[]> {
   const ids: string[] = [];
   let pageToken: number | undefined;
@@ -118,20 +120,6 @@ async function getAllRecordIds(table: ITable): Promise<string[]> {
     pageToken = page.pageToken;
   }
   return ids;
-}
-
-function stringifyCellValue(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) return value.map(stringifyCellValue).filter(Boolean).join('');
-  if (typeof value === 'object') {
-    const objectValue = value as Record<string, unknown>;
-    if (typeof objectValue.text === 'string') return objectValue.text;
-    if (typeof objectValue.name === 'string') return objectValue.name;
-    if (typeof objectValue.title === 'string') return objectValue.title;
-  }
-  return String(value);
 }
 
 async function readMappedVariables(
@@ -255,6 +243,7 @@ export function CloudDocGeneratorApp({
     setNotice(null);
     setResults([]);
     try {
+      const sidebarHeaders = demo ? null : await buildBitableSidebarHeaders(activeTableId);
       const payload = demo
         ? {
             ok: true as const,
@@ -265,7 +254,7 @@ export function CloudDocGeneratorApp({
         : await parseJsonResponse<TemplateVariablesResponse>(await fetch('/api/template/variables', {
             method: 'POST',
             credentials: 'include',
-            headers: { 'Content-Type': 'application/json' },
+            headers: sidebarHeaders || { 'Content-Type': 'application/json' },
             body: JSON.stringify({ templateUrl: templateUrl.trim() }),
           }));
 
@@ -289,7 +278,7 @@ export function CloudDocGeneratorApp({
     } finally {
       setExtracting(false);
     }
-  }, [demo, outputFieldId, saveAutoConfig, templateUrl, textFields]);
+  }, [activeTableId, demo, outputFieldId, saveAutoConfig, templateUrl, textFields]);
 
   const ensureOutputField = useCallback(async (table: ITable): Promise<string> => {
     if (outputFieldId !== AUTO_OUTPUT_FIELD) return outputFieldId;
@@ -334,6 +323,7 @@ export function CloudDocGeneratorApp({
       if (targetIds.length === 0) throw new Error(range === 'selected' ? '未检测到选中记录。' : '当前表没有可处理的记录。');
 
       const outputField = await ensureOutputField(table);
+      const sidebarHeaders = await buildBitableSidebarHeaders(activeTableId);
       const generated: GenerateResult[] = [];
       const batches = chunk(targetIds, BATCH_SIZE);
       setProgress({ total: targetIds.length, done: 0, phase: '正在读取表格变量...' });
@@ -349,7 +339,7 @@ export function CloudDocGeneratorApp({
         const payload = await parseJsonResponse<GenerateResponse>(await fetch('/api/documents/generate', {
           method: 'POST',
           credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
+          headers: sidebarHeaders,
           body: JSON.stringify({
             templateUrl: templateUrl.trim(),
             records,

@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   consumeOAuthStateCookie,
   getOAuthStateCookieOptions,
+  resolveSessionTokenCandidatesFromRequest,
   resolveSessionTokenFromRequest,
   setOAuthStateCookie,
 } from './auth';
@@ -57,7 +58,7 @@ test('嵌入式侧边栏 cookie 被拦截时可用请求头携带 session token'
   assert.equal(resolveSessionTokenFromRequest(request as never), 'header-session-token');
 });
 
-test('session token 优先使用 cookie，兼容 Bearer 和 query 兜底', () => {
+test('session token 优先使用 cookie，兼容 Bearer 兜底，但不接受 query token', () => {
   assert.equal(
     resolveSessionTokenFromRequest({
       headers: {
@@ -91,8 +92,27 @@ test('session token 优先使用 cookie，兼容 Bearer 和 query 兜底', () =>
       },
       query: { session_token: 'query-token' },
     } as never),
-    'query-token',
+    '',
   );
+});
+
+test('旧 cookie 存在时仍保留 header session token 作为侧边栏兜底', () => {
+  const request = {
+    headers: {
+      cookie: 'larkdocvar_session=stale-cookie-token',
+      authorization: 'Bearer bearer-token',
+    },
+    header(name: string) {
+      return name.toLowerCase() === 'x-session-token' ? 'fresh-header-token' : '';
+    },
+    query: { session_token: 'query-token' },
+  };
+
+  assert.deepEqual(resolveSessionTokenCandidatesFromRequest(request as never), [
+    'stale-cookie-token',
+    'fresh-header-token',
+    'bearer-token',
+  ]);
 });
 
 test('非 HTTPS 本地环境不会写出浏览器会拒收的 SameSite=None cookie', () => {

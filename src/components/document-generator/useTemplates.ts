@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Template, TemplateVariable } from './types';
+import type { Template, TemplateThumbnail, TemplateVariable } from './types';
 
 interface ServerIndexItem {
   templateId: string;
@@ -8,6 +8,7 @@ interface ServerIndexItem {
   activeVersionId: string;
   versionCount: number;
   variables: string[];
+  thumbnail?: TemplateThumbnail;
   category?: string;
   visibility?: 'private' | 'shared';
   description?: string;
@@ -47,6 +48,7 @@ function toTemplate(item: ServerIndexItem): Template {
     visibility: item.visibility || 'shared',
     kind: 'doc',
     variables,
+    thumbnail: item.thumbnail,
   };
 }
 

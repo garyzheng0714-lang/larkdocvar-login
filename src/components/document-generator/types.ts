@@ -21,6 +21,19 @@ export interface TemplateVariable {
   suggested?: string;
 }
 
+export interface TemplateThumbnailLine {
+  text: string;
+  role: 'title' | 'body';
+}
+
+export interface TemplateThumbnail {
+  kind: 'docx-outline';
+  pageRatio: number;
+  lines: TemplateThumbnailLine[];
+  variableNames: string[];
+  hasImagePlaceholders: boolean;
+}
+
 export interface Template {
   id: string;
   name: string;
@@ -30,6 +43,7 @@ export interface Template {
   visibility?: 'private' | 'shared';
   kind: 'doc' | 'sheet';
   variables?: TemplateVariable[];
+  thumbnail?: TemplateThumbnail;
   hasLogo?: boolean;
 }
 

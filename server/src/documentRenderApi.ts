@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { LookupFunction } from 'node:net';
+import { normalizeObjectPrefix, sanitizeObjectRequestId } from './objectStorageKeys';
 import JSZip from 'jszip';
 import { z } from 'zod';
 import { documentRenderJsonParser } from './documentRenderBodyParser';
@@ -186,22 +187,6 @@ function normalizeOssRegion(region: string): string {
   return region.startsWith('oss-') ? region : `oss-${region}`;
 }
 
-function normalizeOssPrefix(prefix: string): string {
-  const cleaned = prefix.split(/[\\/]+/).map((item) => item.trim()).filter((item) => item && item !== '.' && item !== '..').join('/');
-  return cleaned ? `${cleaned}/` : '';
-}
-
-function sanitizeRequestId(input: string): string {
-  const cleaned = input
-    .trim()
-    .slice(0, 256)
-    .replace(/[^A-Za-z0-9._-]+/g, '-')
-    .replace(/\.\.+/g, '.')
-    .replace(/^[.-]+|[.-]+$/g, '')
-    .slice(0, 128);
-  return cleaned || randomUUID();
-}
-
 type OssConfig = {
   accessKeyId: string;
   accessKeySecret: string;
@@ -255,7 +240,7 @@ class OssDocumentRenderStorage implements DocumentRenderStorage {
 
   async saveDocx(input: SaveGeneratedDocxInput): Promise<SavedGeneratedDocx> {
     const safeFileName = ensureDocxExtension(sanitizeFileName(input.fileName, '生成文档.docx'));
-    const safeRequestId = sanitizeRequestId(input.requestId);
+    const safeRequestId = sanitizeObjectRequestId(input.requestId);
     const objectName = `${this.prefix}${new Date().toISOString().slice(0, 10)}/${safeRequestId}.docx`;
     const contentDisposition = buildContentDisposition(safeFileName);
     const createdAt = new Date().toISOString();
@@ -344,7 +329,7 @@ function readOssConfig(): OssConfig | null | UserFacingError {
     accessKeySecret,
     bucket,
     region: normalizeOssRegion(rawRegion),
-    prefix: normalizeOssPrefix(process.env.DOCUMENT_RENDER_OSS_PREFIX || 'document-renders'),
+    prefix: normalizeObjectPrefix(process.env.DOCUMENT_RENDER_OSS_PREFIX || 'document-renders'),
   };
 }
 
@@ -839,7 +824,7 @@ export async function renderDocumentRequest(input: DocumentRenderRequest, storag
 function getRequestId(request: express.Request): string {
   const headerValue = request.headers['x-request-id'];
   const requestId = Array.isArray(headerValue) ? headerValue[0] : headerValue;
-  return typeof requestId === 'string' && requestId.trim() ? sanitizeRequestId(requestId) : randomUUID();
+  return typeof requestId === 'string' && requestId.trim() ? sanitizeObjectRequestId(requestId) : randomUUID();
 }
 
 export function createDocumentRenderRouter(options: DocumentRenderRouterOptions = {}): express.Router {
@@ -902,5 +887,5 @@ export const __test__ = {
   renderText,
   renderDocx,
   isBlockedIpAddress,
-  normalizeOssPrefix, createFixedLookup, readOssConfig, readTosConfig, OssDocumentRenderStorage, sanitizeRequestId, validateTemplateUrl,
+  normalizeOssPrefix: normalizeObjectPrefix, createFixedLookup, readOssConfig, readTosConfig, OssDocumentRenderStorage, sanitizeRequestId: sanitizeObjectRequestId, validateTemplateUrl,
 };

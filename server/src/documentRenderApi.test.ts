@@ -5,7 +5,7 @@ import test from 'node:test';
 import express from 'express';
 import JSZip from 'jszip';
 
-import { __test__, createDocumentRenderRouter, type DocumentRenderStorage, type SaveGeneratedDocxInput, type SavedGeneratedDocx } from './documentRenderApi';
+import { __test__, createConfiguredStorage, createDocumentRenderRouter, type DocumentRenderStorage, type SaveGeneratedDocxInput, type SavedGeneratedDocx } from './documentRenderApi';
 
 const DOCX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
@@ -548,6 +548,40 @@ test('生产环境没有 OSS 配置时不降级成本地存储', async () => {
     restoreNodeEnv();
     restorePrivateUrls();
     await api.close();
+  }
+});
+
+test('生产环境显式 provider=oss 但 OSS 配置缺失时，存储拒绝写入而非降级到本地', async () => {
+  // 直接验证存储工厂：生产 + 显式 oss + 无配置，必须返回会拒绝的存储，
+  // 并在 saveDocx 时抛错，绝不静默落本机。锁住 CONTEXT.md 存储边界红线的这条分支。
+  const restoreNodeEnv = withTemporaryEnv('NODE_ENV', 'production');
+  const restoreProvider = withTemporaryEnv('DOCUMENT_RENDER_STORAGE_PROVIDER', 'oss');
+  const previousOssEnv: Record<string, string | undefined> = {};
+  for (const name of ['OSS_ACCESS_KEY_ID', 'OSS_ACCESS_KEY_SECRET', 'OSS_BUCKET', 'OSS_REGION']) {
+    previousOssEnv[name] = process.env[name];
+    delete process.env[name];
+  }
+  try {
+    const storage = createConfiguredStorage();
+    assert.notEqual(storage.constructor.name, 'LocalDocumentRenderStorage', '不应降级到本地存储');
+    await assert.rejects(
+      () => storage.saveDocx({
+        buffer: Buffer.from('x'),
+        fileName: '生成文档.docx',
+        requestId: 'req-1',
+        ttlMs: 3600_000,
+        ttlSeconds: 3600,
+      }),
+      /生产环境必须配置 OSS/,
+      '保存时必须抛出可读错误，不能静默落本机',
+    );
+  } finally {
+    restoreNodeEnv();
+    restoreProvider();
+    for (const [name, value] of Object.entries(previousOssEnv)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 });
 

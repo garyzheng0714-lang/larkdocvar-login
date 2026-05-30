@@ -3,6 +3,12 @@
 // 路由保持项目约定：/auth/feishu/{fbif,fude}/{login,qr-config,qr-callback}
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  getFeishuClientLoginDiagnostics,
+  isFeishuClientLoginUnavailable,
+  isLikelyFeishuClientRuntime,
+  loginWithFeishuClient,
+} from "../feishuClientLogin";
 
 type LoginOrg = "fbif" | "fude";
 
@@ -142,13 +148,21 @@ function LoginButton({
   org,
   variant,
   onBeforeLogin,
+  onLoginToken,
+  onLoginError,
+  onClientAuthUnavailable,
 }: {
   org: LoginOrg;
   variant: "primary" | "secondary";
   onBeforeLogin?: () => void;
+  onLoginToken?: (token: string) => void;
+  onLoginError?: (message: string) => void;
+  onClientAuthUnavailable?: (org: LoginOrg) => void;
 }) {
   const [hover, setHover] = useState(false);
   const [active, setActive] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const cancelledRef = useRef(false);
   const config = LOGIN_ORGS[org];
   const isPrimary = variant === "primary";
   const bg = isPrimary
@@ -161,15 +175,54 @@ function LoginButton({
       ? "#f3f7fb"
       : C.surface;
 
-  const handleClick = () => {
+  useEffect(() => {
+    cancelledRef.current = false;
+    return () => {
+      cancelledRef.current = true;
+    };
+  }, []);
+
+  const handleClick = async () => {
+    if (busy) return;
+    setBusy(true);
     if (onBeforeLogin) onBeforeLogin();
-    window.location.href = config.loginUrl;
+    try {
+      try {
+        const sessionToken = await loginWithFeishuClient(org);
+        onLoginToken?.(sessionToken);
+        return;
+      } catch (error) {
+        if (!isFeishuClientLoginUnavailable(error)) {
+          throw error;
+        }
+        if (isLikelyFeishuClientRuntime()) {
+          void fetch(`/api/auth/feishu/${org}/client-diagnostics`, {
+            method: "POST",
+            credentials: "include",
+            cache: "no-store",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(getFeishuClientLoginDiagnostics(error)),
+          }).catch(() => undefined);
+          onClientAuthUnavailable?.(org);
+          return;
+        }
+      }
+
+      window.location.href = config.loginUrl;
+    } catch (error) {
+      onLoginError?.(error instanceof Error ? error.message : "飞书登录失败，请重新点击登录。");
+    } finally {
+      if (!cancelledRef.current) {
+        setBusy(false);
+      }
+    }
   };
 
   return (
     <button
       type="button"
       onClick={handleClick}
+      disabled={busy}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => {
         setHover(false);
@@ -189,7 +242,8 @@ function LoginButton({
         fontSize: 15,
         fontWeight: 600,
         lineHeight: 1,
-        cursor: "pointer",
+        cursor: busy ? "wait" : "pointer",
+        opacity: busy ? 0.72 : 1,
         boxShadow: isPrimary
           ? hover
             ? "0 2px 5px rgba(37, 95, 137, 0.18)"
@@ -215,7 +269,7 @@ function LoginButton({
       >
         <FeishuLogo size={20} />
       </span>
-      <span>使用 {config.label} 飞书登录</span>
+      <span>{busy ? "正在授权…" : `使用 ${config.label} 飞书登录`}</span>
     </button>
   );
 }
@@ -520,13 +574,23 @@ function QRView({
 export interface FeishuLoginCardProps {
   /** 登录前的预备工作（例如 markAuthPending） */
   onBeforeLogin?: () => void;
+  /** 登录成功后，用嵌入式会话 token 接回前端会话 */
+  onLoginToken?: (token: string) => void;
   /** 顶部错误信息（登录回调或 session 检查失败） */
   authError?: string | null;
 }
 
-export function FeishuLoginCard({ onBeforeLogin, authError }: FeishuLoginCardProps) {
+export function FeishuLoginCard({ onBeforeLogin, onLoginToken, authError }: FeishuLoginCardProps) {
   const [mode, setMode] = useState<"oauth" | "qr">("oauth");
   const [org, setOrg] = useState<LoginOrg>("fbif");
+  const [localAuthError, setLocalAuthError] = useState<string | null>(null);
+  const visibleAuthError = mode === "oauth" ? localAuthError || authError : null;
+
+  const handleClientAuthUnavailable = useCallback((nextOrg: LoginOrg) => {
+    setOrg(nextOrg);
+    setLocalAuthError(null);
+    setMode("qr");
+  }, []);
 
   return (
     <div
@@ -556,9 +620,9 @@ export function FeishuLoginCard({ onBeforeLogin, authError }: FeishuLoginCardPro
           onClick={() => setMode(mode === "oauth" ? "qr" : "oauth")}
         />
 
-        {authError ? (
+        {visibleAuthError ? (
           <div className="mb-4 w-full rounded-[10px] bg-[#fff1f0] text-[#f54a45] px-3 py-2 text-[13px] border border-[#ffd6d3]">
-            登录失败：{authError}
+            登录失败：{visibleAuthError}
           </div>
         ) : null}
 
@@ -572,8 +636,28 @@ export function FeishuLoginCard({ onBeforeLogin, authError }: FeishuLoginCardPro
               style={{ display: "block", objectFit: "contain", marginBottom: 20 }}
             />
             <div className="w-full flex flex-col gap-3">
-              <LoginButton org="fbif" variant="primary" onBeforeLogin={onBeforeLogin} />
-              <LoginButton org="fude" variant="secondary" onBeforeLogin={onBeforeLogin} />
+              <LoginButton
+                org="fbif"
+                variant="primary"
+                onBeforeLogin={() => {
+                  setLocalAuthError(null);
+                  onBeforeLogin?.();
+                }}
+                onLoginToken={onLoginToken}
+                onLoginError={setLocalAuthError}
+                onClientAuthUnavailable={handleClientAuthUnavailable}
+              />
+              <LoginButton
+                org="fude"
+                variant="secondary"
+                onBeforeLogin={() => {
+                  setLocalAuthError(null);
+                  onBeforeLogin?.();
+                }}
+                onLoginToken={onLoginToken}
+                onLoginError={setLocalAuthError}
+                onClientAuthUnavailable={handleClientAuthUnavailable}
+              />
             </div>
           </>
         ) : (
