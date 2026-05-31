@@ -73,6 +73,50 @@ export function getFeishuAppCredentials(appKeyInput: unknown = 'fbif'): FeishuAp
   };
 }
 
+export interface FeishuUserInfo {
+  open_id: string;
+  union_id?: string;
+  name: string;
+  en_name?: string;
+  avatar_url?: string;
+  email?: string;
+}
+
+export async function getUserInfoByOpenId(openId: string): Promise<FeishuUserInfo | null> {
+  const { appId, appSecret } = getFeishuAppCredentials('fbif');
+  if (!appId || !appSecret) return null;
+
+  try {
+    // Get tenant access token
+    const tokenRes = await axios.post('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+      app_id: appId,
+      app_secret: appSecret,
+    });
+    const tenantToken = tokenRes.data.tenant_access_token;
+    if (!tenantToken) return null;
+
+    // Get user info
+    const userRes = await axios.get(`https://open.feishu.cn/open-apis/contact/v3/users/${openId}`, {
+      headers: { Authorization: `Bearer ${tenantToken}` },
+      params: { user_id_type: 'open_id' },
+    });
+    if (userRes.data.code !== 0) return null;
+    const u = userRes.data.data?.user;
+    if (!u) return null;
+
+    return {
+      open_id: u.open_id,
+      union_id: u.union_id,
+      name: u.name,
+      en_name: u.en_name,
+      avatar_url: u.avatar?.avatar_origin || u.avatar?.avatar_72,
+      email: u.email,
+    };
+  } catch {
+    return null;
+  }
+}
+
 const sessionRefreshInflight = new Map<string, Promise<AuthSessionRow>>();
 
 // ---------------------------------------------------------------------------
@@ -373,7 +417,12 @@ async function resolveSession(
 
     let session: AuthSessionRow;
     try {
-      session = await ensureValidAccessToken(rawSession);
+      // Skip token refresh for plugin-login sessions (access_token is empty)
+      if (!rawSession.access_token) {
+        session = rawSession;
+      } else {
+        session = await ensureValidAccessToken(rawSession);
+      }
     } catch {
       // 只在 refresh_token 确实过期时删除 session。
       // 网络瞬时失败或飞书 API 临时错误不应删除，让下一次请求重试刷新。

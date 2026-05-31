@@ -348,6 +348,56 @@ app.get('/api/auth/session', async (request, response) => {
 });
 
 /**
+ * POST /api/auth/plugin-login
+ * Bitable sidebar plugin login: receive open_id, verify user exists, create session.
+ * Reference: poster-generator project's plugin-login pattern.
+ */
+app.post('/api/auth/plugin-login', async (request, response) => {
+  try {
+    const { open_id } = request.body;
+    if (!open_id || typeof open_id !== 'string') {
+      response.status(400).json({ ok: false, error: 'open_id required' });
+      return;
+    }
+
+    // Verify user exists via Feishu API
+    const { getUserInfoByOpenId } = await import('./auth');
+    const userInfo = await getUserInfoByOpenId(open_id);
+    if (!userInfo) {
+      response.status(403).json({ ok: false, error: 'user_not_found_in_tenant' });
+      return;
+    }
+
+    // Upsert user and create session
+    const { upsertUser, upsertSession } = await import('./storage');
+    const user = await upsertUser({
+      openId: userInfo.open_id,
+      name: userInfo.name,
+      avatarUrl: userInfo.avatar_url,
+      email: userInfo.email,
+    });
+
+    const crypto = await import('node:crypto');
+    const token = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+    await upsertSession({
+      token,
+      openId: user.open_id,
+      accessToken: '', // plugin-login session has no OAuth token
+      expiresAt,
+    });
+
+    response.json({
+      ok: true,
+      token,
+      user: { open_id: user.open_id, name: user.name, avatar_url: user.avatar_url },
+    });
+  } catch (error) {
+    sendInternalError(response, 'plugin-login', error);
+  }
+});
+
+/**
  * POST /api/auth/logout
  * Clears the session cookie.
  */
