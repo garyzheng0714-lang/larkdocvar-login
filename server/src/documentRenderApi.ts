@@ -758,18 +758,36 @@ function buildDocResponse(input: DocumentRenderRequest, requestId: string) {
   };
 }
 
-async function buildDocxResponse(input: DocumentRenderRequest, storage: DocumentRenderStorage, requestId: string, templateResolver?: DocumentTemplateResolver) {
+async function buildDocxResponse(
+  input: DocumentRenderRequest,
+  storage: DocumentRenderStorage,
+  requestId: string,
+  templateResolver?: DocumentTemplateResolver,
+  preloadedTemplate?: { buffer: Buffer; fileName?: string; templateName?: string },
+) {
   if (!input.template.url && !input.template.templateId) {
     throw new UserFacingError('Docx 模板必须提供 template.url 文档链接。');
   }
 
   const variables = normalizeVariables(input.variables);
   const imageVariables = input.imageVariables || {};
-  const loadedTemplate = input.template.templateId
-    ? await templateResolver?.loadTemplate(input.template.templateId, input.template.versionId)
-    : undefined;
-  if (input.template.templateId && !loadedTemplate) throw new UserFacingError('模板服务未配置。');
-  const templateBuffer = loadedTemplate?.buffer || await downloadTemplateDocx(input.template.url || '');
+
+  let templateBuffer: Buffer;
+  let loadedTemplate: { buffer: Buffer; version: { fileName: string }; record: { name: string } } | undefined;
+
+  if (preloadedTemplate) {
+    // 批量渲染时复用预加载的模板
+    templateBuffer = preloadedTemplate.buffer;
+    loadedTemplate = preloadedTemplate.fileName || preloadedTemplate.templateName
+      ? { buffer: preloadedTemplate.buffer, version: { fileName: preloadedTemplate.fileName || '' }, record: { name: preloadedTemplate.templateName || '' } }
+      : undefined;
+  } else {
+    loadedTemplate = input.template.templateId
+      ? await templateResolver?.loadTemplate(input.template.templateId, input.template.versionId)
+      : undefined;
+    if (input.template.templateId && !loadedTemplate) throw new UserFacingError('模板服务未配置。');
+    templateBuffer = loadedTemplate?.buffer || await downloadTemplateDocx(input.template.url || '');
+  }
   const rendered = await renderDocx(templateBuffer, variables, imageVariables);
   throwIfMissingVariables(rendered.missing);
   const unusedImageVariables = Object.keys(imageVariables).filter((name) => !rendered.images.found.includes(name)).map((name) => `image:${name}`);
@@ -815,10 +833,16 @@ async function buildDocxResponse(input: DocumentRenderRequest, storage: Document
     : response;
 }
 
-export async function renderDocumentRequest(input: DocumentRenderRequest, storage: DocumentRenderStorage, requestId: string, templateResolver?: DocumentTemplateResolver) {
+export async function renderDocumentRequest(
+  input: DocumentRenderRequest,
+  storage: DocumentRenderStorage,
+  requestId: string,
+  templateResolver?: DocumentTemplateResolver,
+  preloadedTemplate?: { buffer: Buffer; fileName?: string; templateName?: string },
+) {
   return input.template.format === 'doc'
     ? buildDocResponse(input, requestId)
-    : buildDocxResponse(input, storage, requestId, templateResolver);
+    : buildDocxResponse(input, storage, requestId, templateResolver, preloadedTemplate);
 }
 
 function getRequestId(request: express.Request): string {

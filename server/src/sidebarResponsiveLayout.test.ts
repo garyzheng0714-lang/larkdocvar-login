@@ -2,10 +2,24 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-const css = readFileSync(
-  new URL('../../src/components/document-generator/_design.css', import.meta.url),
+// 读取所有拆分的 CSS 文件
+const baseCss = readFileSync(
+  new URL('../../src/components/document-generator/_base.css', import.meta.url),
   'utf8',
 );
+const layoutCss = readFileSync(
+  new URL('../../src/components/document-generator/_layout.css', import.meta.url),
+  'utf8',
+);
+const componentsCss = readFileSync(
+  new URL('../../src/components/document-generator/_components.css', import.meta.url),
+  'utf8',
+);
+const responsiveCss = readFileSync(
+  new URL('../../src/components/document-generator/_responsive.css', import.meta.url),
+  'utf8',
+);
+const css = baseCss + layoutCss + componentsCss + responsiveCss;
 
 const dropdownSource = readFileSync(
   new URL('../../src/components/document-generator/Dropdown.tsx', import.meta.url),

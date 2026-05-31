@@ -1,0 +1,289 @@
+/* _layout.css — App 布局、sidebar、header、footer */
+
+/* ─── App layout ───────────────────────────────────────────────── */
+.app {
+  display: flex;
+  min-height: 100vh;
+  width: 100%;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+}
+.sidebar {
+  width: 100%;
+  min-width: 0;
+  height: 100vh;
+  background: var(--bg-side);
+  border-left: 0;
+  position: relative;
+  overflow: hidden;
+  box-shadow: none;
+  margin: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  container-type: inline-size;
+}
+.app-standalone {
+  min-height: 100vh;
+  overflow: auto;
+  padding: 24px;
+  justify-content: center;
+  align-items: flex-start;
+  background: linear-gradient(180deg, #f6f8fb 0%, #eef2f7 100%);
+}
+.app-standalone .sidebar {
+  width: min(960px, calc(100vw - 48px));
+  min-width: 0;
+  max-width: 960px;
+  height: auto;
+  min-height: calc(100vh - 48px);
+  margin: 0 auto;
+  border: 1px solid var(--bd-1);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px rgba(20, 30, 60, 0.10);
+}
+.app-standalone .hdr {
+  padding: 0 16px 0 20px;
+}
+.app-standalone .scroll {
+  overflow: visible;
+}
+.app-standalone .block {
+  padding-left: 24px;
+  padding-right: 24px;
+}
+.app-standalone .block-tpl {
+  padding-top: 18px;
+}
+.app-standalone .ftr {
+  padding: 14px 24px;
+}
+.screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-side);
+}
+
+/* ─── Backdrop (bitable mock) ──────────────────────────────────── */
+.backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      var(--bd-2) 0, var(--bd-2) 1px,
+      transparent 1px, transparent 120px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      var(--bd-2) 0, var(--bd-2) 1px,
+      transparent 1px, transparent 48px
+    );
+}
+.backdrop-table {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      var(--bd-2) 0, var(--bd-2) 1px,
+      transparent 1px, transparent 120px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      var(--bd-2) 0, var(--bd-2) 1px,
+      transparent 1px, transparent 48px
+    );
+}
+.backdrop-table .sidebar {
+  position: relative;
+  z-index: 1;
+}
+
+/* ─── Header ───────────────────────────────────────────────────── */
+.app-brand-header {
+  height: auto;
+  min-height: 78px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 12px 10px;
+}
+.hdr-main-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.hdr-brand {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.app-brand-header .hdr-title {
+  flex: 0 1 auto;
+  font-size: 15px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+.hdr-mode-row {
+  width: 100%;
+  display: flex;
+  justify-content: flex-start;
+  padding-left: 68px;
+}
+.doc-kind-switch {
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  padding: 2px;
+  margin-left: 8px;
+  background: var(--bg-soft);
+  border-radius: 7px;
+}
+.doc-kind-tab {
+  height: 26px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--txt-2);
+  cursor: pointer;
+  font-size: 12px;
+}
+.doc-kind-tab-on {
+  background: #1f1b16;
+  color: #fff;
+  font-weight: 600;
+}
+
+.hdr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px 0 20px;
+  height: 48px;
+  min-height: 48px;
+  border-bottom: 1px solid var(--bd-2);
+  background: var(--bg-side);
+  position: relative;
+  z-index: 2;
+}
+.hdr-logo {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #4f8ef7 0%, #2b5fed 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.hdr-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--txt-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hdr-subtitle {
+  font-size: 11px;
+  color: var(--txt-3);
+  margin-top: 1px;
+}
+.hdr-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--bd-1);
+  margin: 0 4px;
+}
+.hdr-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hdr-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--bg-soft);
+  border: 1px solid var(--bd-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--txt-3);
+}
+.hdr-user {
+  font-size: 12px;
+  color: var(--txt-2);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─── Scroll area ──────────────────────────────────────────────── */
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+}
+
+/* ─── Section ──────────────────────────────────────────────────── */
+.block {
+  padding: 16px;
+}
+.block-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--txt-2);
+  margin-bottom: 8px;
+}
+.block-desc {
+  font-size: 11px;
+  color: var(--txt-3);
+  margin-bottom: 12px;
+}
+.block-tpl {
+  padding-top: 16px;
+}
+
+/* ─── Footer ───────────────────────────────────────────────────── */
+.ftr {
+  padding: 12px 16px;
+  border-top: 1px solid var(--bd-2);
+  background: var(--bg-side);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ftr-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ftr-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ftr-info {
+  font-size: 11px;
+  color: var(--txt-3);
+}

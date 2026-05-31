@@ -273,7 +273,7 @@ function parseEpochMs(timestamp: string): number {
   return Number.isFinite(value) ? value : 0;
 }
 
-function extractOAuthTokenData(body: Record<string, unknown>): Record<string, unknown> {
+export function extractOAuthTokenData(body: Record<string, unknown>): Record<string, unknown> {
   const payload = body.data;
   if (payload && typeof payload === 'object') {
     return payload as Record<string, unknown>;
@@ -375,7 +375,12 @@ async function resolveSession(
     try {
       session = await ensureValidAccessToken(rawSession);
     } catch {
-      await deleteSessionByToken(rawSession.token).catch(() => undefined);
+      // 只在 refresh_token 确实过期时删除 session。
+      // 网络瞬时失败或飞书 API 临时错误不应删除，让下一次请求重试刷新。
+      const refreshExpiresAt = parseEpochMs(rawSession.refresh_expires_at);
+      if (refreshExpiresAt > 0 && refreshExpiresAt <= Date.now()) {
+        await deleteSessionByToken(rawSession.token).catch(() => undefined);
+      }
       continue;
     }
 

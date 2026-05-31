@@ -1,250 +1,68 @@
 import axios, { AxiosError, AxiosInstance, Method } from 'axios';
 import FormData from 'form-data';
-import type { LookupAddress } from 'node:dns';
-import dns from 'node:dns/promises';
 import https from 'node:https';
-import net, { type LookupFunction } from 'node:net';
-import sharp from 'sharp';
+import {
+  FEISHU_OPEN_API,
+  RETRYABLE_HTTP_STATUS,
+  RETRYABLE_FEISHU_CODES,
+  MAX_IMAGE_DOWNLOAD_BYTES,
+  MAX_IMAGE_DOWNLOAD_REDIRECTS,
+  ALLOWED_UPLOAD_IMAGE_TYPES,
+  type FeishuEnvelope,
+  type TenantTokenResponse,
+  type ExtractTemplateResult,
+  type GenerateRecordInput,
+  type OwnerTransferInput,
+  type CollaboratorInput,
+  type GenerateInput,
+  type GenerateResult,
+  type SearchUserResult,
+  type CachedToken,
+  type RootFolderPayload,
+  type DocumentInfoPayload,
+  type RawContentPayload,
+  type CopyFilePayload,
+  type DocumentBlocksPage,
+  type DepartmentChildrenPage,
+  type ContactUsersPage,
+  type SearchUsersPage,
+  type FeishuClientOptions,
+  type PermissionMode,
+  type OwnerMemberType,
+  FeishuApiError,
+} from './feishuTypes';
+import {
+  validateImageDownloadUrl,
+  prepareImageForUpload,
+  normalizeContentType,
+  __test__ as imageTest,
+} from './feishuImageDownload';
+import {
+  replacePlaceholders,
+  extractVariablesFromText,
+  extractDocumentId,
+  buildDocumentTitle,
+  getTextElements,
+  replaceElements,
+  escapeRegExp,
+  __test__ as replaceTest,
+} from './feishuDocumentReplace';
+import {
+  toSearchUser,
+  sortAndUniqueUsers,
+  filterUsers,
+  listAllDepartments,
+  listUsersByDepartment,
+  buildDirectoryUsers,
+  trySearchUsersViaSearchApi,
+  __test__ as userDirectoryTest,
+} from './feishuUserDirectory';
 
-const FEISHU_OPEN_API = 'https://open.feishu.cn/open-apis';
-const RETRYABLE_HTTP_STATUS = new Set([408, 429, 500, 502, 503, 504]);
-const RETRYABLE_FEISHU_CODES = new Set([99991400, 1061045, 1063006, 1254290, 1254291]);
-const MAX_IMAGE_DOWNLOAD_BYTES = 20 * 1024 * 1024;
-const MAX_IMAGE_DOWNLOAD_REDIRECTS = 3;
-const MAX_IMAGE_INPUT_PIXELS = 36_000_000;
-const ALLOWED_UPLOAD_IMAGE_TYPES = new Set([
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-  'image/gif',
-]);
-const ALLOWED_DECODED_IMAGE_FORMATS = new Set([
-  'png',
-  'jpeg',
-  'webp',
-  'gif',
-]);
-const DEFAULT_IMAGE_DOWNLOAD_ALLOWED_HOSTS = [
-  'feishu.cn',
-  'feishuapp.cn',
-  'feishucdn.com',
-  'larksuite.com',
-  'larksuitecdn.com',
-  'larkoffice.com',
-  'bytecdn.cn',
-  'bytegoofy.com',
-  'byteimg.com',
-  'byteoversea.com',
-  'bytescm.com',
-  'bytedance.net',
-  'pstatp.com',
-];
-const IMAGE_DOWNLOAD_ALLOWED_HOSTS = (
-  process.env.FEISHU_IMAGE_DOWNLOAD_ALLOWED_HOSTS || DEFAULT_IMAGE_DOWNLOAD_ALLOWED_HOSTS.join(',')
-)
-  .split(',')
-  .map((host) => host.trim().toLowerCase().replace(/^\./, '').replace(/\.$/, ''))
-  .filter(Boolean);
-const UPDATABLE_TEXT_KEYS = new Set([
-  'page',
-  'text',
-  'heading1',
-  'heading2',
-  'heading3',
-  'heading4',
-  'heading5',
-  'heading6',
-  'heading7',
-  'heading8',
-  'heading9',
-  'bullet',
-  'ordered',
-  'code',
-  'quote',
-  'todo'
-]);
+// 常量、类型、接口已移到 feishuTypes.ts
+// 图片下载相关函数已移到 feishuImageDownload.ts
+// 文档替换相关函数已移到 feishuDocumentReplace.ts
 
-type PermissionMode = 'tenant_readable' | 'tenant_editable' | 'closed';
-type OwnerMemberType = 'userid' | 'openid' | 'email';
-
-interface FeishuEnvelope<T = unknown> {
-  code: number;
-  msg: string;
-  data: T;
-}
-
-interface TenantTokenResponse {
-  code: number;
-  msg: string;
-  tenant_access_token: string;
-  expire: number;
-}
-
-interface ExtractTemplateResult {
-  documentId: string;
-  templateTitle: string;
-  variables: string[];
-}
-
-interface GenerateRecordInput {
-  recordId: string;
-  variables: Record<string, string>;
-  imageVariables?: Record<string, { urls: string[]; width: number }>;
-  title?: string;
-}
-
-interface OwnerTransferInput {
-  memberType: OwnerMemberType;
-  memberId: string;
-  needNotification?: boolean;
-  removeOldOwner?: boolean;
-  stayPut?: boolean;
-  oldOwnerPerm?: 'view' | 'edit' | 'full_access';
-}
-
-interface CollaboratorInput {
-  memberType: 'openid' | 'email' | 'userid';
-  memberId: string;
-  perm: 'view' | 'edit' | 'full_access';
-}
-
-interface GenerateInput {
-  templateUrl: string;
-  records: GenerateRecordInput[];
-  permissionMode: PermissionMode;
-  ownerTransfer?: OwnerTransferInput;
-  collaborators?: CollaboratorInput[];
-}
-
-interface GenerateResult {
-  recordId: string;
-  status: 'success' | 'failed';
-  docUrl?: string;
-  documentId?: string;
-  documentTitle?: string;
-  replacedBlocks?: number;
-  warnings?: string[];
-  error?: string;
-}
-
-interface SearchUserResult {
-  openId: string;
-  userId?: string;
-  name: string;
-  enName?: string;
-  nickname?: string;
-  email?: string;
-  avatar72?: string;
-  departmentIds?: string[];
-  departments?: string[];
-}
-
-interface CachedToken {
-  value: string;
-  expiresAt: number;
-}
-
-interface RootFolderPayload {
-  token: string;
-}
-
-interface DocumentInfoPayload {
-  document?: {
-    title?: string;
-  };
-}
-
-interface RawContentPayload {
-  content: string;
-}
-
-interface CopyFilePayload {
-  file?: {
-    token?: string;
-    url?: string;
-  };
-}
-
-interface DocumentBlocksPage {
-  items?: Array<Record<string, unknown>>;
-  has_more?: boolean;
-  page_token?: string;
-}
-
-interface DepartmentChildrenPage {
-  items?: Array<{
-    open_department_id?: string;
-    department_id?: string;
-    name?: string;
-    i18n_name?: {
-      zh_cn?: string;
-      en_us?: string;
-      ja_jp?: string;
-    };
-  }>;
-  has_more?: boolean;
-  page_token?: string;
-}
-
-interface ContactUsersPage {
-  items?: Array<{
-    open_id?: string;
-    user_id?: string;
-    name?: string;
-    en_name?: string;
-    nickname?: string;
-    email?: string;
-    department_ids?: string[];
-    avatar?: {
-      avatar_72?: string;
-    };
-  }>;
-  has_more?: boolean;
-  page_token?: string;
-}
-
-interface SearchUsersPage {
-  users?: Array<{
-    open_id?: string;
-    user_id?: string;
-    name?: string;
-    department_ids?: string[];
-    avatar?: {
-      avatar_72?: string;
-    };
-  }>;
-  has_more?: boolean;
-  page_token?: string;
-}
-
-interface VerifiedImageDownloadTarget {
-  url: URL;
-  lookup: LookupFunction;
-}
-
-interface FeishuClientOptions {
-  appId: string;
-  appSecret: string;
-}
-
-export class FeishuApiError extends Error {
-  code?: number;
-  status?: number;
-  logId?: string;
-
-  constructor(message: string, options?: { code?: number; status?: number; logId?: string }) {
-    super(message);
-    this.name = 'FeishuApiError';
-    this.code = options?.code;
-    this.status = options?.status;
-    this.logId = options?.logId;
-  }
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
+// 保留 FeishuTemplateService 类使用的本地辅助函数
 function normalizeKeyword(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -284,401 +102,8 @@ function sanitizeTitle(title: string): string {
   return cleaned.slice(0, 180) || '文档副本';
 }
 
-function ipv4ToNumber(address: string): number {
-  return address
-    .split('.')
-    .reduce((acc, item) => (acc << 8) + Number(item), 0) >>> 0;
-}
-
-function isIpv4InRange(address: string, base: string, bits: number): boolean {
-  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
-  return (ipv4ToNumber(address) & mask) === (ipv4ToNumber(base) & mask);
-}
-
-function isBlockedIpAddress(address: string): boolean {
-  const family = net.isIP(address);
-  if (family === 4) {
-    return [
-      ['0.0.0.0', 8],
-      ['10.0.0.0', 8],
-      ['100.64.0.0', 10],
-      ['127.0.0.0', 8],
-      ['169.254.0.0', 16],
-      ['172.16.0.0', 12],
-      ['192.0.0.0', 24],
-      ['192.0.2.0', 24],
-      ['192.168.0.0', 16],
-      ['198.18.0.0', 15],
-      ['198.51.100.0', 24],
-      ['203.0.113.0', 24],
-      ['224.0.0.0', 4],
-      ['240.0.0.0', 4],
-    ].some(([base, bits]) => isIpv4InRange(address, String(base), Number(bits)));
-  }
-
-  if (family === 6) {
-    const normalized = address.toLowerCase();
-    if (normalized.startsWith('::ffff:')) {
-      const mapped = normalized.slice('::ffff:'.length);
-      if (net.isIP(mapped) === 4) {
-        return isBlockedIpAddress(mapped);
-      }
-      const parts = mapped.split(':');
-      if (parts.length === 2 && parts.every((part) => /^[0-9a-f]{1,4}$/i.test(part))) {
-        const first = Number.parseInt(parts[0], 16);
-        const second = Number.parseInt(parts[1], 16);
-        if (Number.isFinite(first) && Number.isFinite(second)) {
-          return isBlockedIpAddress(
-            [
-              (first >> 8) & 0xff,
-              first & 0xff,
-              (second >> 8) & 0xff,
-              second & 0xff,
-            ].join('.'),
-          );
-        }
-      }
-    }
-    return (
-      normalized === '::' ||
-      normalized === '::1' ||
-      normalized.startsWith('fc') ||
-      normalized.startsWith('fd') ||
-      /^fe[89ab][0-9a-f]?:/i.test(normalized) ||
-      normalized.startsWith('ff') ||
-      normalized.startsWith('2001:db8:')
-    );
-  }
-
-  return true;
-}
-
-function isAllowedImageHost(hostname: string): boolean {
-  const normalized = hostname.toLowerCase().replace(/\.$/, '');
-  return IMAGE_DOWNLOAD_ALLOWED_HOSTS.some(
-    (allowed) => normalized === allowed || normalized.endsWith(`.${allowed}`),
-  );
-}
-
-function buildPinnedLookup(expectedHostname: string, addresses: LookupAddress[]): LookupFunction {
-  const normalizedHost = expectedHostname.toLowerCase().replace(/\.$/, '');
-  return ((hostname: string, options: unknown, callback?: unknown) => {
-    const cb = typeof options === 'function' ? options : callback;
-    if (typeof cb !== 'function') {
-      throw new Error('lookup callback is required');
-    }
-
-    if (hostname.toLowerCase().replace(/\.$/, '') !== normalizedHost) {
-      cb(new Error('图片下载域名与校验域名不一致。'));
-      return;
-    }
-
-    const opts = typeof options === 'object' && options !== null ? options as { family?: number; all?: boolean } : {};
-    const requestedFamily = typeof options === 'number' ? options : opts.family || 0;
-    const candidates = requestedFamily
-      ? addresses.filter((item) => item.family === requestedFamily)
-      : addresses;
-
-    if (candidates.length === 0) {
-      cb(new Error('图片链接没有可用的已校验解析地址。'));
-      return;
-    }
-
-    if (opts.all) {
-      cb(null, candidates);
-      return;
-    }
-
-    cb(null, candidates[0].address, candidates[0].family);
-  }) as LookupFunction;
-}
-
-async function validateImageDownloadUrl(rawUrl: string): Promise<VerifiedImageDownloadTarget> {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    throw new Error('图片链接格式不合法。');
-  }
-
-  if (url.protocol !== 'https:') {
-    throw new Error('图片链接只允许 HTTPS。');
-  }
-  if (url.username || url.password) {
-    throw new Error('图片链接不能包含用户名或密码。');
-  }
-  if (!isAllowedImageHost(url.hostname)) {
-    throw new Error(`图片链接域名不在允许范围内：${url.hostname}`);
-  }
-
-  const literalIpFamily = net.isIP(url.hostname);
-  if (literalIpFamily) {
-    if (isBlockedIpAddress(url.hostname)) {
-      throw new Error('图片链接不能指向内网或保留 IP。');
-    }
-    return {
-      url,
-      lookup: buildPinnedLookup(url.hostname, [{ address: url.hostname, family: literalIpFamily as 4 | 6 }]),
-    };
-  }
-
-  const addresses = await dns.lookup(url.hostname, { all: true });
-  if (addresses.length === 0) {
-    throw new Error('图片链接域名解析失败。');
-  }
-  for (const item of addresses) {
-    if (isBlockedIpAddress(item.address)) {
-      throw new Error('图片链接域名解析到内网或保留 IP。');
-    }
-  }
-
-  return {
-    url,
-    lookup: buildPinnedLookup(url.hostname, addresses),
-  };
-}
-
-function normalizeContentType(contentType: unknown): string {
-  const raw = Array.isArray(contentType) ? contentType[0] : contentType;
-  return String(raw || 'image/png').split(';')[0].trim().toLowerCase();
-}
-
-function imageFormatToUploadInfo(format: string | undefined): { contentType: string; extension: string } {
-  const normalized = String(format || '').toLowerCase();
-  if (!ALLOWED_DECODED_IMAGE_FORMATS.has(normalized)) {
-    throw new Error('图片真实格式不支持。');
-  }
-  if (normalized === 'jpeg') {
-    return { contentType: 'image/jpeg', extension: 'jpg' };
-  }
-  return { contentType: `image/${normalized}`, extension: normalized };
-}
-
-async function prepareImageForUpload(
-  image: { buffer: Buffer; contentType: string },
-  targetWidth: number,
-): Promise<{ buffer: Buffer; contentType: string; extension: string }> {
-  const width = Number.isFinite(targetWidth) ? Math.max(0, Math.min(2000, Math.floor(targetWidth))) : 0;
-  const metadata = await sharp(image.buffer, { limitInputPixels: MAX_IMAGE_INPUT_PIXELS }).metadata();
-  const uploadInfo = imageFormatToUploadInfo(metadata.format);
-  const original = {
-    buffer: image.buffer,
-    ...uploadInfo,
-  };
-  if (width <= 0) {
-    return original;
-  }
-
-  const resized = await sharp(image.buffer, { limitInputPixels: MAX_IMAGE_INPUT_PIXELS })
-    .rotate()
-    .resize({ width, withoutEnlargement: true })
-    .png()
-    .toBuffer();
-  return { buffer: resized, contentType: 'image/png', extension: 'png' };
-}
-
-function replacePlaceholders(input: string, variables: Record<string, string>): string {
-  let output = input;
-  const entries = Object.entries(variables).filter(([, value]) => value !== undefined);
-  for (const [name, value] of entries) {
-    const pattern = new RegExp(`\\{\\{\\s*${escapeRegExp(name)}\\s*\\}\\}`, 'g');
-    output = output.replace(pattern, value ?? '');
-  }
-  return output;
-}
-
-function extractVariablesFromText(rawContent: string): string[] {
-  const result: string[] = [];
-  const seen = new Set<string>();
-  const regexp = /\{\{\s*([^{}]+?)\s*\}\}/g;
-  let match: RegExpExecArray | null = null;
-  while ((match = regexp.exec(rawContent)) !== null) {
-    const variable = match[1]?.trim();
-    if (!variable || seen.has(variable)) {
-      continue;
-    }
-    seen.add(variable);
-    result.push(variable);
-  }
-  return result;
-}
-
-function extractDocumentId(input: string): string {
-  const trimmed = input.trim();
-  if (!trimmed) {
-    throw new Error('模板文档链接为空。');
-  }
-  if (/^[a-zA-Z0-9_]{10,}$/.test(trimmed) && !trimmed.startsWith('http')) {
-    return trimmed;
-  }
-  try {
-    const url = new URL(trimmed);
-    const match = url.pathname.match(/\/(?:docx|docs)\/([a-zA-Z0-9_]+)/);
-    if (match?.[1]) {
-      return match[1];
-    }
-  } catch {
-    const match = trimmed.match(/\/(?:docx|docs)\/([a-zA-Z0-9_]+)/);
-    if (match?.[1]) {
-      return match[1];
-    }
-  }
-  throw new Error('无法从模板链接中解析 document_id，请确认链接格式。');
-}
-
-function buildDocumentTitle(templateTitle: string): string {
-  return sanitizeTitle(templateTitle || '模板文档');
-}
-
-function getTextElements(block: Record<string, unknown>): unknown[] | null {
-  for (const key of Object.keys(block)) {
-    if (!UPDATABLE_TEXT_KEYS.has(key)) {
-      continue;
-    }
-    const value = block[key] as { elements?: unknown[] } | undefined;
-    if (value && Array.isArray(value.elements)) {
-      return value.elements;
-    }
-  }
-  return null;
-}
-
-function hasOwnVariable(variables: Record<string, string>, name: string): boolean {
-  return Object.prototype.hasOwnProperty.call(variables, name);
-}
-
-function replaceKnownPlaceholders(input: string, variables: Record<string, string>): string {
-  return input.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, rawName: string) => {
-    const name = rawName.trim();
-    return hasOwnVariable(variables, name) ? variables[name] ?? '' : match;
-  });
-}
-
-function isTextRunElement(element: unknown): element is Record<string, any> & { text_run: { content: string } } {
-  const current = element as Record<string, any>;
-  return typeof current?.text_run?.content === 'string';
-}
-
-function cloneTextRunElement(element: Record<string, any>, content: string): Record<string, any> {
-  return {
-    ...element,
-    text_run: {
-      ...element.text_run,
-      content,
-    },
-  };
-}
-
-function replaceTextRunGroup(
-  group: Array<Record<string, any> & { text_run: { content: string } }>,
-  variables: Record<string, string>,
-): { changed: boolean; elements: unknown[] } {
-  const segments = group.map((element, index) => ({
-    element,
-    index,
-    content: element.text_run.content,
-    start: 0,
-    end: 0,
-  }));
-
-  let cursor = 0;
-  for (const segment of segments) {
-    segment.start = cursor;
-    cursor += segment.content.length;
-    segment.end = cursor;
-  }
-
-  const combined = segments.map((segment) => segment.content).join('');
-  const output: unknown[] = [];
-  const appendOriginalRange = (start: number, end: number) => {
-    if (end <= start) return;
-    for (const segment of segments) {
-      const from = Math.max(start, segment.start);
-      const to = Math.min(end, segment.end);
-      if (to <= from) continue;
-      const content = segment.content.slice(from - segment.start, to - segment.start);
-      if (content) {
-        output.push(cloneTextRunElement(segment.element, content));
-      }
-    }
-  };
-
-  const findSourceElement = (offset: number): Record<string, any> => {
-    return segments.find((segment) => offset >= segment.start && offset < segment.end)?.element ?? group[0];
-  };
-
-  let changed = false;
-  let lastIndex = 0;
-  const pattern = /\{\{\s*([^{}]+?)\s*\}\}/g;
-  let match: RegExpExecArray | null = null;
-  while ((match = pattern.exec(combined)) !== null) {
-    const name = match[1]?.trim() || '';
-    if (!hasOwnVariable(variables, name)) {
-      continue;
-    }
-
-    changed = true;
-    appendOriginalRange(lastIndex, match.index);
-    const replacement = variables[name] ?? '';
-    if (replacement) {
-      output.push(cloneTextRunElement(findSourceElement(match.index), replacement));
-    }
-    lastIndex = match.index + match[0].length;
-  }
-
-  if (!changed) {
-    return { changed: false, elements: group };
-  }
-
-  appendOriginalRange(lastIndex, combined.length);
-  if (output.length === 0) {
-    output.push(cloneTextRunElement(group[0], ''));
-  }
-  return { changed: true, elements: output };
-}
-
-function replaceElements(elements: unknown[], variables: Record<string, string>): { changed: boolean; elements: unknown[] } {
-  let changed = false;
-  const nextElements: unknown[] = [];
-  let textRunGroup: Array<Record<string, any> & { text_run: { content: string } }> = [];
-
-  const flushTextRunGroup = () => {
-    if (textRunGroup.length === 0) return;
-    const replaced = replaceTextRunGroup(textRunGroup, variables);
-    if (replaced.changed) {
-      changed = true;
-    }
-    nextElements.push(...replaced.elements);
-    textRunGroup = [];
-  };
-
-  for (const element of elements) {
-    const current = element as Record<string, any>;
-    if (isTextRunElement(current)) {
-      textRunGroup.push(current);
-      continue;
-    }
-    if (current?.equation?.content && typeof current.equation.content === 'string') {
-      flushTextRunGroup();
-      const replaced = replaceKnownPlaceholders(current.equation.content, variables);
-      if (replaced !== current.equation.content) {
-        changed = true;
-        nextElements.push({
-          ...current,
-          equation: {
-            ...current.equation,
-            content: replaced
-          }
-        });
-        continue;
-      }
-    }
-    flushTextRunGroup();
-    nextElements.push(current);
-  }
-  flushTextRunGroup();
-  return { changed, elements: nextElements };
-}
+// 图片下载相关函数已移到 feishuImageDownload.ts
+// 文档替换相关函数已移到 feishuDocumentReplace.ts
 
 export class FeishuTemplateService {
   private readonly appId: string;
@@ -1167,171 +592,13 @@ export class FeishuTemplateService {
     }
   }
 
-  private toSearchUser(
-    value:
-      | {
-          open_id?: string;
-          user_id?: string;
-          name?: string;
-          en_name?: string;
-          nickname?: string;
-          email?: string;
-          department_ids?: string[];
-          avatar?: { avatar_72?: string };
-        }
-      | {
-          open_id?: string;
-          user_id?: string;
-          name?: string;
-          department_ids?: string[];
-          avatar?: { avatar_72?: string };
-        },
-    departmentNameById?: Map<string, string>,
-    fallbackDepartmentId?: string
-  ): SearchUserResult | null {
-    if (!value.open_id) {
-      return null;
-    }
-    const departmentIds = (value.department_ids || []).filter(Boolean);
-    if (departmentIds.length === 0 && fallbackDepartmentId) {
-      departmentIds.push(fallbackDepartmentId);
-    }
-    const departments = departmentIds
-      .map((id) => departmentNameById?.get(id) || '')
-      .filter((item) => !!item);
-    return {
-      openId: value.open_id,
-      userId: value.user_id,
-      name: value.name || value.user_id || value.open_id,
-      enName: 'en_name' in value ? value.en_name : undefined,
-      nickname: 'nickname' in value ? value.nickname : undefined,
-      email: 'email' in value ? value.email : undefined,
-      avatar72: value.avatar?.avatar_72,
-      departmentIds,
-      departments
-    };
-  }
-
-  private sortAndUniqueUsers(users: SearchUserResult[]): SearchUserResult[] {
-    const unique = new Map<string, SearchUserResult>();
-    for (const user of users) {
-      if (!unique.has(user.openId)) {
-        unique.set(user.openId, user);
-      }
-    }
-    return Array.from(unique.values()).sort((a, b) => {
-      return a.name.localeCompare(b.name, 'zh-Hans-CN');
-    });
-  }
-
-  private filterUsers(users: SearchUserResult[], keyword: string, limit: number): SearchUserResult[] {
-    const normalizedKeyword = normalizeKeyword(keyword);
-    if (!normalizedKeyword) {
-      return users.slice(0, limit);
-    }
-    const filtered = users.filter((user) => {
-      const text = [
-        user.name,
-        user.nickname,
-        user.enName,
-        user.email,
-        user.userId,
-        user.openId,
-        ...(user.departments || [])
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
-      return text.includes(normalizedKeyword);
-    });
-    return filtered.slice(0, limit);
-  }
-
-  private async listAllDepartments(): Promise<Map<string, string>> {
-    const departmentNameById = new Map<string, string>();
-    departmentNameById.set('0', '根部门');
-    let pageToken: string | undefined;
-    while (true) {
-      const data = await this.request<DepartmentChildrenPage>('GET', '/contact/v3/departments/0/children', {
-        params: {
-          department_id_type: 'open_department_id',
-          fetch_child: true,
-          page_size: 50,
-          page_token: pageToken || ''
-        }
-      });
-      for (const item of data.items || []) {
-        const id = item.open_department_id || item.department_id;
-        if (!id) {
-          continue;
-        }
-        const name = item.name || item.i18n_name?.zh_cn || item.i18n_name?.en_us || item.i18n_name?.ja_jp || '';
-        departmentNameById.set(id, name);
-      }
-      if (!data.has_more || !data.page_token) {
-        break;
-      }
-      pageToken = data.page_token;
-    }
-    return departmentNameById;
-  }
-
-  private async listUsersByDepartment(
-    departmentId: string,
-    departmentNameById: Map<string, string>
-  ): Promise<SearchUserResult[]> {
-    const users: SearchUserResult[] = [];
-    let pageToken: string | undefined;
-    while (true) {
-      const data = await this.request<ContactUsersPage>('GET', '/contact/v3/users/find_by_department', {
-        params: {
-          user_id_type: 'open_id',
-          department_id_type: 'open_department_id',
-          department_id: departmentId,
-          page_size: 50,
-          page_token: pageToken || ''
-        }
-      });
-      for (const item of data.items || []) {
-        const user = this.toSearchUser(item, departmentNameById, departmentId);
-        if (user) {
-          users.push(user);
-        }
-      }
-      if (!data.has_more || !data.page_token) {
-        break;
-      }
-      pageToken = data.page_token;
-    }
-    return users;
-  }
-
-  private async buildDirectoryUsers(): Promise<SearchUserResult[]> {
-    const departmentNameById = await this.listAllDepartments();
-    const departmentIds = Array.from(departmentNameById.keys());
-    
-    // Batch process in parallel to avoid extremely slow sequential fetching, but limit concurrency to avoid rate limits
-    const users: SearchUserResult[] = [];
-    const concurrencyLimit = 5;
-    
-    for (let i = 0; i < departmentIds.length; i += concurrencyLimit) {
-      const batch = departmentIds.slice(i, i + concurrencyLimit);
-      const batchResults = await Promise.all(
-        batch.map(deptId => this.listUsersByDepartment(deptId, departmentNameById).catch(() => [] as SearchUserResult[]))
-      );
-      for (const deptUsers of batchResults) {
-        users.push(...deptUsers);
-      }
-    }
-    
-    return this.sortAndUniqueUsers(users);
-  }
+  // 用户目录搜索相关方法已移到 feishuUserDirectory.ts
 
   private async getDirectoryUsers(): Promise<SearchUserResult[]> {
     if (this.userDirectoryCache && this.userDirectoryCache.expiresAt > Date.now()) {
       return this.userDirectoryCache.users;
     }
-    const users = await this.buildDirectoryUsers();
+    const users = await buildDirectoryUsers(this.request.bind(this));
     this.userDirectoryCache = {
       users,
       expiresAt: Date.now() + 15 * 60 * 1000 // Cache for 15 minutes
@@ -1352,20 +619,6 @@ export class FeishuTemplateService {
     }
   }
 
-  private async trySearchUsersViaSearchApi(keyword: string, limit: number): Promise<SearchUserResult[]> {
-    const departmentNameById = await this.listAllDepartments();
-    const data = await this.request<SearchUsersPage>('GET', '/search/v1/user', {
-      params: {
-        query: keyword,
-        page_size: Math.min(Math.max(limit, 1), 50)
-      }
-    });
-    const users = (data.users || [])
-      .map((item) => this.toSearchUser(item, departmentNameById))
-      .filter((item): item is SearchUserResult => item !== null);
-    return this.sortAndUniqueUsers(users).slice(0, limit);
-  }
-
   async searchUsers(keyword: string, limit = 20): Promise<SearchUserResult[]> {
     const normalizedKeyword = normalizeKeyword(keyword);
     if (!normalizedKeyword) {
@@ -1377,7 +630,7 @@ export class FeishuTemplateService {
     // 1. Try to fetch from memory cache first if we already have it
     if (this.userDirectoryCache && this.userDirectoryCache.expiresAt > Date.now()) {
       const allUsers = this.userDirectoryCache.users;
-      const matched = this.filterUsers(allUsers, normalizedKeyword, safeLimit);
+      const matched = filterUsers(allUsers, normalizedKeyword, safeLimit);
       if (matched.length > 0) {
         return matched;
       }
@@ -1386,14 +639,14 @@ export class FeishuTemplateService {
     // 2. Try the search API directly (if available) since it's much faster than iterating all departments
     if (!this.searchApiUnavailable) {
       try {
-        const directUsers = await this.trySearchUsersViaSearchApi(normalizedKeyword, safeLimit);
+        const directUsers = await trySearchUsersViaSearchApi(this.request.bind(this), normalizedKeyword, safeLimit);
         if (directUsers.length > 0) {
           // Merge to cache for future lookups
           if (this.userDirectoryCache) {
              const existingOpenIds = new Set(this.userDirectoryCache.users.map(u => u.openId));
              const newUsers = directUsers.filter(u => !existingOpenIds.has(u.openId));
              if (newUsers.length > 0) {
-                 this.userDirectoryCache.users = this.sortAndUniqueUsers([...this.userDirectoryCache.users, ...newUsers]);
+                 this.userDirectoryCache.users = sortAndUniqueUsers([...this.userDirectoryCache.users, ...newUsers]);
              }
           }
           return directUsers;
@@ -1406,8 +659,8 @@ export class FeishuTemplateService {
     // 3. Fallback to full directory sync
     // If we didn't have cache, build it now
     let allUsers = await this.getDirectoryUsers();
-    let matched = this.filterUsers(allUsers, normalizedKeyword, safeLimit);
-    
+    let matched = filterUsers(allUsers, normalizedKeyword, safeLimit);
+
     if (matched.length > 0) {
       return matched;
     }
@@ -1415,7 +668,7 @@ export class FeishuTemplateService {
     // 4. Force refresh if nothing found (maybe new user was added)
     this.userDirectoryCache = null;
     allUsers = await this.getDirectoryUsers();
-    return this.filterUsers(allUsers, normalizedKeyword, safeLimit);
+    return filterUsers(allUsers, normalizedKeyword, safeLimit);
   }
 
   async extractTemplateVariables(templateUrl: string): Promise<ExtractTemplateResult> {
@@ -1524,10 +777,11 @@ function logInternalError(context: string, error: unknown): void {
   console.error(`[${context}]`, toErrorMessage(error));
 }
 
+export { FeishuApiError };
 export type { CollaboratorInput, GenerateInput, GenerateResult, OwnerMemberType, OwnerTransferInput, PermissionMode, SearchUserResult };
 
 export const __test__ = {
-  isBlockedIpAddress,
-  isAllowedImageHost,
+  isBlockedIpAddress: imageTest.isBlockedIpAddress,
+  isAllowedImageHost: imageTest.isAllowedImageHost,
   replaceElements,
 };

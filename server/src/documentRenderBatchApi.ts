@@ -97,6 +97,19 @@ export async function renderBatchRecords(
     onProgress?: (result: DocumentRenderBatchRecordResult, index: number) => void;
   },
 ): Promise<DocumentRenderBatchRecordResult[]> {
+  // 批量渲染时预加载模板，避免每条记录重复下载/加载
+  let preloadedTemplate: { buffer: Buffer; fileName?: string; templateName?: string } | undefined;
+  if (input.template.templateId && options.templateResolver) {
+    const loaded = await options.templateResolver.loadTemplate(input.template.templateId, input.template.versionId);
+    if (loaded) {
+      preloadedTemplate = {
+        buffer: loaded.buffer,
+        fileName: loaded.version?.fileName,
+        templateName: loaded.record?.name,
+      };
+    }
+  }
+
   const results: DocumentRenderBatchRecordResult[] = [];
   for (let index = 0; index < input.records.length; index += 1) {
     const record = input.records[index];
@@ -107,7 +120,7 @@ export async function renderBatchRecords(
         variables: record.variables,
         imageVariables: record.imageVariables || {},
         output: record.output || input.output,
-      }, options.storage, requestId, options.templateResolver) as {
+      }, options.storage, requestId, options.templateResolver, preloadedTemplate) as {
         document?: unknown;
         variables?: unknown;
         images?: unknown;

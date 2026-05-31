@@ -17,7 +17,7 @@ test('database readiness reports missing auth tables', async () => {
   const readiness = await __test__.queryDatabaseReadiness(fakeDatabase(['users']));
 
   assert.equal(readiness.ready, false);
-  assert.deepEqual(readiness.missingTables, ['auth_sessions', 'saved_configs', 'schema_migrations']);
+  assert.deepEqual(readiness.missingTables, ['auth_sessions', 'saved_configs', 'render_jobs', 'schema_migrations']);
 });
 
 test('database readiness passes when all required tables exist', async () => {

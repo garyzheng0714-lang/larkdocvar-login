@@ -33,9 +33,15 @@
 | `POST /api/auth/feishu/:appKey/client-code` | 接收飞书客户端内授权 code，换取用户 OAuth token 并返回嵌入式会话 `session_token`。 |
 | `GET /api/auth/feishu/:appKey/start` | 已停用的外部 OAuth JSON handoff，固定返回 410。 |
 | `GET /api/auth/feishu/:appKey/login-status` | 已停用的外部 OAuth JSON handoff 轮询，固定返回 410。 |
+| `GET /auth/feishu/:appKey/login` | 浏览器 OAuth 登录跳转，当前页跳转到飞书授权页。 |
+| `GET /auth/feishu/:appKey/callback` | OAuth 登录回调，飞书授权后重定向回前端。 |
+| `GET /auth/feishu/:appKey/qr-config` | 扫码登录配置，返回扫码登录所需的 app_id 和重定向 URI。 |
+| `GET /auth/feishu/:appKey/qr-callback` | 扫码登录回调，飞书扫码授权后重定向回前端。 |
+| `POST /api/auth/feishu/:appKey/client-diagnostics` | 客户端诊断，接收飞书客户端授权环境信息用于排查。 |
 | `POST /api/v1/document-templates` | 上传并保存 Docx 模板资产，返回 `templateId`。 |
 | `GET /api/v1/document-templates` | 列出模板资产；`includeDeleted=true` 可包含软删除模板。 |
 | `GET /api/v1/document-templates/:templateId` | 查询单个模板详情。 |
+| `GET /api/v1/document-templates/:templateId/versions` | 查询模板的版本列表。 |
 | `POST /api/v1/document-templates/:templateId/versions` | 为已有模板新增版本并设为当前版本。 |
 | `DELETE /api/v1/document-templates/:templateId` | 软删除模板；`purge=true` 会删除对象存储里的模板对象。 |
 | `POST /api/v1/document-renders` | 单份 Doc/Docx 生成。Docx 支持 `template.url` 或 `template.templateId`。 |

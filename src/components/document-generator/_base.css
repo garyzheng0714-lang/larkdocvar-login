@@ -1,0 +1,31 @@
+/* _base.css — 基础样式、变量、重置 */
+
+:root {
+  --bg-page:     #f1f3f6;
+  --bg-side:     #ffffff;
+  --bg-soft:     #f7f8fa;
+  --bg-hover:    #f2f4f7;
+  --txt-1:       #1f2329;
+  --txt-2:       #4a5160;
+  --txt-3:       #8a90a0;
+  --txt-4:       #b5b9c2;
+  --bd-1:        #e5e7ec;
+  --bd-2:        #edeff3;
+  --ok:          #1f8a5b;
+  --err:         #c44a3d;
+  --warn:        #b97a18;
+  --accent:      #2b5fed;
+  --accent-soft: #ecf0fe;
+}
+
+* { box-sizing: border-box; }
+html, body { margin:0; padding:0; height:100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  color: var(--txt-1);
+  background: var(--bg-page);
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, "Source Han Mono SC", monospace; font-size: 12px; }

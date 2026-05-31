@@ -36,7 +36,7 @@ interface SavedConfigRow {
 let pool: pg.Pool | null = null;
 let initPromise: Promise<pg.Pool> | null = null;
 
-const REQUIRED_TABLES = ['users', 'auth_sessions', 'saved_configs', 'schema_migrations'] as const;
+const REQUIRED_TABLES = ['users', 'auth_sessions', 'saved_configs', 'render_jobs', 'schema_migrations'] as const;
 
 type DatabaseReadiness = {
   ready: boolean;
@@ -322,6 +322,134 @@ async function deleteSavedConfig(openId: string, configId: string): Promise<bool
   return (result.rowCount ?? 0) > 0;
 }
 
+// ---------------------------------------------------------------------------
+// Render Jobs
+// ---------------------------------------------------------------------------
+
+interface RenderJobRow {
+  jobId: string;
+  status: string;
+  templateJson: string;
+  outputJson: string | null;
+  total: number;
+  processed: number;
+  succeeded: number;
+  failed: number;
+  recordsJson: string;
+  resultsJson: string;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+}
+
+function mapRenderJobRow(row: Record<string, unknown>): RenderJobRow {
+  return {
+    jobId: String(row.job_id),
+    status: String(row.status),
+    templateJson: String(row.template_json),
+    outputJson: row.output_json != null ? String(row.output_json) : null,
+    total: Number(row.total),
+    processed: Number(row.processed),
+    succeeded: Number(row.succeeded),
+    failed: Number(row.failed),
+    recordsJson: String(row.records_json),
+    resultsJson: String(row.results_json),
+    error: row.error != null ? String(row.error) : null,
+    createdAt: toIsoString(row.created_at),
+    updatedAt: toIsoString(row.updated_at),
+    expiresAt: toIsoString(row.expires_at),
+  };
+}
+
+async function insertRenderJob(job: {
+  jobId: string;
+  status: string;
+  templateJson: string;
+  outputJson?: string;
+  total: number;
+  recordsJson: string;
+  expiresAt: string;
+}): Promise<RenderJobRow> {
+  const db = await initDatabase();
+  const { rows } = await db.query(
+    `INSERT INTO render_jobs (job_id, status, template_json, output_json, total, records_json, expires_at)
+     VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7::timestamptz)
+     RETURNING *`,
+    [job.jobId, job.status, job.templateJson, job.outputJson ?? '', job.total, job.recordsJson, job.expiresAt],
+  );
+  return mapRenderJobRow(rows[0] as Record<string, unknown>);
+}
+
+async function getRenderJob(jobId: string): Promise<RenderJobRow | undefined> {
+  const db = await initDatabase();
+  const { rows } = await db.query('SELECT * FROM render_jobs WHERE job_id = $1', [jobId]);
+  if (!rows[0]) return undefined;
+  return mapRenderJobRow(rows[0] as Record<string, unknown>);
+}
+
+async function updateRenderJob(jobId: string, updates: {
+  status?: string;
+  processed?: number;
+  succeeded?: number;
+  failed?: number;
+  resultsJson?: string;
+  error?: string;
+}): Promise<RenderJobRow | undefined> {
+  const db = await initDatabase();
+  const setClauses: string[] = ['updated_at = NOW()'];
+  const values: unknown[] = [jobId];
+  let paramIndex = 2;
+
+  if (updates.status !== undefined) {
+    setClauses.push(`status = $${paramIndex++}`);
+    values.push(updates.status);
+  }
+  if (updates.processed !== undefined) {
+    setClauses.push(`processed = $${paramIndex++}`);
+    values.push(updates.processed);
+  }
+  if (updates.succeeded !== undefined) {
+    setClauses.push(`succeeded = $${paramIndex++}`);
+    values.push(updates.succeeded);
+  }
+  if (updates.failed !== undefined) {
+    setClauses.push(`failed = $${paramIndex++}`);
+    values.push(updates.failed);
+  }
+  if (updates.resultsJson !== undefined) {
+    setClauses.push(`results_json = $${paramIndex++}`);
+    values.push(updates.resultsJson);
+  }
+  if (updates.error !== undefined) {
+    setClauses.push(`error = $${paramIndex++}`);
+    values.push(updates.error);
+  }
+
+  const { rows } = await db.query(
+    `UPDATE render_jobs SET ${setClauses.join(', ')} WHERE job_id = $1 RETURNING *`,
+    values,
+  );
+  if (!rows[0]) return undefined;
+  return mapRenderJobRow(rows[0] as Record<string, unknown>);
+}
+
+async function cleanupExpiredRenderJobs(): Promise<number> {
+  const db = await initDatabase();
+  const result = await db.query(
+    "DELETE FROM render_jobs WHERE expires_at < NOW() AND status IN ('completed', 'failed', 'partial_failed')",
+  );
+  return result.rowCount ?? 0;
+}
+
+async function markStaleRenderJobsAsFailed(): Promise<number> {
+  const db = await initDatabase();
+  const result = await db.query(
+    "UPDATE render_jobs SET status = 'failed', error = '服务重启，任务中断', updated_at = NOW() WHERE status IN ('pending', 'running')",
+  );
+  return result.rowCount ?? 0;
+}
+
 export {
   initDatabase,
   checkDatabaseReady,
@@ -336,6 +464,11 @@ export {
   getSavedConfigByName,
   saveOrUpdateConfig,
   deleteSavedConfig,
+  insertRenderJob,
+  getRenderJob,
+  updateRenderJob,
+  cleanupExpiredRenderJobs,
+  markStaleRenderJobsAsFailed,
 };
 
 export type { UserRow, AuthSessionRow, SavedConfigRow };

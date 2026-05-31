@@ -42,7 +42,6 @@ async function startServer(options: { jobTtlMs?: number; maxJobs?: number } = {}
     templateResolver: service,
     storageDir: dir,
     jobTtlMs: options.jobTtlMs,
-    maxJobs: options.maxJobs,
   }));
   app.use('/api/v1/document-renders', createDocumentRenderBatchRouter({ templateResolver: service, storageDir: dir }));
   app.use('/api/v1/document-renders', createDocumentRenderRouter({ templateResolver: service, storageDir: dir }));

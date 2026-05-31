@@ -10,6 +10,7 @@ import {
   getFeishuAppCredentials,
   normalizeFeishuOAuthAppKey,
   isAllowedTenant,
+  extractOAuthTokenData,
   UNAUTHORIZED_TENANT_MESSAGE,
 } from './auth';
 import type { FeishuOAuthAppKey } from './auth';
@@ -42,14 +43,6 @@ const PUBLIC_CALLBACK_PATH = '/auth/feishu';
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function extractOAuthTokenData(body: Record<string, unknown>): Record<string, unknown> {
-  const payload = body.data;
-  if (payload && typeof payload === 'object') {
-    return payload as Record<string, unknown>;
-  }
-  return body;
-}
 
 function safeOAuthErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
