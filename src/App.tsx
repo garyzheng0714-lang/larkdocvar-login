@@ -9,6 +9,7 @@ import {
   setStoredEmbeddedAuthToken,
   withEmbeddedAuthHeader,
 } from "./authSessionToken";
+import { loginWithBitableSidebar } from "./bitableSidebarLogin";
 import {
   DocumentGeneratorApp,
   CloudDocGeneratorApp,
@@ -294,6 +295,7 @@ export default function App() {
     }
   });
   const authCheckInFlightRef = useRef(false);
+  const bitableAutoLoginAttemptedRef = useRef(false);
 
   const clearAuthPendingFlag = useCallback(() => {
     setAuthPendingUntil(0);
@@ -313,6 +315,30 @@ export default function App() {
       // ignore sessionStorage access failures in embedded runtime
     }
   }, []);
+
+  const tryBitableSidebarAutoLogin = useCallback(async () => {
+    if (bitableAutoLoginAttemptedRef.current) {
+      return false;
+    }
+    bitableAutoLoginAttemptedRef.current = true;
+    try {
+      const result = await loginWithBitableSidebar();
+      setStoredEmbeddedAuthToken(result.sessionToken);
+      setAuthError(null);
+      setAuthUser({
+        openId: result.user.open_id,
+        name: result.user.name,
+        enName: result.user.en_name ?? undefined,
+        email: result.user.email ?? undefined,
+        avatarUrl: result.user.avatar_url ?? undefined,
+      });
+      setIsAuthenticated(true);
+      clearAuthPendingFlag();
+      return true;
+    } catch {
+      return false;
+    }
+  }, [clearAuthPendingFlag]);
 
   const checkAuthSession = useCallback(async (options?: { silent?: boolean }) => {
     if (authCheckInFlightRef.current) {
@@ -344,6 +370,12 @@ export default function App() {
         setIsAuthenticated(true);
         clearAuthPendingFlag();
       } else {
+        if (!options?.silent) {
+          const loggedInFromSidebar = await tryBitableSidebarAutoLogin();
+          if (loggedInFromSidebar) {
+            return;
+          }
+        }
         clearStoredEmbeddedAuthToken();
         setAuthUser(null);
         setIsAuthenticated(false);
@@ -358,7 +390,7 @@ export default function App() {
       authCheckInFlightRef.current = false;
       setAuthLoading(false);
     }
-  }, [clearAuthPendingFlag]);
+  }, [clearAuthPendingFlag, tryBitableSidebarAutoLogin]);
 
   useEffect(() => {
     try {

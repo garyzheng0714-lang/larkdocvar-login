@@ -40,6 +40,7 @@ export type FeishuAppCredentials = {
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'larkdocvar_session';
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 const UNAUTHORIZED_MESSAGE = '未登录或会话已过期，请重新登录。';
+export const BITABLE_SIDEBAR_TOKEN_TYPE = 'BitableSidebar';
 export const UNAUTHORIZED_TENANT_MESSAGE = '您的飞书账号不在 FBIF 授权范围内，请用 FBIF 账号登录或联系管理员。';
 
 /**
@@ -71,6 +72,95 @@ export function getFeishuAppCredentials(appKeyInput: unknown = 'fbif'): FeishuAp
       process.env[`${prefix}_APP_SECRET`] ||
       (appKey === 'fbif' ? process.env.FEISHU_APP_SECRET || '' : ''),
   };
+}
+
+export interface FeishuUserInfo {
+  open_id: string;
+  union_id?: string;
+  name: string;
+  en_name?: string;
+  avatar_url?: string;
+  email?: string;
+}
+
+const tenantTokenCache = new Map<FeishuOAuthAppKey, { token: string; expiresAt: number }>();
+
+async function getTenantAccessToken(appKeyInput: FeishuOAuthAppKey): Promise<string> {
+  const appKey = normalizeFeishuOAuthAppKey(appKeyInput) ?? 'fbif';
+  const cached = tenantTokenCache.get(appKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.token;
+  }
+
+  const { appId, appSecret } = getFeishuAppCredentials(appKey);
+  if (!appId || !appSecret) {
+    throw new Error('服务未配置飞书应用凭证。');
+  }
+
+  const response = await axios.post(
+    'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal',
+    { app_id: appId, app_secret: appSecret },
+    { headers: { 'Content-Type': 'application/json' }, timeout: 20000 },
+  );
+  const body = response.data as { code?: number; msg?: string; tenant_access_token?: string; expire?: number };
+  if (typeof body.code === 'number' && body.code !== 0) {
+    throw new Error(`获取 tenant_access_token 失败：[code=${body.code}] ${body.msg || ''}`);
+  }
+  if (!body.tenant_access_token) {
+    throw new Error('tenant_access_token 接口未返回 token。');
+  }
+
+  const expiresIn = Math.max(60, Number(body.expire) || 7200);
+  tenantTokenCache.set(appKey, {
+    token: body.tenant_access_token,
+    expiresAt: Date.now() + (expiresIn - 120) * 1000,
+  });
+  return body.tenant_access_token;
+}
+
+export async function getUserInfoByOpenId(
+  openId: string,
+  appKeyInput: FeishuOAuthAppKey = 'fbif',
+): Promise<FeishuUserInfo | null> {
+  const normalizedOpenId = openId.trim();
+  if (!normalizedOpenId) return null;
+
+  try {
+    const tenantToken = await getTenantAccessToken(appKeyInput);
+    const response = await axios.get(
+      `https://open.feishu.cn/open-apis/contact/v3/users/${encodeURIComponent(normalizedOpenId)}`,
+      {
+        headers: { Authorization: `Bearer ${tenantToken}` },
+        params: { user_id_type: 'open_id' },
+        timeout: 20000,
+      },
+    );
+    const body = response.data as { code?: number; data?: { user?: Record<string, unknown> } };
+    if (typeof body.code === 'number' && body.code !== 0) return null;
+    const user = body.data?.user;
+    if (!user) return null;
+    const avatar = user.avatar && typeof user.avatar === 'object'
+      ? user.avatar as Record<string, unknown>
+      : {};
+    return {
+      open_id: String(user.open_id || normalizedOpenId),
+      union_id: typeof user.union_id === 'string' ? user.union_id : undefined,
+      name: String(user.name || user.en_name || normalizedOpenId),
+      en_name: typeof user.en_name === 'string' ? user.en_name : undefined,
+      avatar_url: typeof avatar.avatar_origin === 'string'
+        ? avatar.avatar_origin
+        : typeof avatar.avatar_72 === 'string'
+          ? avatar.avatar_72
+          : undefined,
+      email: typeof user.email === 'string' ? user.email : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function isBitableSidebarSession(session: AuthSessionRow): boolean {
+  return session.token_type === BITABLE_SIDEBAR_TOKEN_TYPE;
 }
 
 const sessionRefreshInflight = new Map<string, Promise<AuthSessionRow>>();
@@ -370,22 +460,31 @@ async function resolveSession(
   for (const sessionToken of sessionTokens) {
     const rawSession = await getSessionByToken(sessionToken);
     if (!rawSession) continue;
-    if (!rawSession.access_token?.trim()) {
-      await deleteSessionByToken(rawSession.token).catch(() => undefined);
-      continue;
-    }
 
     let session: AuthSessionRow;
-    try {
-      session = await ensureValidAccessToken(rawSession);
-    } catch {
-      // 只在 refresh_token 确实过期时删除 session。
-      // 网络瞬时失败或飞书 API 临时错误不应删除，让下一次请求重试刷新。
-      const refreshExpiresAt = parseEpochMs(rawSession.refresh_expires_at);
-      if (refreshExpiresAt > 0 && refreshExpiresAt <= Date.now()) {
+    if (isBitableSidebarSession(rawSession)) {
+      if (parseEpochMs(rawSession.expires_at) <= Date.now()) {
         await deleteSessionByToken(rawSession.token).catch(() => undefined);
+        continue;
       }
-      continue;
+      session = rawSession;
+    } else {
+      if (!rawSession.access_token?.trim()) {
+        await deleteSessionByToken(rawSession.token).catch(() => undefined);
+        continue;
+      }
+
+      try {
+        session = await ensureValidAccessToken(rawSession);
+      } catch {
+        // 只在 refresh_token 确实过期时删除 session。
+        // 网络瞬时失败或飞书 API 临时错误不应删除，让下一次请求重试刷新。
+        const refreshExpiresAt = parseEpochMs(rawSession.refresh_expires_at);
+        if (refreshExpiresAt > 0 && refreshExpiresAt <= Date.now()) {
+          await deleteSessionByToken(rawSession.token).catch(() => undefined);
+        }
+        continue;
+      }
     }
 
     const user = await getUserByOpenId(session.open_id);

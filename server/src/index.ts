@@ -19,6 +19,7 @@ import { initDatabase } from './storage';
 import { registerAuthSessionRoutes } from './routes/authSessionRoutes';
 import { registerCloudDocRoutes } from './routes/cloudDocRoutes';
 import { registerHealthRoutes } from './routes/healthRoutes';
+import { registerPluginLoginRoutes } from './routes/pluginLoginRoutes';
 import { registerSavedConfigRoutes } from './routes/savedConfigRoutes';
 
 const app = express();
@@ -110,6 +111,7 @@ const enforceDocumentRenderBrowserOrigin = createMutationOriginGuard({
   requireOriginOrReferer: false,
 });
 const requireBitableSidebarAuth = createBitableSidebarAuthGuard();
+const requireBitableSidebarLogin = createBitableSidebarAuthGuard(async () => true);
 const requireCloudDocAccess: express.RequestHandler = async (request, response, next) => {
   try {
     const session = await peekSessionForRequest(request);
@@ -145,6 +147,13 @@ registerAuthSessionRoutes(app, {
   cookieSecure: SESSION_COOKIE_SECURE,
   cookieSameSite: SESSION_COOKIE_SAMESITE,
   maxAgeSeconds: SESSION_MAX_AGE_SECONDS,
+});
+registerPluginLoginRoutes(app, {
+  cookieName: SESSION_COOKIE_NAME,
+  cookieSecure: SESSION_COOKIE_SECURE,
+  cookieSameSite: SESSION_COOKIE_SAMESITE,
+  maxAgeSeconds: SESSION_MAX_AGE_SECONDS,
+  requireBitableSidebarAuth: requireBitableSidebarLogin,
 });
 registerSavedConfigRoutes(app);
 registerHealthRoutes(app, { hasCredential, hasDatabaseUrl });

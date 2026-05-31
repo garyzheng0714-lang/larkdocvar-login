@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  BITABLE_SIDEBAR_TOKEN_TYPE,
   consumeOAuthStateCookie,
   getOAuthStateCookieOptions,
+  isBitableSidebarSession,
   resolveSessionTokenCandidatesFromRequest,
   resolveSessionTokenFromRequest,
   setOAuthStateCookie,
@@ -113,6 +115,21 @@ test('旧 cookie 存在时仍保留 header session token 作为侧边栏兜底',
     'fresh-header-token',
     'bearer-token',
   ]);
+});
+
+test('Bitable 侧边栏直登会话有独立 token 类型，不依赖 OAuth refresh_token', () => {
+  assert.equal(isBitableSidebarSession({
+    token: 'session-token',
+    oauth_app_key: 'fbif',
+    open_id: 'ou_user',
+    access_token: 'bitable-sidebar',
+    refresh_token: '',
+    token_type: BITABLE_SIDEBAR_TOKEN_TYPE,
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    refresh_expires_at: '',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }), true);
 });
 
 test('非 HTTPS 本地环境不会写出浏览器会拒收的 SameSite=None cookie', () => {
