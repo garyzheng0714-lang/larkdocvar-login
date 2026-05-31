@@ -1,4 +1,5 @@
 import type { TableField, Template, TemplateVariable } from './types';
+import { matchField } from './fieldMatching';
 
 export const CUSTOM_MAPPING_VALUE = '__custom__';
 
@@ -7,16 +8,11 @@ export function isCompatibleField(variable: TemplateVariable, field: TableField)
 }
 
 export function findSmartField(variable: TemplateVariable, fields: TableField[]): string | undefined {
-  const direct = fields.find(
-    (f) => f.name.trim().toLowerCase() === variable.name.trim().toLowerCase()
-      && isCompatibleField(variable, f),
-  );
-  if (direct) return direct.id;
-  if (variable.suggested) {
-    const suggested = fields.find((f) => f.id === variable.suggested && isCompatibleField(variable, f));
-    if (suggested) return suggested.id;
-  }
-  return undefined;
+  return matchField(variable.name, fields, {
+    strategy: 'exact',
+    suggestedId: variable.suggested,
+    compatible: (field) => isCompatibleField(variable, field),
+  })?.id;
 }
 
 export function buildDefaultMapping(template: Template | null, fields: TableField[]): Record<string, string> {

@@ -4,7 +4,7 @@ import { Icon, FieldTypeIcon } from './icons';
 import { Dropdown } from './Dropdown';
 import { GeneratorHeader } from './GeneratorHeader';
 import { copyText } from './copyText';
-import { CUSTOM_MAPPING_VALUE, findSmartField, isCompatibleField } from './mapping';
+import { CUSTOM_MAPPING_VALUE, reconcileMapping } from './mapping';
 import type { GeneratorKind, PrimaryState, TableField, TemplateVariable } from './types';
 
 interface PrimaryScreenProps {
@@ -115,19 +115,7 @@ export function PrimaryScreen({
                     type="button"
                     onClick={() => {
                       setState((s) => {
-                        const next = { ...s.mapping };
-                        tplVars.forEach((v) => {
-                          const current = next[v.name];
-                          const currentField = fields.find((f) => f.id === current);
-                          if (
-                            current === CUSTOM_MAPPING_VALUE
-                            || (currentField && isCompatibleField(v, currentField))
-                          ) {
-                            return;
-                          }
-                          const matched = findSmartField(v, fields);
-                          if (matched) next[v.name] = matched;
-                        });
+                        const next = reconcileMapping(s.template, fields, s.mapping, { allowCustom: true });
                         return { ...s, mapping: next };
                       });
                     }}

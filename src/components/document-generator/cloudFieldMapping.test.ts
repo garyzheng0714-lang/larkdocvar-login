@@ -1,20 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { TableField } from './types';
-import { normalizeName, findBestMatchedField, stringifyCellValue } from './cloudFieldMapping';
+import { normalizeFieldName } from './fieldMatching';
+import { findBestMatchedField, stringifyCellValue } from './cloudFieldMapping';
 
 // 这些纯函数此前内联在 CloudDocGeneratorApp.tsx（747 行上帝组件）里，无任何测试。
 // 提取到独立模块并锁住行为，改善 locality，且不触碰 React 渲染（可用 node --test 验证）。
-// 注意：与 mapping.ts 的 findSmartField（Docx 模式）是两套不同算法，刻意不合并。
+// 字段名归一化由 fieldMatching.ts 统一提供，云文档模式仍额外允许包含匹配。
 
 function field(id: string, name: string): TableField {
   return { id, name, type: 1, icon: '' } as unknown as TableField;
 }
 
-test('normalizeName 去空白、转小写、剥离括号下划线等装饰字符', () => {
-  assert.equal(normalizeName('  客户 名称  '), '客户名称');
-  assert.equal(normalizeName('Customer_Name'), 'customername');
-  assert.equal(normalizeName('【报价】(2026)'), '报价2026');
+test('normalizeFieldName 去空白、转小写、剥离括号下划线等装饰字符', () => {
+  assert.equal(normalizeFieldName('  客户 名称  '), '客户名称');
+  assert.equal(normalizeFieldName('Customer_Name'), 'customername');
+  assert.equal(normalizeFieldName('【报价】(2026)'), '报价2026');
 });
 
 test('findBestMatchedField 优先精确匹配归一化后的字段名', () => {
