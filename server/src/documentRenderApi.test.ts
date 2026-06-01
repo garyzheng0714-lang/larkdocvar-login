@@ -53,6 +53,31 @@ async function startApiServer(options: { templateDocx?: Buffer; storage?: Docume
   };
 }
 
+async function startGotenbergServer(): Promise<{ baseUrl: string; calls: () => number; close: () => Promise<void> }> {
+  let callCount = 0;
+  const server = createServer((request, response) => {
+    if (request.method === 'POST' && request.url === '/forms/libreoffice/convert') {
+      callCount += 1;
+      request.resume();
+      response.setHeader('Content-Type', 'application/pdf');
+      response.end(Buffer.from('%PDF-1.4\n% test preview\n'));
+      return;
+    }
+    response.statusCode = 404;
+    response.end('not found');
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address() as AddressInfo | null;
+  assert.ok(address);
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    calls: () => callCount,
+    close: () => closeServer(server),
+  };
+}
+
 function enablePrivateTemplateUrlsForTest(): () => void {
   const previous = process.env.DOCUMENT_TEMPLATE_ALLOW_PRIVATE_URLS;
   process.env.DOCUMENT_TEMPLATE_ALLOW_PRIVATE_URLS = 'true';
@@ -284,6 +309,106 @@ test('公开 API 遇到缺失变量时返回可读错误并列出变量名', asy
     assert.deepEqual(body.missingVariables, ['金额']);
   } finally {
     await api.close();
+  }
+});
+
+test('公开 API 支持缺失文本变量留空继续，并在响应中保留缺失变量名', async () => {
+  const api = await startApiServer();
+  try {
+    const response = await fetch(`${api.baseUrl}/api/v1/document-renders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        template: {
+          format: 'doc',
+          title: '合同模板',
+          content: '客户：{{客户名称}}\n金额：{{金额}}',
+        },
+        missingStrategy: 'blank',
+        variables: {
+          客户名称: '上海测试科技有限公司',
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json() as any;
+    assert.equal(body.ok, true);
+    assert.equal(body.document.previewText, '客户：上海测试科技有限公司\n金额：');
+    assert.deepEqual(body.variables.missing, ['金额']);
+  } finally {
+    await api.close();
+  }
+});
+
+test('公开 Docx API 支持缺失文本变量留空继续', async () => {
+  const restorePrivateUrls = enablePrivateTemplateUrlsForTest();
+  const templateDocx = await createMinimalDocxBuffer('客户：{{客户名称}}\n金额：{{金额}}');
+  const api = await startApiServer({ templateDocx });
+  try {
+    const response = await fetch(`${api.baseUrl}/api/v1/document-renders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        template: {
+          format: 'docx',
+          url: `${api.baseUrl}/template.docx`,
+          fileName: '合同模板.docx',
+        },
+        missingStrategy: 'blank',
+        variables: {
+          客户名称: '上海测试科技有限公司',
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json() as any;
+    assert.equal(body.ok, true);
+    assert.equal(body.document.previewText, '客户：上海测试科技有限公司\n金额：');
+    assert.deepEqual(body.variables.missing, ['金额']);
+  } finally {
+    restorePrivateUrls();
+    await api.close();
+  }
+});
+
+test('公开 Docx API 可通过 Gotenberg 返回真实 PDF 预览', async () => {
+  const restorePrivateUrls = enablePrivateTemplateUrlsForTest();
+  const templateDocx = await createMinimalDocxBuffer('客户：{{客户名称}}');
+  const gotenberg = await startGotenbergServer();
+  const restoreGotenberg = withTemporaryEnv('GOTENBERG_URL', gotenberg.baseUrl);
+  const api = await startApiServer({ templateDocx });
+  try {
+    const response = await fetch(`${api.baseUrl}/api/v1/document-renders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        template: {
+          format: 'docx',
+          url: `${api.baseUrl}/template.docx`,
+          fileName: '合同模板.docx',
+        },
+        variables: {
+          客户名称: '上海测试科技有限公司',
+        },
+        output: {
+          includePdfPreview: true,
+        },
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json() as any;
+    assert.equal(body.ok, true);
+    assert.equal(gotenberg.calls(), 1);
+    assert.equal(body.preview.pdf.contentType, 'application/pdf');
+    assert.equal(Buffer.from(body.preview.pdf.fileBase64, 'base64').subarray(0, 5).toString(), '%PDF-');
+  } finally {
+    restoreGotenberg();
+    restorePrivateUrls();
+    await api.close();
+    await gotenberg.close();
   }
 });
 

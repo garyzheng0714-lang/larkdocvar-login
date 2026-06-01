@@ -347,6 +347,7 @@ export function useGenerateReal(): GenerateRunner {
           const payload: Record<string, unknown> = {
             recordId: r.id,
             variables,
+            missingStrategy: options.onMissing === '留空继续' ? 'blank' : 'fail',
             output: {
               fileName,
               ...(ttlSeconds ? { expiresInSeconds: ttlSeconds } : {}),
@@ -383,10 +384,11 @@ export function useGenerateReal(): GenerateRunner {
           credentials: 'include',
           signal,
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            template: { format: 'docx', templateId: options.template.id },
-            records: batchPayload,
-          }),
+            body: JSON.stringify({
+              template: { format: 'docx', templateId: options.template.id },
+              missingStrategy: options.onMissing === '留空继续' ? 'blank' : 'fail',
+              records: batchPayload,
+            }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const json = (await res.json()) as {

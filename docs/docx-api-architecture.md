@@ -163,4 +163,5 @@ sequenceDiagram
 ## 已知实现边界
 
 - 异步任务在配置 `DATABASE_URL` 时写入 PostgreSQL `render_jobs` 表，并按提交时的登录用户或 API Key 绑定查询权限；未配置数据库的本地开发/测试环境会降级为进程内存。运行中的任务会刷新 `lease_expires_at`，服务启动只会失败租约过期的未完成任务，避免多实例误杀。
+- PDF 预览是按需能力：只有请求 `output.includePdfPreview=true` 且服务端配置 `GOTENBERG_URL` 时，才会把生成后的 Docx 交给 Gotenberg/LibreOffice 转成 PDF 预览。
 - 侧边栏当前已拆到 `src/components/document-generator/`，但 `PrimaryScreen.tsx` 和 `_design.css` 仍偏大。继续扩展前端时应优先按模板库、字段映射、生成进度等边界拆分。

@@ -32,17 +32,22 @@ const outputSchema = z.object({
   fileName: z.string().trim().max(255).optional(),
   expiresInSeconds: z.number().int().positive().max(7 * 24 * 60 * 60).optional(),
   includeFileBase64: z.boolean().optional(),
+  includePdfPreview: z.boolean().optional(),
 }).optional();
+
+const missingStrategySchema = z.enum(['fail', 'blank']).optional();
 
 export type DocumentRenderBatchRecordInput = {
   recordId: string;
   variables: Record<string, string | number | boolean | null>;
   imageVariables?: DocumentRenderRequest['imageVariables'];
+  missingStrategy?: DocumentRenderRequest['missingStrategy'];
   output?: DocumentRenderRequest['output'];
 };
 
 export type DocumentRenderBatchInput = {
   template: DocumentRenderRequest['template'];
+  missingStrategy?: DocumentRenderRequest['missingStrategy'];
   output?: DocumentRenderRequest['output'];
   records: DocumentRenderBatchRecordInput[];
 };
@@ -63,11 +68,13 @@ export type DocumentRenderBatchRecordResult = {
 function createBatchSchema(maxRecords: number) {
   return z.object({
     template: templateSchema,
+    missingStrategy: missingStrategySchema,
     output: outputSchema,
     records: z.array(z.object({
       recordId: z.string().trim().min(1).max(128),
       variables: variableMapSchema.default({}),
       imageVariables: imageVariableMapSchema.optional(),
+      missingStrategy: missingStrategySchema,
       output: outputSchema,
     })).min(1).max(maxRecords),
   });
@@ -119,6 +126,7 @@ export async function renderBatchRecords(
         template: input.template,
         variables: record.variables,
         imageVariables: record.imageVariables || {},
+        missingStrategy: record.missingStrategy || input.missingStrategy,
         output: record.output || input.output,
       }, options.storage, requestId, options.templateResolver, preloadedTemplate) as {
         document?: unknown;

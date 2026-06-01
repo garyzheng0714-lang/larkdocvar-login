@@ -31,6 +31,8 @@
 | `DOCUMENT_RENDER_TOS_PREFIX` | TOS 生成文件前缀，推荐 `renders`；最终路径为 `{root}/{render-prefix}/YYYY/MM/DD/{requestId}.docx`。 |
 | `DOCUMENT_RENDER_DOWNLOAD_TTL_SECONDS` | 默认下载链接有效期，建议用秒。 |
 | `DOCUMENT_RENDER_PUBLIC_BASE_URL` | 需要返回绝对下载 URL 时配置。 |
+| `GOTENBERG_URL` | 可选。配置后 `output.includePdfPreview=true` 会调用 `{GOTENBERG_URL}/forms/libreoffice/convert` 生成 PDF 预览。 |
+| `GOTENBERG_TIMEOUT_MS` | 可选。PDF 预览转换超时时间，默认 30000。 |
 
 ### 模板资产存储
 

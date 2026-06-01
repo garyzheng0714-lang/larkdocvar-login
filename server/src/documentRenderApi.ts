@@ -1,6 +1,7 @@
 import express from 'express';
 import axios from 'axios';
 import OSS from 'ali-oss';
+import FormData from 'form-data';
 import dns from 'node:dns/promises';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
@@ -29,6 +30,7 @@ const MAX_TEMPLATE_REDIRECTS = 3;
 const DEFAULT_DOWNLOAD_TTL_MS = 60 * 60 * 1000;
 const MAX_DOWNLOAD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_GENERATED_FILES = 100;
+const DEFAULT_GOTENBERG_TIMEOUT_MS = 30_000;
 const LOCAL_STORAGE_DIR = process.env.DOCUMENT_RENDER_STORAGE_DIR || path.join(os.tmpdir(), 'larkdocvar-document-renders');
 const generatedFiles = new Map<string, {
   filePath: string;
@@ -82,10 +84,12 @@ const documentRenderSchema = z.object({
       .every((item) => ['string', 'number', 'boolean'].includes(typeof item) || item === null);
   }).default({}),
   imageVariables: imageVariableMapSchema,
+  missingStrategy: z.enum(['fail', 'blank']).optional(),
   output: z.object({
     fileName: z.string().trim().max(255).optional(),
     expiresInSeconds: z.number().int().positive().max(7 * 24 * 60 * 60).optional(),
     includeFileBase64: z.boolean().optional(),
+    includePdfPreview: z.boolean().optional(),
   }).optional(),
 });
 
@@ -104,6 +108,22 @@ class UnusedVariablesError extends UserFacingError {
 }
 function throwIfMissingVariables(missingVariables: string[]): void {
   if (missingVariables.length > 0) throw new MissingVariablesError(missingVariables);
+}
+
+function getBlockingMissingVariables(missingVariables: string[], strategy: DocumentRenderRequest['missingStrategy']): string[] {
+  if (strategy !== 'blank') return missingVariables;
+  return missingVariables.filter((name) => isImagePlaceholderName(name));
+}
+
+function withBlankMissingVariables(variables: Record<string, string>, missingVariables: string[]): Record<string, string> {
+  if (missingVariables.length === 0) return variables;
+  const output = { ...variables };
+  for (const name of missingVariables) {
+    if (!isImagePlaceholderName(name) && !Object.prototype.hasOwnProperty.call(output, name)) {
+      output[name] = '';
+    }
+  }
+  return output;
 }
 
 function getUnusedVariables(found: string[], variables: Record<string, string>): string[] {
@@ -182,6 +202,38 @@ function getDefaultDownloadTtl(): { ttlMs: number; ttlSeconds: number } {
 const getMaxUnzippedBytes = () => readPositiveIntegerEnv('DOCUMENT_RENDER_MAX_UNZIPPED_BYTES', DEFAULT_MAX_UNZIPPED_BYTES);
 const getMaxZipEntries = () => readPositiveIntegerEnv('DOCUMENT_RENDER_MAX_ZIP_ENTRIES', DEFAULT_MAX_ZIP_ENTRIES);
 const getMaxGeneratedFiles = () => readPositiveIntegerEnv('DOCUMENT_RENDER_MAX_FILES', DEFAULT_MAX_GENERATED_FILES);
+const getGotenbergTimeoutMs = () => readPositiveIntegerEnv('GOTENBERG_TIMEOUT_MS', DEFAULT_GOTENBERG_TIMEOUT_MS);
+
+async function convertDocxToPdfPreview(input: { buffer: Buffer; fileName: string }): Promise<{ contentType: 'application/pdf'; size: number; fileBase64: string }> {
+  const baseUrl = (process.env.GOTENBERG_URL || '').trim().replace(/\/+$/, '');
+  if (!baseUrl) {
+    throw new UserFacingError('PDF 预览服务未配置，请联系管理员。');
+  }
+  const form = new FormData();
+  form.append('files', input.buffer, {
+    filename: ensureDocxExtension(sanitizeFileName(input.fileName, '预览.docx')),
+    contentType: DOCX_CONTENT_TYPE,
+  });
+  let response;
+  try {
+    response = await axios.post(`${baseUrl}/forms/libreoffice/convert`, form, {
+      headers: form.getHeaders(),
+      responseType: 'arraybuffer',
+      timeout: getGotenbergTimeoutMs(),
+      maxBodyLength: MAX_TEMPLATE_DOWNLOAD_BYTES,
+      maxContentLength: MAX_TEMPLATE_DOWNLOAD_BYTES,
+      validateStatus: (status) => status >= 200 && status < 300,
+    });
+  } catch {
+    throw new UserFacingError('PDF 预览生成失败，请稍后重试。');
+  }
+  const pdf = Buffer.from(response.data);
+  return {
+    contentType: 'application/pdf',
+    size: pdf.length,
+    fileBase64: pdf.toString('base64'),
+  };
+}
 
 function buildDownloadUrl(downloadPath: string): string {
   const publicBaseUrl = (process.env.DOCUMENT_RENDER_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
@@ -911,10 +963,11 @@ function buildDocResponse(input: DocumentRenderRequest, requestId: string) {
   const variables = normalizeVariables(input.variables);
   const found = extractVariablesFromText(content);
   const missing = found.filter((name) => !Object.prototype.hasOwnProperty.call(variables, name));
-  throwIfMissingVariables(missing);
+  throwIfMissingVariables(getBlockingMissingVariables(missing, input.missingStrategy));
   const unused = getUnusedVariables(found, variables);
   if (unused.length > 0) throw new UnusedVariablesError(unused);
-  const previewText = renderText(content, variables);
+  const renderVariables = input.missingStrategy === 'blank' ? withBlankMissingVariables(variables, missing) : variables;
+  const previewText = renderText(content, renderVariables);
   if (previewText.includes('{{') || previewText.includes('}}')) throw new UserFacingError('模板中仍有未替换的变量占位符，请检查模板。');
 
   return {
@@ -965,7 +1018,7 @@ async function buildDocxResponse(
     templateBuffer = loadedTemplate?.buffer || await downloadTemplateDocx(input.template.url || '');
   }
   const rendered = await renderDocx(templateBuffer, variables, imageVariables);
-  throwIfMissingVariables(rendered.missing);
+  throwIfMissingVariables(getBlockingMissingVariables(rendered.missing, input.missingStrategy));
   const unusedImageVariables = Object.keys(imageVariables).filter((name) => !rendered.images.found.includes(name)).map((name) => `image:${name}`);
   const unused = [...getUnusedVariables(rendered.found, variables), ...unusedImageVariables];
   if (unused.length > 0) throw new UnusedVariablesError(unused);
@@ -1003,6 +1056,9 @@ async function buildDocxResponse(
     download: input.output?.includeFileBase64
       ? { ...saved, fileBase64: rendered.buffer.toString('base64') }
       : saved,
+    ...(input.output?.includePdfPreview
+      ? { preview: { pdf: await convertDocxToPdfPreview({ buffer: rendered.buffer, fileName: outputFileName }) } }
+      : {}),
   };
   return rendered.images.found.length > 0 || Object.keys(imageVariables).length > 0
     ? { ...response, images: { ...rendered.images, provided: Object.keys(imageVariables), unused: unusedImageVariables.map((name) => name.replace(/^image:/, '')) } }

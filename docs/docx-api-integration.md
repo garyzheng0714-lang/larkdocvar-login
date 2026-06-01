@@ -6,6 +6,7 @@
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-06-02 | 契约新增 | 新增 `missingStrategy=blank` 留空继续契约；新增 `output.includePdfPreview` Gotenberg PDF 预览。 | 文本变量缺失可按空字符串生成，响应仍返回 `variables.missing`；请求 PDF 预览时需配置 `GOTENBERG_URL`。 | 待同步 |
 | 2026-05-31 | 修复澄清 | 修复图片变量请求键前缀兼容、同步批量模板预加载错误 JSON 响应、异步任务 PostgreSQL 持久化、租约和任务读取身份绑定说明。 | 图片变量请求键兼容 `logo`、`image:logo`、`图片:logo`；异步任务配置 `DATABASE_URL` 时写入 `render_jobs`，并按提交时的登录用户或 API Key 绑定查询权限；未完成任务仅在执行租约过期后标记失败。 | 已同步 |
 | 2026-05-13 | 字段补齐 | 补齐模板 `fileBase64` 上传、模板元数据、下载对象和 `output.includeFileBase64` 说明。 | 文档补齐现有请求/响应字段，不新增路由。 | 已同步 |
 | 2026-05-13 | 存储约定 | 新增 TOS 统一根目录 `DOCUMENT_TOS_ROOT_PREFIX`；TOS 生成文件按 `YYYY/MM/DD` 分层，模板与生成文件推荐分到 `templates`、`renders`。 | 不新增响应字段；`storagePath` 和 `download.path` 会反映实际对象 key。 | 已同步 |
@@ -566,9 +567,11 @@ curl -s -X DELETE 'http://localhost:3000/api/v1/document-templates/fbiftemp_2026
 | `template.fileName` | string | 否 | 生成文件名兜底值。 |
 | `variables` | object | 否 | 文本变量。值支持字符串、数字、布尔值和 `null`；`null` 会按空字符串处理。 |
 | `imageVariables` | object | 否 | 图片变量，见「图片变量」。 |
+| `missingStrategy` | string | 否 | 缺失文本变量处理策略。默认 `fail`；传 `blank` 时缺失文本变量按空字符串生成，图片变量仍必须提供。 |
 | `output.fileName` | string | 否 | 下载文件名。服务端会自动补 `.docx`。 |
 | `output.expiresInSeconds` | number | 否 | 下载链接有效期，最大 7 天。 |
 | `output.includeFileBase64` | boolean | 否 | 是否在 `download.fileBase64` 返回文件内容。只建议侧边栏附件写回使用。 |
+| `output.includePdfPreview` | boolean | 否 | 是否通过 Gotenberg 生成真实 PDF 预览并返回 `preview.pdf.fileBase64`。需要服务端配置 `GOTENBERG_URL`。 |
 
 ### 请求示例
 
@@ -601,6 +604,7 @@ curl -s http://localhost:3000/api/v1/document-renders \
 | `document.previewText` | string | 服务端提取的预览文本。 |
 | `variables.found` | string[] | 模板中识别到的文本变量。 |
 | `variables.missing` | string[] | 模板需要但请求未提供的变量。成功时为空数组。 |
+| `preview.pdf` | object | 请求 `output.includePdfPreview=true` 时返回，包含 `contentType`、`size`、`fileBase64`。 |
 | `variables.provided` | string[] | 请求提供的变量名。 |
 | `variables.unused` | string[] | 请求提供但模板未使用的变量。成功时为空数组。 |
 | `download` | object | Docx 下载对象。`doc` 模式不会返回该字段；字段结构见「下载对象」。 |
@@ -642,7 +646,8 @@ curl -s http://localhost:3000/api/v1/document-renders \
 | `400` | `Docx 模板必须提供 template.url 文档链接。` | 传 `template.templateId` 或 `template.url`。 |
 | `400` | `模板不存在。` | 检查 `templateId`。 |
 | `400` | `模板已删除，不能用于生成。` | 换用有效模板。 |
-| `400` | `还有变量没有填写，请补齐后再生成。` | 查看 `missingVariables` 并补齐。 |
+| `400` | `还有变量没有填写，请补齐后再生成。` | 查看 `missingVariables` 并补齐；若业务允许文本留空，可传 `missingStrategy: "blank"`。 |
+| `400` | `PDF 预览服务未配置，请联系管理员。` | 请求了 `output.includePdfPreview=true`，但服务端未配置 `GOTENBERG_URL`。 |
 | `400` | `有变量没有出现在模板中，请检查变量名。` | 查看 `unusedVariables` 并修正变量名。 |
 | `400` | `模板中仍有未替换的变量占位符，请检查模板。` | 检查模板中是否有无法识别或拆分异常的占位符。 |
 
@@ -932,7 +937,7 @@ curl -s http://localhost:3000/api/v1/document-render-jobs/job_1778540000000_abcd
 |---|---|
 | 完全匹配 | 请求里的键名必须和模板变量名一致。 |
 | 自动去空格 | `{{ 客户名称 }}` 会按 `客户名称` 识别。 |
-| 缺失变量 | 模板里有、请求里没有时，接口返回 `missingVariables`，不生成半成品。 |
+| 缺失变量 | 默认返回 `missingVariables` 且不生成半成品；传 `missingStrategy: "blank"` 时，缺失文本变量按空字符串生成，响应的 `variables.missing` 仍会列出这些变量。图片变量仍必须提供。 |
 | 多余变量 | 请求里有、模板里没有时，接口返回 `unusedVariables`，提醒检查变量名。 |
 | 残留占位符 | 输出仍有 `{{...}}` 时会拒绝生成。 |
 
