@@ -6,8 +6,10 @@ import type {
   GenerateOptions,
   GenerateRunner,
   Phase,
+  PreviewOutcome,
   RecordItem,
   RecordSpec,
+  Template,
 } from './types';
 import { CUSTOM_MAPPING_VALUE } from './mapping';
 import { runBatchSlices } from './useBatchRunner';
@@ -87,6 +89,10 @@ export function useGenerateMock(): GenerateRunner {
       setItems([]);
       setPhase('idle');
     },
+    preview: async (_template: Template): Promise<PreviewOutcome> => ({
+      ok: false,
+      error: '演示模式不连后端，PDF 预览请在已配置 Gotenberg 的真实环境查看。',
+    }),
   };
 }
 
@@ -555,12 +561,48 @@ export function useGenerateReal(): GenerateRunner {
     }
   }, [runBatch]);
 
+  // 用"变量名作值"渲染整模板取保真 PDF：样式保真与具体数据无关，正好让用户先确认"样式是否统一"。
+  // 图片占位符不参与（后端在 blank 策略下仍会因缺图片而拦截，此时如实把后端错误透传给用户）。
+  const preview = useCallback(async (template: Template): Promise<PreviewOutcome> => {
+    try {
+      const variables: Record<string, string> = {};
+      for (const v of template.variables ?? []) {
+        if (v.kind !== 'image') variables[v.name] = v.name;
+      }
+      const res = await fetch('/api/v1/document-renders', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          template: { format: 'docx', templateId: template.id },
+          variables,
+          missingStrategy: 'blank',
+          output: { includePdfPreview: true },
+        }),
+      });
+      const json = (await res.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; preview?: { pdf?: { fileBase64?: string; contentType?: string } } }
+        | null;
+      if (!res.ok || !json?.ok) {
+        return { ok: false, error: json?.error || `预览失败（HTTP ${res.status}）` };
+      }
+      const pdf = json.preview?.pdf;
+      if (!pdf?.fileBase64) {
+        return { ok: false, error: 'PDF 预览服务未就绪，请联系管理员配置 Gotenberg。' };
+      }
+      return { ok: true, fileBase64: pdf.fileBase64, contentType: pdf.contentType || 'application/pdf' };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : '预览请求失败' };
+    }
+  }, []);
+
   return {
     items,
     phase,
     counts,
     startedAt,
     start,
+    preview,
     pause: () => setPhase((p) => (p === 'running' ? 'paused' : p)),
     resume: () => setPhase((p) => (p === 'paused' ? 'running' : p)),
     stop: () => {

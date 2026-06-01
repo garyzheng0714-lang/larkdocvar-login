@@ -907,6 +907,22 @@
   white-space: nowrap;
 }
 .ghost-link:hover { text-decoration: underline; }
+.ghost-link:disabled { opacity: 0.55; cursor: default; text-decoration: none; }
+.tpl-row-extra {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 0 2px;
+}
+.tpl-row-extra .ghost-link { margin-left: 0; }
+.tpl-row-preview-err {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #c44a3d;
+}
 .map-table.mapping-table {
   background: #fff;
   border: 1px solid var(--bd-2);

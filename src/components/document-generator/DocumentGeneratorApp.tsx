@@ -177,6 +177,7 @@ export function DocumentGeneratorApp({
           userMenu={userMenu}
           generatorKind={generatorKind}
           onGeneratorKindChange={onGeneratorKindChange}
+          onPreview={runner.preview}
         />
         {(bitableError || templatesError) && (
           <div

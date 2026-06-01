@@ -4,7 +4,14 @@ import { Icon } from './icons';
 import { GeneratorHeader } from './GeneratorHeader';
 import { CUSTOM_MAPPING_VALUE, reconcileMapping } from './mapping';
 import { DocThumb, FileNameEditor, MapRow, OptionRow, WriteBackPicker } from './PrimaryScreenParts';
-import type { GeneratorKind, PrimaryState, TableField } from './types';
+import type { GeneratorKind, PreviewOutcome, PrimaryState, TableField, Template } from './types';
+
+function base64ToBlob(base64: string, contentType: string): Blob {
+  const bytes = atob(base64);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i += 1) arr[i] = bytes.charCodeAt(i);
+  return new Blob([arr], { type: contentType });
+}
 
 interface PrimaryScreenProps {
   state: PrimaryState;
@@ -19,6 +26,7 @@ interface PrimaryScreenProps {
   userMenu?: React.ReactNode;
   generatorKind: GeneratorKind;
   onGeneratorKindChange: (value: GeneratorKind) => void;
+  onPreview?: (template: Template) => Promise<PreviewOutcome>;
 }
 
 export function PrimaryScreen({
@@ -34,11 +42,38 @@ export function PrimaryScreen({
   userMenu,
   generatorKind,
   onGeneratorKindChange,
+  onPreview,
 }: PrimaryScreenProps) {
   const tpl = state.template;
   const mapping = state.mapping;
   const fileNameTpl = state.fileNameTpl;
   const [optsOpen, setOptsOpen] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
+  async function handlePreview() {
+    if (!tpl || !onPreview || previewing) return;
+    setPreviewError(null);
+    setPreviewing(true);
+    // 点击当下先同步开一个空白标签，避免 await 后再 open 被浏览器拦截弹窗
+    const win = window.open('', '_blank');
+    try {
+      const outcome = await onPreview(tpl);
+      if (outcome.ok) {
+        const url = URL.createObjectURL(base64ToBlob(outcome.fileBase64, outcome.contentType));
+        if (win) win.location.href = url;
+        else window.open(url, '_blank');
+      } else {
+        win?.close();
+        setPreviewError(outcome.error);
+      }
+    } catch (err) {
+      win?.close();
+      setPreviewError(err instanceof Error ? err.message : '预览失败');
+    } finally {
+      setPreviewing(false);
+    }
+  }
 
   function setMapping(varName: string, fieldId: string) {
     setState((s) => ({ ...s, mapping: { ...s.mapping, [varName]: fieldId } }));
@@ -66,22 +101,38 @@ export function PrimaryScreen({
       <div className="scroll">
         <div className="block block-tpl">
           {tpl ? (
-            <div className="tpl-row-shell">
-              <button className="tpl-row" onClick={openPicker} title={tpl.name} type="button">
-                <span className="tpl-row-thumb"><DocThumb /></span>
-                <span className="tpl-row-info">
-                  <span className="tpl-name-line">
-                    <span className="tpl-row-name" title={tpl.name}>{tpl.name}</span>
+            <>
+              <div className="tpl-row-shell">
+                <button className="tpl-row" onClick={openPicker} title={tpl.name} type="button">
+                  <span className="tpl-row-thumb"><DocThumb /></span>
+                  <span className="tpl-row-info">
+                    <span className="tpl-name-line">
+                      <span className="tpl-row-name" title={tpl.name}>{tpl.name}</span>
+                    </span>
+                    <span className="tpl-row-meta">
+                      <span>{tpl.updatedAt}更新</span>
+                    </span>
                   </span>
-                  <span className="tpl-row-meta">
-                    <span>{tpl.updatedAt}更新</span>
+                  <span className="tpl-row-action">
+                    替换 <Icon.ChevronR />
                   </span>
-                </span>
-                <span className="tpl-row-action">
-                  替换 <Icon.ChevronR />
-                </span>
-              </button>
-            </div>
+                </button>
+              </div>
+              {onPreview && (
+                <div className="tpl-row-extra">
+                  <button
+                    className="ghost-link"
+                    type="button"
+                    onClick={handlePreview}
+                    disabled={previewing}
+                    title="用变量名作示例值生成保真 PDF，先确认样式是否统一"
+                  >
+                    {previewing ? '生成预览中…' : '预览样式 PDF'}
+                  </button>
+                  {previewError && <span className="tpl-row-preview-err">{previewError}</span>}
+                </div>
+              )}
+            </>
           ) : (
             <button className="tpl-empty" onClick={openPicker} type="button">
               <span className="tpl-empty-glyph"><Icon.Doc /></span>

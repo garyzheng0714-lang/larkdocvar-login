@@ -101,6 +101,10 @@ export interface GenerateOptions {
   onMissing: string;
 }
 
+export type PreviewOutcome =
+  | { ok: true; fileBase64: string; contentType: string }
+  | { ok: false; error: string };
+
 export interface GenerateRunner {
   items: RecordItem[];
   phase: Phase;
@@ -112,6 +116,8 @@ export interface GenerateRunner {
   stop: () => void;
   retry: () => void;
   reset: () => void;
+  // 用"变量名作值"渲染整模板并返回保真 PDF（Gotenberg），让用户在批量生成前先确认样式统一。
+  preview: (template: Template) => Promise<PreviewOutcome>;
 }
 
 export interface PrimaryState {
