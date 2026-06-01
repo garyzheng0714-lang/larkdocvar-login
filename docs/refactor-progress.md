@@ -11,10 +11,10 @@
 |---|---|---|---|
 | **0 止血护栏** | CI 测试门禁 / ErrorBoundary / image 误判修复 / 错误文案带变量名 / accept 纯 docx / ETA 去魔法值 | ✅ 完成 | `3735b51` |
 | **1 换引擎** | easy-template-x + run 归一化重写 Docx 渲染（默认启用，env=legacy 回退）；脚注兜底；缩略图修复；飞书路径 split-run 样式修复 | ✅ 完成 | `3ceb444` `465bdc9` `e16e9c4` |
-| **2 可靠性** | render_jobs DB 驱动队列（markStale 不误杀/租约/重试）；终止以批为粒度；模板归属隔离；pg 连接池上限 | 🚧 进行中 | — |
-| **3 信任体验** | Gotenberg 保真预览/PDF 导出；"留空继续"贯通后端契约 | ⬜ 待开始 | — |
-| **4 可维护性** | 拆分 documentRenderApi.ts(>900行)/PrimaryScreen.tsx；清 _components.css ~110 死类；抽 useBatchRunner 复用两条生成路径 | ⬜ 待开始 | — |
-| **收尾** | 同步 docs/docx-api-integration.md（含更新日志）+ CONTEXT.md + 线上飞书云文档 | ⬜ 待开始 | — |
+| **2 可靠性** | render_jobs DB 驱动队列（markStale 不误杀/租约/重试）；终止以批为粒度；模板归属隔离；pg 连接池上限 | ✅ 完成 | `8a1fa8c` `bd8f0af` |
+| **3 信任体验** | Gotenberg 保真预览/PDF 导出；"留空继续"贯通后端契约 | ✅ 完成 | `1af644c` |
+| **4 可维护性** | 拆分 documentRenderApi.ts / PrimaryScreen.tsx；清 _components.css 死类；抽 useBatchRunner 复用开始生成和重试路径 | ✅ 完成 | `3671b3d` |
+| **收尾** | 同步 docs/docx-api-integration.md（含更新日志）+ CONTEXT.md + 线上飞书云文档；最终回归验证 | ✅ 完成 | 本次收尾提交 |
 
 ## 关键决策（详见 agent 记忆 project_docx-render-engine-choice）
 
@@ -24,6 +24,14 @@
 
 ## 已知技术债 / 后续
 
-- documentRenderApi.ts 暂超 900 行红线（加了新引擎），阶段 4 拆分。
 - 飞书路径还有：图片替换 N+1 重拉文档、批量串行、错误吞掉 logId、识别(raw_content)与替换(单 block)扫描口径不一致——审查 high/medium，未纳入本轮 5 阶段，待评估。
-- 真实 Word 打开的像素级保真验证依赖阶段 3 的 Gotenberg 预览。
+- CSS 静态扫描仅保留 `cloud-notice-info/success` 两个动态拼接类；后续如新增动态类，需要在扫描规则中显式白名单。
+- 真实 Word 打开的像素级保真验证依赖阶段 3 的 Gotenberg 预览服务可用性。
+
+## 最终验证记录
+
+- `npm run typecheck` ✅
+- `npm test` ✅ 227/227
+- `npm run build:web` ✅
+- `git diff --check` ✅
+- Chrome 真实页面验证 ✅ `http://127.0.0.1:5173/?mock=1`，宽屏和窄屏下字段映射、固定值入口、底部生成按钮、进度弹窗与完成态未见裁切或重叠。
