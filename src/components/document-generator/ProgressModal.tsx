@@ -46,7 +46,8 @@ export function ProgressModal({
   const downloadableItems = items.filter((item) => item.status === 'succeeded' && item.downloadUrl);
   const pct = counts.total === 0 ? 0 : Math.round((processedCount / counts.total) * 100);
   const elapsedSec = startedAt > 0 ? Math.max(0, Math.round((Date.now() - startedAt) / 1000)) : 0;
-  const rate = processedCount > 0 && elapsedSec > 0 ? processedCount / elapsedSec : 0.8;
+  // 没有真实样本前不臆造速率：rate=0 → eta=null，UI 显示"正在估算…"而非误导性秒数。
+  const rate = processedCount > 0 && elapsedSec > 0 ? processedCount / elapsedSec : 0;
   const eta = rate > 0 ? Math.ceil((counts.total - processedCount) / rate) : null;
 
   const isDone = phase === 'done' || phase === 'terminated';
@@ -84,7 +85,9 @@ export function ProgressModal({
               <div className="modal-title">{headerLabel}</div>
               <div className="modal-sub">
                 {phase === 'running' &&
-                  `${processedCount} / ${counts.total} · 预计还需 ${eta ?? '–'} 秒`}
+                  `${processedCount} / ${counts.total} · ${
+                    eta !== null ? `预计还需 ${eta} 秒` : '正在估算…'
+                  }`}
                 {phase === 'paused' &&
                   `${processedCount} / ${counts.total} 已处理 · 任务暂停中`}
                 {phase === 'terminated' &&

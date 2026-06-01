@@ -18,7 +18,7 @@ import { DOCX_CONTENT_TYPE, buildContentDisposition, ensureDocxExtension, saniti
 import { UserFacingError } from './documentRenderStorageErrors';
 import { TosDocumentRenderStorage, buildTosPrefix, type TosStorageConfig, normalizeTosEndpoint } from './documentRenderTosStorage';
 import { createFixedLookup, isBlockedIpAddress } from './documentRenderUrlSafety';
-import { imageVariableMapSchema, isImagePlaceholderName, replaceImagePlaceholdersInDocx, type DocumentRenderImageVariableInput, type RenderedImageVariable } from './documentRenderImages';
+import { imageVariableMapSchema, isImagePlaceholderName, normalizeImageVariableName, replaceImagePlaceholdersInDocx, type DocumentRenderImageVariableInput, type RenderedImageVariable } from './documentRenderImages';
 import type { DocumentTemplateResolver } from './documentTemplateApi';
 
 const MAX_TEMPLATE_DOWNLOAD_BYTES = 20 * 1024 * 1024;
@@ -92,10 +92,14 @@ export type DocumentRenderRequest = z.infer<typeof documentRenderSchema>;
 type VerifiedTemplateUrl = { url: URL; lookup?: LookupFunction };
 
 class MissingVariablesError extends UserFacingError {
-  constructor(readonly missingVariables: string[]) { super('还有变量没有填写，请补齐后再生成。'); }
+  constructor(readonly missingVariables: string[]) {
+    super(`还有变量没有填写：${missingVariables.join('、')}。请补齐后再生成。`);
+  }
 }
 class UnusedVariablesError extends UserFacingError {
-  constructor(readonly unusedVariables: string[]) { super('有变量没有出现在模板中，请检查变量名。'); }
+  constructor(readonly unusedVariables: string[]) {
+    super(`以下变量在模板正文里没有找到：${unusedVariables.join('、')}。请检查变量名是否与模板中的 {{占位符}} 完全一致。`);
+  }
 }
 function throwIfMissingVariables(missingVariables: string[]): void {
   if (missingVariables.length > 0) throw new MissingVariablesError(missingVariables);
@@ -111,6 +115,16 @@ function normalizeVariables(input: DocumentRenderRequest['variables']): Record<s
     const name = key.trim();
     if (!name) continue;
     output[name] = value === null ? '' : String(value);
+  }
+  return output;
+}
+
+function normalizeImageVariables(input: DocumentRenderRequest['imageVariables']): Record<string, DocumentRenderImageVariableInput> {
+  const output = Object.create(null) as Record<string, DocumentRenderImageVariableInput>;
+  for (const [key, value] of Object.entries(input || {})) {
+    const name = normalizeImageVariableName(key);
+    if (!name) continue;
+    output[name] = value;
   }
   return output;
 }
@@ -674,7 +688,7 @@ export async function renderDocx(templateBuffer: Buffer, variables: Record<strin
   const foundSet = new Set<string>();
   let renderedDocumentXml = documentXml;
   let hasResidualPlaceholders = false;
-  const renderedImages = await replaceImagePlaceholdersInDocx(zip, imageVariables);
+  const renderedImages = await replaceImagePlaceholdersInDocx(zip, normalizeImageVariables(imageVariables));
 
   const xmlFiles = Object.keys(zip.files).filter((name) => name.startsWith('word/') && name.endsWith('.xml'));
   for (const name of xmlFiles) {
@@ -770,7 +784,7 @@ async function buildDocxResponse(
   }
 
   const variables = normalizeVariables(input.variables);
-  const imageVariables = input.imageVariables || {};
+  const imageVariables = normalizeImageVariables(input.imageVariables);
 
   let templateBuffer: Buffer;
   let loadedTemplate: { buffer: Buffer; version: { fileName: string }; record: { name: string } } | undefined;

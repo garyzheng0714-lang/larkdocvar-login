@@ -28,15 +28,15 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
   function handleFiles(fileList: FileList | null) {
     const f = fileList?.[0];
     if (!f) return;
+    setError(null);
     if (!/\.docx$/i.test(f.name)) {
-      window.alert('请选择 .docx 文件');
+      setError('请选择 .docx 文件（暂不支持 .doc 旧格式）');
       return;
     }
     if (f.size > 20 * 1024 * 1024) {
-      window.alert('模板文件不能超过 20MB');
+      setError('模板文件不能超过 20MB');
       return;
     }
-    setError(null);
     if (!name) setName(f.name.replace(/\.docx?$/i, ''));
     setFile({ name: f.name, size: f.size, file: f });
   }
@@ -111,7 +111,7 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
               <input
                 ref={inputRef}
                 type="file"
-                accept=".docx,.doc"
+                accept=".docx"
                 style={{ display: 'none' }}
                 onChange={(e) => handleFiles(e.target.files)}
               />
@@ -132,7 +132,7 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
                 <div className="nt-tip-code">
                   甲方：<b className="mono">{'{{客户名称}}'}</b><br />
                   合同金额：<b className="mono">{'{{合同金额}}'}</b> 元<br />
-                  图片：<b className="mono">{'{{客户 Logo}}'}</b>
+                  图片：<b className="mono">{'{{image:客户Logo}}'}</b>
                 </div>
                 上传后系统会自动识别所有变量。
               </div>
@@ -165,7 +165,7 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
             <input
               ref={inputRef}
               type="file"
-              accept=".docx,.doc"
+              accept=".docx"
               style={{ display: 'none' }}
               onChange={(e) => handleFiles(e.target.files)}
             />

@@ -214,7 +214,7 @@ export function PrimaryScreen({
             {tpl
               ? unmappedCount > 0
                 ? <span className="ftr-warn">还有 {unmappedCount} 个变量未填</span>
-                : <span>预计 ~{Math.ceil((isStandalone ? 1 : state.selectedCount) * 0.8)} 秒</span>
+                : <span>已就绪，可开始生成</span>
               : '请先选择模板'}
           </div>
         </div>

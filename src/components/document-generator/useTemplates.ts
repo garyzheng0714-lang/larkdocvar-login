@@ -30,15 +30,23 @@ function formatUpdatedAt(iso: string): string {
   }
 }
 
-function looksLikeImageVar(name: string): boolean {
-  return /图片|logo|签名|印章|公章|头像|二维码|qr|image|photo/i.test(name);
+function normalizeImageVariableName(name: string): string {
+  const value = name.trim();
+  if (value.startsWith('image:')) return value.slice('image:'.length).trim();
+  if (value.startsWith('图片:')) return value.slice('图片:'.length).trim();
+  return value;
 }
 
 function toTemplate(item: ServerIndexItem): Template {
-  const variables: TemplateVariable[] = item.variables.map((name) => ({
-    name,
-    kind: looksLikeImageVar(name) ? 'image' : 'text',
-  }));
+  const variables: TemplateVariable[] = item.variables.map((name) => {
+    // 仅依据显式 image:/图片: 前缀判定图片变量，与后端 isImagePlaceholderName 保持一致；
+    // 不再用名称启发式（曾把"签名/印章/logo"等纯文本变量误判为图片，导致整条生成失败）。
+    const isImage = name.trim().startsWith('image:') || name.trim().startsWith('图片:');
+    return {
+      name: isImage ? normalizeImageVariableName(name) : name,
+      kind: isImage ? 'image' : 'text',
+    };
+  });
   return {
     id: item.templateId,
     name: item.name,

@@ -279,7 +279,8 @@ test('公开 API 遇到缺失变量时返回可读错误并列出变量名', asy
     const body = await response.json() as any;
     assert.equal(body.ok, false);
     assert.match(body.requestId, /^[0-9a-f-]{36}$/);
-    assert.equal(body.error, '还有变量没有填写，请补齐后再生成。');
+    // 验证意图：错误信息必须点名具体缺失的变量，用户才知道该补哪个。
+    assert.match(body.error, /金额/);
     assert.deepEqual(body.missingVariables, ['金额']);
   } finally {
     await api.close();
@@ -308,7 +309,8 @@ test('公开 API 遇到未使用变量时返回可读错误并列出变量名', 
     assert.equal(response.status, 400);
     const body = await response.json() as any;
     assert.equal(body.ok, false);
-    assert.equal(body.error, '有变量没有出现在模板中，请检查变量名。');
+    // 验证意图：错误信息必须点名是哪个变量没匹配上，而非笼统"请检查变量名"。
+    assert.match(body.error, /金额/);
     assert.deepEqual(body.unusedVariables, ['金额']);
   } finally {
     await api.close();
