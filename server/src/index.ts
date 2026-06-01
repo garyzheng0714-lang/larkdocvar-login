@@ -4,7 +4,6 @@ import express from 'express';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createBitableSidebarAuthGuard } from './bitableSidebarAuth';
 import { createMutationOriginGuard } from './browserOriginGuard';
 import { createDocumentRenderRouter } from './documentRenderApi';
 import { requireDocumentRenderApiKey } from './documentRenderApiKeyGuard';
@@ -13,13 +12,10 @@ import { createDocumentRenderJobRouter } from './documentRenderJobApi';
 import { createDocumentTemplateRouter } from './documentTemplateApi';
 import { DocumentTemplateService } from './documentTemplateService';
 import { FeishuTemplateService } from './feishu';
-import { getFeishuAppCredentials, peekSessionForRequest } from './auth';
-import { registerOAuthRoutes } from './oauthRoutes';
+import { getFeishuAppCredentials } from './auth';
 import { initDatabase } from './storage';
-import { registerAuthSessionRoutes } from './routes/authSessionRoutes';
 import { registerCloudDocRoutes } from './routes/cloudDocRoutes';
 import { registerHealthRoutes } from './routes/healthRoutes';
-import { registerPluginLoginRoutes } from './routes/pluginLoginRoutes';
 import { registerSavedConfigRoutes } from './routes/savedConfigRoutes';
 
 const app = express();
@@ -29,15 +25,6 @@ const host = process.env.HOST || '0.0.0.0';
 const fbifCredentials = getFeishuAppCredentials('fbif');
 const appId = fbifCredentials.appId;
 const appSecret = fbifCredentials.appSecret;
-
-const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'larkdocvar_session';
-const SESSION_COOKIE_SECURE = process.env.SESSION_COOKIE_SECURE === 'true';
-const SESSION_MAX_AGE_SECONDS = Number(process.env.SESSION_MAX_AGE_SECONDS || 604800);
-const SESSION_COOKIE_SAMESITE_RAW = (process.env.SESSION_COOKIE_SAMESITE || (SESSION_COOKIE_SECURE ? 'none' : 'lax')).toLowerCase();
-const SESSION_COOKIE_SAMESITE: express.CookieOptions['sameSite'] =
-  SESSION_COOKIE_SAMESITE_RAW === 'strict' || SESSION_COOKIE_SAMESITE_RAW === 'none'
-    ? SESSION_COOKIE_SAMESITE_RAW
-    : 'lax';
 
 const hasCredential = Boolean(appId && appSecret);
 const hasDatabaseUrl = Boolean((process.env.DATABASE_URL || '').trim());
@@ -110,21 +97,7 @@ const enforceDocumentRenderBrowserOrigin = createMutationOriginGuard({
   allowedOrigins: corsAllowedOrigins,
   requireOriginOrReferer: false,
 });
-const requireBitableSidebarAuth = createBitableSidebarAuthGuard();
-const requireBitableSidebarLogin = createBitableSidebarAuthGuard();
-const requireCloudDocAccess: express.RequestHandler = async (request, response, next) => {
-  try {
-    const session = await peekSessionForRequest(request);
-    if (session) {
-      next();
-      return;
-    }
-  } catch {
-    // Fall through to the sidebar credential path. A broken cookie must not
-    // block the no-manual-login path in the Feishu sidebar.
-  }
-  return requireBitableSidebarAuth(request, response, next);
-};
+const allowCloudDocAccess: express.RequestHandler = (_request, _response, next) => next();
 
 if (feishuService) {
   // Prewarm the user directory cache asynchronously so the search works fast on first attempt.
@@ -141,23 +114,9 @@ app.use('/api/v1/document-renders', enforceDocumentRenderBrowserOrigin, requireD
 app.use(enforceMutationOrigin);
 app.use(express.json({ limit: '2mb' }));
 
-registerOAuthRoutes(app);
-registerAuthSessionRoutes(app, {
-  cookieName: SESSION_COOKIE_NAME,
-  cookieSecure: SESSION_COOKIE_SECURE,
-  cookieSameSite: SESSION_COOKIE_SAMESITE,
-  maxAgeSeconds: SESSION_MAX_AGE_SECONDS,
-});
-registerPluginLoginRoutes(app, {
-  cookieName: SESSION_COOKIE_NAME,
-  cookieSecure: SESSION_COOKIE_SECURE,
-  cookieSameSite: SESSION_COOKIE_SAMESITE,
-  maxAgeSeconds: SESSION_MAX_AGE_SECONDS,
-  requireBitableSidebarAuth: requireBitableSidebarLogin,
-});
 registerSavedConfigRoutes(app);
 registerHealthRoutes(app, { hasCredential, hasDatabaseUrl });
-registerCloudDocRoutes(app, { feishuService, requireCloudDocAccess });
+registerCloudDocRoutes(app, { feishuService, requireCloudDocAccess: allowCloudDocAccess });
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(serverDir, '../../dist');

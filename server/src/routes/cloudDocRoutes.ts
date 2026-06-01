@@ -1,6 +1,5 @@
 import type express from 'express';
 import { z } from 'zod';
-import { requireAuth } from '../auth';
 import type { FeishuTemplateService, GenerateInput } from '../feishu';
 import { sendFeishuTemplateError, sendInternalError } from './routeErrors';
 
@@ -102,9 +101,6 @@ export function registerCloudDocRoutes(app: express.Express, options: CloudDocRo
         });
         return;
       }
-      const ctx = await requireAuth(request, response);
-      if (!ctx) return;
-
       const parsed = searchUsersSchema.safeParse({
         q: request.query.q,
         limit: request.query.limit,

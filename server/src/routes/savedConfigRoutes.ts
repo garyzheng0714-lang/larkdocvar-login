@@ -1,14 +1,16 @@
 import type express from 'express';
 import { z } from 'zod';
-import { requireAuth } from '../auth';
 import {
   getSavedConfig,
   getSavedConfigByName,
   listSavedConfigs,
   saveOrUpdateConfig,
+  upsertUser,
 } from '../storage';
 import type { SavedConfigRow } from '../storage';
 import { sendInternalError } from './routeErrors';
+
+const ANONYMOUS_OPEN_ID = 'anonymous_sidebar_user';
 
 const saveConfigSchema = z.object({
   configName: z.string().trim().min(1).max(100),
@@ -126,13 +128,22 @@ function buildSavedTemplateRecord(config: SavedConfigRow): {
 
 type SavedTemplateRecord = NonNullable<ReturnType<typeof buildSavedTemplateRecord>>;
 
+async function getConfigOpenId(): Promise<string> {
+  await upsertUser({
+    openId: ANONYMOUS_OPEN_ID,
+    name: '免登录侧边栏用户',
+    enName: null,
+    email: null,
+    avatarUrl: null,
+  });
+  return ANONYMOUS_OPEN_ID;
+}
+
 export function registerSavedConfigRoutes(app: express.Express): void {
   app.get('/api/configs', async (request, response) => {
-    const ctx = await requireAuth(request, response);
-    if (!ctx) return;
-
     try {
-      const rows = await listSavedConfigs(ctx.openId);
+      const openId = await getConfigOpenId();
+      const rows = await listSavedConfigs(openId);
       response.json({
         ok: true,
         configs: rows.map((r) => ({
@@ -148,12 +159,10 @@ export function registerSavedConfigRoutes(app: express.Express): void {
   });
 
   app.get('/api/templates/saved', async (request, response) => {
-    const ctx = await requireAuth(request, response);
-    if (!ctx) return;
-
     try {
+      const openId = await getConfigOpenId();
       const tableId = String(request.query.tableId || '').trim();
-      const rows = await listSavedConfigs(ctx.openId);
+      const rows = await listSavedConfigs(openId);
 
       const byTemplateKey = new Map<string, SavedTemplateRecord>();
       for (const row of rows) {
@@ -191,9 +200,6 @@ export function registerSavedConfigRoutes(app: express.Express): void {
   });
 
   app.get('/api/configs/auto', async (request, response) => {
-    const ctx = await requireAuth(request, response);
-    if (!ctx) return;
-
     const templateUrl = String(request.query.templateUrl || '').trim();
     const tableId = String(request.query.tableId || '').trim();
     const docId = extractDocumentIdFromUrl(templateUrl);
@@ -203,8 +209,9 @@ export function registerSavedConfigRoutes(app: express.Express): void {
     }
 
     try {
+      const openId = await getConfigOpenId();
       const configName = buildTemplateConfigName(docId, tableId);
-      const row = await getSavedConfigByName(ctx.openId, configName);
+      const row = await getSavedConfigByName(openId, configName);
       if (!row) {
         response.json({ ok: true, found: false });
         return;
@@ -220,9 +227,6 @@ export function registerSavedConfigRoutes(app: express.Express): void {
   });
 
   app.post('/api/configs/auto', async (request, response) => {
-    const ctx = await requireAuth(request, response);
-    if (!ctx) return;
-
     const body = request.body as { templateUrl?: string; tableId?: string; payload?: Record<string, unknown> };
     const templateUrl = String(body.templateUrl || '').trim();
     const tableId = String(body.tableId || '').trim();
@@ -236,8 +240,9 @@ export function registerSavedConfigRoutes(app: express.Express): void {
     const payloadJson = JSON.stringify(payload);
 
     try {
+      const openId = await getConfigOpenId();
       const row = await saveOrUpdateConfig({
-        openId: ctx.openId,
+        openId,
         configName: buildTemplateConfigName(docId, tableId),
         payloadJson,
       });
@@ -256,9 +261,6 @@ export function registerSavedConfigRoutes(app: express.Express): void {
   });
 
   app.get('/api/configs/:id', async (request, response) => {
-    const ctx = await requireAuth(request, response);
-    if (!ctx) return;
-
     const configId = String(request.params.id || '').trim();
     if (!/^\d+$/.test(configId)) {
       response.status(400).json({ ok: false, error: '无效的配置 ID。' });
@@ -266,7 +268,8 @@ export function registerSavedConfigRoutes(app: express.Express): void {
     }
 
     try {
-      const row = await getSavedConfig(ctx.openId, configId);
+      const openId = await getConfigOpenId();
+      const row = await getSavedConfig(openId, configId);
       if (!row) {
         response.status(404).json({ ok: false, error: '配置不存在。' });
         return;
@@ -278,9 +281,6 @@ export function registerSavedConfigRoutes(app: express.Express): void {
   });
 
   app.post('/api/configs', async (request, response) => {
-    const ctx = await requireAuth(request, response);
-    if (!ctx) return;
-
     const parsed = saveConfigSchema.safeParse(request.body);
     if (!parsed.success) {
       response.status(400).json({
@@ -293,8 +293,9 @@ export function registerSavedConfigRoutes(app: express.Express): void {
     const payloadJson = JSON.stringify(parsed.data.payload);
 
     try {
+      const openId = await getConfigOpenId();
       const row = await saveOrUpdateConfig({
-        openId: ctx.openId,
+        openId,
         configName: parsed.data.configName,
         payloadJson,
       });
