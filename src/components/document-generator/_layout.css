@@ -107,7 +107,7 @@
 }
 
 /* ─── Header ───────────────────────────────────────────────────── */
-.app-brand-header {
+.hdr.app-brand-header {
   height: auto;
   min-height: 78px;
   flex-direction: column;
