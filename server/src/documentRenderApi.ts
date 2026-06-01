@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import type { LookupFunction } from 'node:net';
 import { normalizeObjectPrefix, sanitizeObjectRequestId } from './objectStorageKeys';
 import JSZip from 'jszip';
+import { TemplateHandler } from 'easy-template-x';
 import { z } from 'zod';
 import { documentRenderJsonParser } from './documentRenderBodyParser';
 import { DOCX_CONTENT_TYPE, buildContentDisposition, ensureDocxExtension, sanitizeFileName } from './documentRenderFile';
@@ -659,11 +660,157 @@ function replacePlaceholdersInTextNodeScope(xml: string, variables: Record<strin
   return { xml: outputXml, found };
 }
 
+// 把每个段落里构成 {{...}} 的相邻 run 的 rPr，统一为「变量名主体重叠字符最多的那个 run」的样式。
+// easy-template-x 替换时取占位符起始 run 的样式，归一化后起始 run 已携带变量名样式，
+// 从而彻底修复「Word 把占位符拆进不同样式 run 导致替换值样式丢失」的根因。
+function normalizePlaceholderRuns(xml: string): string {
+  return xml.replace(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/g, (paragraphXml) => normalizeParagraphRuns(paragraphXml));
+}
+
+function normalizeParagraphRuns(paragraphXml: string): string {
+  const runPattern = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/g;
+  const runs: Array<{ runXml: string; rPr: string; text: string; matchStart: number; matchEnd: number; charStart: number; charEnd: number }> = [];
+  let runMatch: RegExpExecArray | null = null;
+  let charCursor = 0;
+  while ((runMatch = runPattern.exec(paragraphXml)) !== null) {
+    const runXml = runMatch[0];
+    const rPrMatch = runXml.match(/<w:rPr>[\s\S]*?<\/w:rPr>/);
+    const rPr = rPrMatch ? rPrMatch[0] : '';
+    const text = Array.from(runXml.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)).map((part) => unescapeXml(part[1] || '')).join('');
+    runs.push({ runXml, rPr, text, matchStart: runMatch.index, matchEnd: runMatch.index + runXml.length, charStart: charCursor, charEnd: charCursor + text.length });
+    charCursor += text.length;
+  }
+  if (runs.length === 0) return paragraphXml;
+  const combinedText = runs.map((run) => run.text).join('');
+
+  const placeholderPattern = /\{\{\s*[^{}]+?\s*\}\}/g;
+  const repByRunIndex = new Map<number, string>();
+  let placeholder: RegExpExecArray | null = null;
+  while ((placeholder = placeholderPattern.exec(combinedText)) !== null) {
+    const phStart = placeholder.index;
+    const phEnd = placeholder.index + placeholder[0].length;
+    const bodyStart = phStart + 2;
+    const bodyEnd = phEnd - 2;
+    const covered: number[] = [];
+    for (let i = 0; i < runs.length; i++) {
+      if (runs[i].charStart < phEnd && runs[i].charEnd > phStart) covered.push(i);
+    }
+    if (covered.length === 0) continue;
+    // 代表样式 = 与变量名主体 [bodyStart,bodyEnd) 重叠字符最多的那个 run 的 rPr
+    let bestIndex = covered[0];
+    let bestOverlap = -1;
+    for (const i of covered) {
+      const overlap = Math.min(runs[i].charEnd, bodyEnd) - Math.max(runs[i].charStart, bodyStart);
+      if (overlap > bestOverlap) { bestOverlap = overlap; bestIndex = i; }
+    }
+    const representativeRPr = runs[bestIndex].rPr;
+    for (const i of covered) repByRunIndex.set(i, representativeRPr);
+  }
+  if (repByRunIndex.size === 0) return paragraphXml;
+
+  let output = paragraphXml;
+  const indices = Array.from(repByRunIndex.keys()).sort((a, b) => b - a); // 从后往前改写，避免位置偏移
+  for (const i of indices) {
+    const run = runs[i];
+    const representativeRPr = repByRunIndex.get(i) || '';
+    let newRunXml: string;
+    if (run.rPr) {
+      newRunXml = run.runXml.replace(run.rPr, representativeRPr); // 代表样式为空时即删除原 rPr
+    } else if (representativeRPr) {
+      newRunXml = run.runXml.replace(/(<w:r\b[^>]*>)/, `$1${representativeRPr}`);
+    } else {
+      newRunXml = run.runXml;
+    }
+    output = output.slice(0, run.matchStart) + newRunXml + output.slice(run.matchEnd);
+  }
+  return output;
+}
+
+function getDocxTextEngine(): 'easy-template-x' | 'legacy' {
+  return process.env.DOCUMENT_RENDER_TEXT_ENGINE === 'easy-template-x' ? 'easy-template-x' : 'legacy';
+}
+
+const easyTemplateHandler = new TemplateHandler({ delimiters: { tagStart: '{{', tagEnd: '}}' } });
+
+// 新文本渲染引擎：run 归一化 + easy-template-x（纯字面替换、正确处理跨 run/多行/嵌套表格）。
+// 图片占位符仍复用 replaceImagePlaceholdersInDocx；返回契约与 renderDocx 完全一致。
+async function renderDocxWithEasyTemplate(
+  templateBuffer: Buffer,
+  variables: Record<string, string>,
+  imageVariables: Record<string, DocumentRenderImageVariableInput> = {},
+): Promise<{
+  buffer: Buffer;
+  previewText: string; found: string[]; missing: string[]; hasResidualPlaceholders: boolean;
+  images: { found: string[]; missing: string[]; rendered: RenderedImageVariable[] };
+}> {
+  if (templateBuffer.length > MAX_TEMPLATE_DOWNLOAD_BYTES) throw new UserFacingError('Docx 模板不能超过 20MB。');
+  if (templateBuffer.subarray(0, 2).toString('utf8') !== 'PK') throw new UserFacingError('Docx 模板文件损坏或格式不支持。');
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(templateBuffer);
+  } catch {
+    throw new UserFacingError('Docx 模板文件损坏或格式不支持。');
+  }
+  assertSafeDocxZip(zip);
+  if (!zip.file('[Content_Types].xml') || !zip.file('word/document.xml')) throw new UserFacingError('Docx 模板缺少必要的 Word 文档结构。');
+  const contentTypesXml = await zip.file('[Content_Types].xml')?.async('string');
+  if (!contentTypesXml?.includes('application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml')) throw new UserFacingError('Docx 模板缺少必要的 Word 文档结构。');
+  const rootRelsXml = await zip.file('_rels/.rels')?.async('string');
+  if (!rootRelsXml || !hasMainDocumentRelationship(rootRelsXml)) throw new UserFacingError('Docx 模板缺少必要的 Word 文档结构。');
+
+  // 图片占位符（{{image:xxx}} → drawing），复用现有实现
+  const renderedImages = await replaceImagePlaceholdersInDocx(zip, normalizeImageVariables(imageVariables));
+
+  // 收集模板里出现的文本变量名（用于 found/missing），并对各 word/*.xml 做 run 归一化
+  const foundSet = new Set<string>();
+  const xmlFiles = Object.keys(zip.files).filter((name) => name.startsWith('word/') && name.endsWith('.xml'));
+  for (const name of xmlFiles) {
+    const file = zip.file(name);
+    if (!file) continue;
+    const xml = await file.async('string');
+    for (const variableName of extractVariablesFromText(collectTextNodeSegments(xml).combinedText).filter((candidate) => !isImagePlaceholderName(candidate))) {
+      foundSet.add(variableName);
+    }
+    zip.file(name, normalizePlaceholderRuns(xml));
+  }
+
+  const intermediate = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  let finalBuffer: Buffer;
+  try {
+    finalBuffer = Buffer.from(await easyTemplateHandler.process(intermediate, variables));
+  } catch {
+    throw new UserFacingError('文档生成失败：模板内容无法解析，请检查模板占位符是否完整。');
+  }
+
+  const finalZip = await JSZip.loadAsync(finalBuffer);
+  const finalDocumentXml = (await finalZip.file('word/document.xml')?.async('string')) || '';
+
+  const textFound = Array.from(foundSet);
+  const found = Array.from(new Set([...textFound, ...renderedImages.found.map((name) => `image:${name}`)]));
+  const missing = Array.from(new Set([
+    ...textFound.filter((name) => !Object.prototype.hasOwnProperty.call(variables, name)),
+    ...renderedImages.missing.map((name) => `image:${name}`),
+  ]));
+  const hasResidualPlaceholders = finalDocumentXml.includes('{{') || finalDocumentXml.includes('}}');
+
+  return {
+    buffer: finalBuffer,
+    previewText: extractPreviewTextFromDocumentXml(finalDocumentXml),
+    found,
+    missing,
+    hasResidualPlaceholders,
+    images: renderedImages,
+  };
+}
+
 export async function renderDocx(templateBuffer: Buffer, variables: Record<string, string>, imageVariables: Record<string, DocumentRenderImageVariableInput> = {}): Promise<{
   buffer: Buffer;
   previewText: string; found: string[]; missing: string[]; hasResidualPlaceholders: boolean;
   images: { found: string[]; missing: string[]; rendered: RenderedImageVariable[] };
 }> {
+  if (getDocxTextEngine() === 'easy-template-x') {
+    return renderDocxWithEasyTemplate(templateBuffer, variables, imageVariables);
+  }
   if (templateBuffer.length > MAX_TEMPLATE_DOWNLOAD_BYTES) throw new UserFacingError('Docx 模板不能超过 20MB。');
   if (templateBuffer.subarray(0, 2).toString('utf8') !== 'PK') throw new UserFacingError('Docx 模板文件损坏或格式不支持。');
 
@@ -924,6 +1071,8 @@ export const __test__ = {
   extractVariablesFromText,
   renderText,
   renderDocx,
+  renderDocxWithEasyTemplate,
+  normalizePlaceholderRuns,
   isBlockedIpAddress,
   normalizeOssPrefix: normalizeObjectPrefix, createFixedLookup, readOssConfig, readTosConfig, OssDocumentRenderStorage, sanitizeRequestId: sanitizeObjectRequestId, validateTemplateUrl,
 };
