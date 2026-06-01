@@ -798,6 +798,47 @@
   cursor: pointer;
   font-size: 12px;
 }
+
+.confirm-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(20, 24, 35, .34);
+}
+.confirm {
+  width: min(320px, calc(100vw - 32px));
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 18px 40px rgba(20, 30, 60, .20);
+  overflow: hidden;
+}
+.confirm-title {
+  padding: 16px 18px 8px;
+  color: var(--txt-1);
+  font-size: 15px;
+  font-weight: 600;
+}
+.confirm-text {
+  padding: 0 18px 16px;
+  color: var(--txt-2);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.confirm-text b {
+  color: var(--err);
+  font-variant-numeric: tabular-nums;
+}
+.confirm-ftr {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid var(--bd-2);
+}
 @container (max-width: 430px) {
   .modal {
     width: min(360px, calc(100vw - 24px));
