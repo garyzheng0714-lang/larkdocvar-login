@@ -9,14 +9,15 @@ import {
 } from './bitableAdapter';
 import type { TableField } from '../types';
 
-test('云文档写回字段只允许文本或 URL 字段，避免把链接写进附件等不兼容字段', () => {
+test('云文档写回字段允许文本类、URL 和公司字段，避免把链接写进附件等不兼容字段', () => {
   const fields: TableField[] = [
     { id: 'text', name: '文本', type: 'text', icon: '' },
     { id: 'url', name: '链接', type: 'text', rawType: FieldType.Url, icon: '' },
+    { id: 'company', name: '公司', type: 'text', rawType: FieldType.Object, icon: '' },
     { id: 'attachment', name: '附件', type: 'attachment', rawType: FieldType.Attachment, icon: '' },
   ];
 
-  assert.deepEqual(getCloudDocOutputFields(fields).map((field) => field.id), ['text', 'url']);
+  assert.deepEqual(getCloudDocOutputFields(fields).map((field) => field.id), ['text', 'url', 'company']);
 });
 
 test('自动写回字段会避开重名字段并刷新字段列表', async () => {

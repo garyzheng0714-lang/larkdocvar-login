@@ -6,6 +6,7 @@ import type { TableField, FieldKind } from './types';
 function mapBitableType(t: number): FieldKind {
   switch (t) {
     case FieldType.Text:
+    case FieldType.Object:
       return 'text';
     case FieldType.Number:
     case FieldType.Currency:

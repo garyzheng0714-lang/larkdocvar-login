@@ -4,6 +4,12 @@ import { stringifyCellValue } from '../cloudFieldMapping';
 import type { TableField } from '../types';
 import { AUTO_OUTPUT_FIELD } from './constants';
 
+const CLOUD_DOC_OUTPUT_RAW_TYPES = new Set<number>([
+  FieldType.Text,
+  FieldType.Url,
+  FieldType.Object,
+]);
+
 export async function resolveCloudTable(activeTableId?: string | null): Promise<ITable> {
   if (activeTableId) {
     return bitable.base.getTableById(activeTableId);
@@ -83,7 +89,7 @@ export function getCloudDocOutputFields(fields: TableField[]): TableField[] {
   return fields.filter((field) =>
     field.rawType == null
       ? field.type === 'text'
-      : field.rawType === FieldType.Text || field.rawType === FieldType.Url,
+      : CLOUD_DOC_OUTPUT_RAW_TYPES.has(field.rawType),
   );
 }
 
