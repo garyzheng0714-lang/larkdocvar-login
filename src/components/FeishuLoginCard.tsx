@@ -9,6 +9,10 @@ import {
   isLikelyFeishuClientRuntime,
   loginWithFeishuClient,
 } from "../feishuClientLogin";
+import {
+  getBitableSidebarLoginDiagnostics,
+  loginWithBitableSidebar,
+} from "../bitableSidebarLogin";
 
 type LoginOrg = "fbif" | "fude";
 
@@ -150,14 +154,12 @@ function LoginButton({
   onBeforeLogin,
   onLoginToken,
   onLoginError,
-  onClientAuthUnavailable,
 }: {
   org: LoginOrg;
   variant: "primary" | "secondary";
   onBeforeLogin?: () => void;
   onLoginToken?: (token: string) => void;
   onLoginError?: (message: string) => void;
-  onClientAuthUnavailable?: (org: LoginOrg) => void;
 }) {
   const [hover, setHover] = useState(false);
   const [active, setActive] = useState(false);
@@ -187,6 +189,26 @@ function LoginButton({
     setBusy(true);
     if (onBeforeLogin) onBeforeLogin();
     try {
+      if (isLikelyFeishuClientRuntime()) {
+        try {
+          const sidebarResult = await loginWithBitableSidebar();
+          onLoginToken?.(sidebarResult.sessionToken);
+          return;
+        } catch (error) {
+          const diagnostics = getBitableSidebarLoginDiagnostics(error);
+          void fetch(`/api/auth/feishu/${org}/client-diagnostics`, {
+            method: "POST",
+            credentials: "include",
+            cache: "no-store",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...diagnostics,
+              stage: `bitable_${diagnostics.stage}`,
+            }),
+          }).catch(() => undefined);
+        }
+      }
+
       try {
         const sessionToken = await loginWithFeishuClient(org);
         onLoginToken?.(sessionToken);
@@ -203,7 +225,7 @@ function LoginButton({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(getFeishuClientLoginDiagnostics(error)),
           }).catch(() => undefined);
-          onClientAuthUnavailable?.(org);
+          onLoginError?.("侧边栏自动登录失败，请关闭右侧插件后重新打开。");
           return;
         }
       }
@@ -586,12 +608,6 @@ export function FeishuLoginCard({ onBeforeLogin, onLoginToken, authError }: Feis
   const [localAuthError, setLocalAuthError] = useState<string | null>(null);
   const visibleAuthError = mode === "oauth" ? localAuthError || authError : null;
 
-  const handleClientAuthUnavailable = useCallback((nextOrg: LoginOrg) => {
-    setOrg(nextOrg);
-    setLocalAuthError(null);
-    setMode("qr");
-  }, []);
-
   return (
     <div
       className="min-h-screen flex items-center justify-center px-6 py-8"
@@ -645,7 +661,6 @@ export function FeishuLoginCard({ onBeforeLogin, onLoginToken, authError }: Feis
                 }}
                 onLoginToken={onLoginToken}
                 onLoginError={setLocalAuthError}
-                onClientAuthUnavailable={handleClientAuthUnavailable}
               />
               <LoginButton
                 org="fude"
@@ -656,7 +671,6 @@ export function FeishuLoginCard({ onBeforeLogin, onLoginToken, authError }: Feis
                 }}
                 onLoginToken={onLoginToken}
                 onLoginError={setLocalAuthError}
-                onClientAuthUnavailable={handleClientAuthUnavailable}
               />
             </div>
           </>

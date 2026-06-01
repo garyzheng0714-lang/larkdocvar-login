@@ -13,9 +13,39 @@ export interface BitableSidebarLoginResult {
   user: BitableSidebarLoginUser;
 }
 
+export interface BitableSidebarLoginDiagnostics {
+  stage: string;
+  message: string;
+  hasBitable: boolean;
+  hasBridge: boolean;
+  hasBase: boolean;
+  hasOpenId?: boolean;
+  hasBaseId?: boolean;
+  hasTableId?: boolean;
+  responseStatus?: number;
+  responseError?: string;
+  isIframe?: boolean;
+  referrerOrigin?: string;
+  userAgent?: string;
+}
+
+export class BitableSidebarLoginError extends Error {
+  diagnostics: BitableSidebarLoginDiagnostics;
+
+  constructor(diagnostics: BitableSidebarLoginDiagnostics) {
+    super(diagnostics.message);
+    this.name = 'BitableSidebarLoginError';
+    this.diagnostics = diagnostics;
+  }
+}
+
 interface BitableSelection {
   baseId?: string | null;
   tableId?: string | null;
+}
+
+interface BitableTableLike {
+  id?: string | null;
 }
 
 interface BitableSidebarSdk {
@@ -26,6 +56,7 @@ interface BitableSidebarSdk {
   };
   base: {
     getSelection(): Promise<BitableSelection | null>;
+    getActiveTable?(): Promise<BitableTableLike | null>;
   };
 }
 
@@ -49,6 +80,66 @@ function clean(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function getReferrerOrigin(): string {
+  if (typeof document === 'undefined') return '';
+  try {
+    return document.referrer ? new URL(document.referrer).origin : '';
+  } catch {
+    return '';
+  }
+}
+
+function isIframe(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
+function getRuntimeDiagnostics(
+  sdk: Partial<BitableSidebarSdk> | null | undefined,
+): Pick<BitableSidebarLoginDiagnostics, 'hasBitable' | 'hasBridge' | 'hasBase' | 'isIframe' | 'referrerOrigin' | 'userAgent'> {
+  return {
+    hasBitable: Boolean(sdk),
+    hasBridge: Boolean(sdk?.bridge),
+    hasBase: Boolean(sdk?.base),
+    isIframe: isIframe(),
+    referrerOrigin: getReferrerOrigin(),
+    userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent.slice(0, 240),
+  };
+}
+
+function createLoginError(
+  stage: string,
+  message: string,
+  sdk: Partial<BitableSidebarSdk> | null | undefined,
+  details: Partial<BitableSidebarLoginDiagnostics> = {},
+): BitableSidebarLoginError {
+  return new BitableSidebarLoginError({
+    stage,
+    message,
+    ...getRuntimeDiagnostics(sdk),
+    ...details,
+  });
+}
+
+function toMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error || '侧边栏自动登录失败。');
+}
+
+export function getBitableSidebarLoginDiagnostics(error: unknown): BitableSidebarLoginDiagnostics {
+  if (error instanceof BitableSidebarLoginError) {
+    return error.diagnostics;
+  }
+  return {
+    stage: 'unknown',
+    message: toMessage(error),
+    ...getRuntimeDiagnostics(bitable as unknown as Partial<BitableSidebarSdk>),
+  };
+}
+
 export function buildBitablePluginLoginRequest(input: {
   openId: string;
   selection: BitableSelection | null;
@@ -59,7 +150,16 @@ export function buildBitablePluginLoginRequest(input: {
   const baseId = clean(input.selection?.baseId);
   const tableId = clean(input.selection?.tableId);
   if (!openId || !baseId || !tableId) {
-    throw new Error('请在飞书多维表格侧边栏中打开插件后再操作。');
+    throw createLoginError(
+      'missing_sidebar_context',
+      '请在飞书多维表格侧边栏中打开插件后再操作。',
+      bitable as unknown as Partial<BitableSidebarSdk>,
+      {
+        hasOpenId: Boolean(openId),
+        hasBaseId: Boolean(baseId),
+        hasTableId: Boolean(tableId),
+      },
+    );
   }
 
   return {
@@ -83,12 +183,30 @@ export async function loginWithBitableSidebar(options: {
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? 3500;
 
-  const [openId, selection, baseUserId, tenantKey] = await withTimeout(Promise.all([
-    sdk.bridge.getUserId(),
-    sdk.base.getSelection().catch(() => null),
-    sdk.bridge.getBaseUserId().catch(() => ''),
-    sdk.bridge.getTenantKey().catch(() => ''),
-  ]), timeoutMs, '侧边栏身份读取超时。');
+  let openId = '';
+  let selection: BitableSelection | null = null;
+  let baseUserId = '';
+  let tenantKey = '';
+  try {
+    const [nextOpenId, nextSelection, nextActiveTable, nextBaseUserId, nextTenantKey] = await withTimeout(Promise.all([
+      sdk.bridge.getUserId(),
+      sdk.base.getSelection().catch(() => null),
+      sdk.base.getActiveTable ? sdk.base.getActiveTable().catch(() => null) : Promise.resolve(null),
+      sdk.bridge.getBaseUserId().catch(() => ''),
+      sdk.bridge.getTenantKey().catch(() => ''),
+    ]), timeoutMs, '侧边栏身份读取超时。');
+
+    openId = nextOpenId;
+    selection = {
+      ...(nextSelection ?? {}),
+      tableId: clean(nextSelection?.tableId) || clean(nextActiveTable?.id) || null,
+    };
+    baseUserId = nextBaseUserId;
+    tenantKey = nextTenantKey;
+  } catch (error) {
+    if (error instanceof BitableSidebarLoginError) throw error;
+    throw createLoginError('sdk_identity_unavailable', toMessage(error), sdk);
+  }
 
   const request = buildBitablePluginLoginRequest({
     openId,
@@ -97,13 +215,22 @@ export async function loginWithBitableSidebar(options: {
     tenantKey,
   });
 
-  const response = await fetchImpl('/api/auth/plugin-login', {
-    method: 'POST',
-    credentials: 'include',
-    cache: 'no-store',
-    headers: request.headers,
-    body: request.body,
-  });
+  let response: Response;
+  try {
+    response = await fetchImpl('/api/auth/plugin-login', {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: request.headers,
+      body: request.body,
+    });
+  } catch (error) {
+    throw createLoginError('plugin_login_network', toMessage(error), sdk, {
+      hasOpenId: Boolean(clean(openId)),
+      hasBaseId: Boolean(clean(selection?.baseId)),
+      hasTableId: Boolean(clean(selection?.tableId)),
+    });
+  }
   const payload = await response.json().catch(() => null) as {
     ok?: boolean;
     token?: string;
@@ -113,7 +240,14 @@ export async function loginWithBitableSidebar(options: {
   } | null;
   const sessionToken = clean(payload?.session_token || payload?.token);
   if (!response.ok || payload?.ok === false || !sessionToken || !payload?.user) {
-    throw new Error(payload?.error || '侧边栏自动登录失败。');
+    const responseError = clean(payload?.error);
+    throw createLoginError('plugin_login_rejected', responseError || '侧边栏自动登录失败。', sdk, {
+      hasOpenId: Boolean(clean(openId)),
+      hasBaseId: Boolean(clean(selection?.baseId)),
+      hasTableId: Boolean(clean(selection?.tableId)),
+      responseStatus: response.status,
+      responseError,
+    });
   }
 
   return {

@@ -9,7 +9,11 @@ import {
   setStoredEmbeddedAuthToken,
   withEmbeddedAuthHeader,
 } from "./authSessionToken";
-import { loginWithBitableSidebar } from "./bitableSidebarLogin";
+import {
+  getBitableSidebarLoginDiagnostics,
+  loginWithBitableSidebar,
+} from "./bitableSidebarLogin";
+import { isLikelyFeishuClientRuntime } from "./feishuClientLogin";
 import {
   DocumentGeneratorApp,
   CloudDocGeneratorApp,
@@ -282,6 +286,20 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit, timeoutMs 
   }
 }
 
+function reportBitableSidebarLoginFailure(error: unknown): void {
+  const diagnostics = getBitableSidebarLoginDiagnostics(error);
+  void fetch("/api/auth/feishu/fbif/client-diagnostics", {
+    method: "POST",
+    credentials: "include",
+    cache: "no-store",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...diagnostics,
+      stage: `bitable_${diagnostics.stage}`,
+    }),
+  }).catch(() => undefined);
+}
+
 export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -317,6 +335,9 @@ export default function App() {
   }, []);
 
   const tryBitableSidebarAutoLogin = useCallback(async () => {
+    if (!isLikelyFeishuClientRuntime()) {
+      return false;
+    }
     if (bitableAutoLoginAttemptedRef.current) {
       return false;
     }
@@ -335,7 +356,8 @@ export default function App() {
       setIsAuthenticated(true);
       clearAuthPendingFlag();
       return true;
-    } catch {
+    } catch (error) {
+      reportBitableSidebarLoginFailure(error);
       return false;
     }
   }, [clearAuthPendingFlag]);
@@ -481,6 +503,13 @@ export default function App() {
     clearAuthPendingFlag();
   }, [clearAuthPendingFlag]);
 
+  const handleEmbeddedLoginToken = useCallback((token: string) => {
+    setStoredEmbeddedAuthToken(token);
+    setAuthError(null);
+    clearAuthPendingFlag();
+    void checkAuthSession();
+  }, [checkAuthSession, clearAuthPendingFlag]);
+
   const mockMode = useMockMode();
   const standalonePreview = useStandalonePreviewMode();
 
@@ -503,7 +532,13 @@ export default function App() {
   }
 
   if (!isAuthenticated) {
-    return <FeishuLoginCard onBeforeLogin={markAuthPending} authError={authError} />;
+    return (
+      <FeishuLoginCard
+        onBeforeLogin={markAuthPending}
+        onLoginToken={handleEmbeddedLoginToken}
+        authError={authError}
+      />
+    );
   }
 
   return (
