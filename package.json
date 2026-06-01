@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && npm run build:web",
     "build:web": "vite build",
-    "test": "DOCUMENT_RENDER_SKIP_PROJECT_ENV=true node --import tsx --test \"server/src/**/*.test.ts\"",
+    "test": "DOCUMENT_RENDER_SKIP_PROJECT_ENV=true node --import tsx --test \"server/src/**/*.test.ts\" \"src/**/*.test.ts\" \"src/**/*.test.tsx\"",
     "verify:oss": "node --import tsx server/src/scripts/verifyOssStorage.ts",
     "verify:document-render": "node --import tsx server/src/scripts/verifyDocumentRenderMilestone1.ts",
     "verify:docx-client": "node --import tsx server/src/scripts/verifyDocxClientOpen.ts",
