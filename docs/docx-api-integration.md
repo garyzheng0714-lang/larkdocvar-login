@@ -1,11 +1,12 @@
 # Docx API 参考文档
 
-最后更新：2026-05-13
+最后更新：2026-05-31
 
 ## 更新日志
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-05-31 | 修复澄清 | 修复图片变量请求键前缀兼容、同步批量模板预加载错误 JSON 响应、异步任务 PostgreSQL 持久化、租约和任务读取身份绑定说明。 | 图片变量请求键兼容 `logo`、`image:logo`、`图片:logo`；异步任务配置 `DATABASE_URL` 时写入 `render_jobs`，并按提交时的登录用户或 API Key 绑定查询权限；未完成任务仅在执行租约过期后标记失败。 | 已同步 |
 | 2026-05-13 | 字段补齐 | 补齐模板 `fileBase64` 上传、模板元数据、下载对象和 `output.includeFileBase64` 说明。 | 文档补齐现有请求/响应字段，不新增路由。 | 已同步 |
 | 2026-05-13 | 存储约定 | 新增 TOS 统一根目录 `DOCUMENT_TOS_ROOT_PREFIX`；TOS 生成文件按 `YYYY/MM/DD` 分层，模板与生成文件推荐分到 `templates`、`renders`。 | 不新增响应字段；`storagePath` 和 `download.path` 会反映实际对象 key。 | 已同步 |
 | 2026-05-13 | 契约新增 | 明确 API 文档优先原则；新增模板缩略图响应字段契约。 | 模板列表、模板详情和模板版本响应新增 `thumbnail`。 | 已同步 |
@@ -747,7 +748,8 @@ curl -s http://localhost:3000/api/v1/document-renders/batch \
 | HTTP URL | `/api/v1/document-render-jobs` |
 | HTTP Method | `POST` |
 | 适用场景 | 100 条以上的大批量生成。单任务最多 500 条。 |
-| 状态保存 | 当前任务状态保存在服务进程内存中，服务重启后历史任务不会保留。 |
+| 状态保存 | 配置 `DATABASE_URL` 时任务状态写入 PostgreSQL `render_jobs` 表；未配置数据库的本地开发/测试环境会降级为进程内存。运行中的任务会刷新执行租约，服务启动时只会把租约已过期的 `pending` / `running` 任务标记为 `failed`，避免多实例误杀仍在执行的任务。 |
+| 查询权限 | 任务会绑定提交时的登录用户或 API Key；查询进度和结果时必须使用同一身份。身份不匹配时返回 `任务不存在。`，避免泄露任务是否存在。 |
 
 ### 请求体
 
@@ -943,7 +945,7 @@ Docx 里的正文、表格、页眉、页脚，以及 Word 把变量拆成多个
 | 批注内容 | 批注范围 | 转换结果 |
 |---|---|---|
 | `变量：公司名称` | 选中成品里的公司名称文字 | `{{公司名称}}` |
-| `图片变量：客户logo` | 选中成品里的 logo 图片 | `{{image:客户logo|width=原图宽度|height=原图高度|align=原段落对齐}}` |
+| `图片变量：客户logo` | 选中成品里的 logo 图片 | `{{image:客户logo\|width=原图宽度\|height=原图高度\|align=原段落对齐}}` |
 
 规则：
 
@@ -986,8 +988,8 @@ Docx 里的正文、表格、页眉、页脚，以及 Word 把变量拆成多个
 
 | 字段 | 说明 |
 |---|---|
-| `imageVariables.<name>.url` | 图片下载链接。生产环境默认要求 HTTPS，且不能指向内网、本机或云元数据地址。 |
-| `imageVariables.<name>.urls` | 兼容侧边栏附件字段，传数组时使用第一张图。 |
+| `imageVariables.<name>.url` | 图片下载链接。生产环境默认要求 HTTPS，且不能指向内网、本机或云元数据地址。`<name>` 推荐传不带前缀的变量名，如 `logo`；为兼容侧边栏和旧调用，也接受 `image:logo`、`图片:logo`。 |
+| `imageVariables.<name>.urls` | 兼容侧边栏附件字段，传数组时使用第一张图。`<name>` 规则同上。 |
 | `imageVariables.<name>.ossProcess` | 服务端会追加为 `x-oss-process=<值>`。如果使用 OSS 临时签名链接，建议签名时就包含图片处理参数。 |
 | `imageVariables.<name>.width` / `height` | 覆盖模板占位符里的同名参数。 |
 | `imageVariables.<name>.maxWidth` / `maxHeight` | 覆盖模板占位符里的同名参数。 |
@@ -1094,6 +1096,6 @@ Docx 里的正文、表格、页眉、页脚，以及 Word 把变量拆成多个
 - 生产环境已配置生成文件 OSS 或 TOS 存储。
 - 下载链接过期时间符合业务要求。
 - 错误响应里的 `missingVariables` 和 `unusedVariables` 已在业务系统里可见。
-- 异步任务状态当前是进程内存；如果业务要求服务重启后仍可查询，需先做持久化。
+- 异步任务状态在配置 `DATABASE_URL` 时写入 PostgreSQL；未完成任务会刷新执行租约，租约过期后才会被标记为失败，已完成且未过期任务仍可由提交时同一登录用户或 API Key 查询。
 
 服务端配置、对象存储和故障排查见 `docs/docx-operator-runbook.md`。

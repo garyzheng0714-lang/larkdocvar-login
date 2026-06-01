@@ -1,7 +1,10 @@
 import express from 'express';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { peekSessionForRequest } from './auth';
 import { documentRenderJsonParser } from './documentRenderBodyParser';
+import { hasValidDocumentRenderApiKey, readPresentedDocumentRenderApiKey } from './documentRenderApiKeyGuard';
+import * as storage from './storage';
 import {
   createConfiguredStorage,
   type DocumentRenderRequest,
@@ -14,12 +17,13 @@ import {
   type DocumentRenderBatchRecordInput,
   type DocumentRenderBatchRecordResult,
 } from './documentRenderBatchApi';
+import { UserFacingError } from './documentRenderStorageErrors';
 
 // Job 存储接口：支持内存 Map（测试用）和 PostgreSQL（生产用）
 interface JobStore {
-  insert(job: { jobId: string; status: string; templateJson: string; outputJson?: string; total: number; recordsJson: string; expiresAt: string }): Promise<void>;
-  get(jobId: string): Promise<{ jobId: string; status: string; templateJson: string; outputJson: string | null; total: number; processed: number; succeeded: number; failed: number; recordsJson: string; resultsJson: string; error: string | null; createdAt: string; updatedAt: string; expiresAt: string } | undefined>;
-  update(jobId: string, updates: { status?: string; processed?: number; succeeded?: number; failed?: number; resultsJson?: string; error?: string }): Promise<void>;
+  insert(job: { jobId: string; ownerKey: string; leaseOwner: string; leaseExpiresAt: string; status: string; templateJson: string; outputJson?: string; total: number; recordsJson: string; expiresAt: string }): Promise<void>;
+  get(jobId: string, ownerKey: string): Promise<{ jobId: string; ownerKey: string; leaseOwner: string | null; leaseExpiresAt: string | null; status: string; templateJson: string; outputJson: string | null; total: number; processed: number; succeeded: number; failed: number; recordsJson: string; resultsJson: string; error: string | null; createdAt: string; updatedAt: string; expiresAt: string } | undefined>;
+  update(jobId: string, updates: { status?: string; processed?: number; succeeded?: number; failed?: number; resultsJson?: string; error?: string; expiresAt?: string; leaseOwner?: string; leaseExpiresAt?: string }): Promise<void>;
   cleanup(): Promise<number>;
   markStaleAsFailed(): Promise<number>;
 }
@@ -27,7 +31,7 @@ interface JobStore {
 // 内存 Job 存储（测试用）
 function createMemoryJobStore(): JobStore {
   const jobs = new Map<string, {
-    jobId: string; status: string; templateJson: string; outputJson: string | null;
+    jobId: string; ownerKey: string; leaseOwner: string | null; leaseExpiresAt: string | null; status: string; templateJson: string; outputJson: string | null;
     total: number; processed: number; succeeded: number; failed: number;
     recordsJson: string; resultsJson: string; error: string | null;
     createdAt: string; updatedAt: string; expiresAt: string;
@@ -43,7 +47,11 @@ function createMemoryJobStore(): JobStore {
         createdAt: now, updatedAt: now,
       });
     },
-    async get(jobId) { return jobs.get(jobId); },
+    async get(jobId, ownerKey) {
+      const job = jobs.get(jobId);
+      if (!job || job.ownerKey !== ownerKey) return undefined;
+      return job;
+    },
     async update(jobId, updates) {
       const job = jobs.get(jobId);
       if (!job) return;
@@ -53,6 +61,9 @@ function createMemoryJobStore(): JobStore {
       if (updates.failed !== undefined) job.failed = updates.failed;
       if (updates.resultsJson !== undefined) job.resultsJson = updates.resultsJson;
       if (updates.error !== undefined) job.error = updates.error;
+      if (updates.expiresAt !== undefined) job.expiresAt = updates.expiresAt;
+      if (updates.leaseOwner !== undefined) job.leaseOwner = updates.leaseOwner;
+      if (updates.leaseExpiresAt !== undefined) job.leaseExpiresAt = updates.leaseExpiresAt;
       job.updatedAt = new Date().toISOString();
     },
     async cleanup() {
@@ -69,7 +80,7 @@ function createMemoryJobStore(): JobStore {
     async markStaleAsFailed() {
       let count = 0;
       for (const job of jobs.values()) {
-        if (job.status === 'pending' || job.status === 'running') {
+        if ((job.status === 'pending' || job.status === 'running') && job.leaseExpiresAt && Date.parse(job.leaseExpiresAt) <= Date.now()) {
           job.status = 'failed';
           job.error = '服务重启，任务中断';
           job.updatedAt = new Date().toISOString();
@@ -83,28 +94,26 @@ function createMemoryJobStore(): JobStore {
 
 // PostgreSQL Job 存储（生产用）
 function createPostgresJobStore(): JobStore | null {
-  try {
-    // 延迟导入，避免测试环境报错
-    const storage = require('./storage');
-    return {
-      async insert(job) { await storage.insertRenderJob(job); },
-      async get(jobId) { return storage.getRenderJob(jobId); },
-      async update(jobId, updates) { await storage.updateRenderJob(jobId, updates); },
-      async cleanup() { return storage.cleanupExpiredRenderJobs(); },
-      async markStaleAsFailed() { return storage.markStaleRenderJobsAsFailed(); },
-    };
-  } catch {
-    return null;
-  }
+  if (!(process.env.DATABASE_URL || '').trim()) return null;
+  return {
+    async insert(job) { await storage.insertRenderJob(job); },
+    async get(jobId, ownerKey) { return storage.getRenderJob(jobId, ownerKey); },
+    async update(jobId, updates) { await storage.updateRenderJob(jobId, updates); },
+    async cleanup() { return storage.cleanupExpiredRenderJobs(); },
+    async markStaleAsFailed() { return storage.markStaleRenderJobsAsFailed(); },
+  };
 }
 
 const MAX_JOB_RECORDS = 500;
 const DEFAULT_JOB_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_JOB_LEASE_MS = 15 * 60 * 1000;
+const PROCESS_LEASE_OWNER = `process:${randomUUID()}`;
 
 type RenderJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'partial_failed';
 
 type RenderJob = {
   jobId: string;
+  ownerKey: string;
   status: RenderJobStatus;
   template: DocumentRenderRequest['template'];
   output?: DocumentRenderRequest['output'];
@@ -168,6 +177,23 @@ function publicJob(job: RenderJob) {
   };
 }
 
+function hashOwnerToken(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 32);
+}
+
+async function resolveJobOwnerKey(request: express.Request): Promise<string> {
+  const session = await peekSessionForRequest(request).catch(() => null);
+  if (session?.profile.openId) return `feishu:${session.profile.openId}`;
+  if (hasValidDocumentRenderApiKey(request)) {
+    return `api-key:${hashOwnerToken(readPresentedDocumentRenderApiKey(request))}`;
+  }
+  return 'anonymous';
+}
+
+function toPublicJobError(error: unknown): string {
+  return error instanceof UserFacingError ? error.message : '任务执行失败，请稍后重试。';
+}
+
 function getJobTtlMs(value: number | undefined): number {
   const fromEnv = Number(process.env.DOCUMENT_RENDER_JOB_TTL_SECONDS || 0);
   if (value !== undefined) return Math.max(1, value);
@@ -175,9 +201,20 @@ function getJobTtlMs(value: number | undefined): number {
   return Math.max(1000, ttlMs);
 }
 
-function rowToJob(row: { jobId: string; status: string; templateJson: string; outputJson: string | null; total: number; processed: number; succeeded: number; failed: number; recordsJson: string; resultsJson: string; error: string | null; createdAt: string; updatedAt: string; expiresAt: string }): RenderJob {
+function getJobLeaseMs(): number {
+  const fromEnv = Number(process.env.DOCUMENT_RENDER_JOB_LEASE_SECONDS || 0);
+  const leaseMs = Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv * 1000 : DEFAULT_JOB_LEASE_MS;
+  return Math.max(1000, leaseMs);
+}
+
+function futureIso(ms: number): string {
+  return new Date(Date.now() + ms).toISOString();
+}
+
+function rowToJob(row: { jobId: string; ownerKey: string; status: string; templateJson: string; outputJson: string | null; total: number; processed: number; succeeded: number; failed: number; recordsJson: string; resultsJson: string; error: string | null; createdAt: string; updatedAt: string; expiresAt: string }): RenderJob {
   return {
     jobId: row.jobId,
+    ownerKey: row.ownerKey,
     status: row.status as RenderJobStatus,
     template: JSON.parse(row.templateJson),
     output: row.outputJson ? JSON.parse(row.outputJson) : undefined,
@@ -194,10 +231,11 @@ function rowToJob(row: { jobId: string; status: string; templateJson: string; ou
   };
 }
 
-async function runJob(job: RenderJob, storage: DocumentRenderStorage, ttlMs: number, jobStore: JobStore, templateResolver?: DocumentTemplateResolver): Promise<void> {
-  await jobStore.update(job.jobId, { status: 'running' });
-  job.status = 'running';
+async function runJob(job: RenderJob, storage: DocumentRenderStorage, ttlMs: number, leaseMs: number, jobStore: JobStore, templateResolver?: DocumentTemplateResolver): Promise<void> {
+  const progressResults: DocumentRenderBatchRecordResult[] = [];
   try {
+    await jobStore.update(job.jobId, { status: 'running', leaseOwner: PROCESS_LEASE_OWNER, leaseExpiresAt: futureIso(leaseMs) });
+    job.status = 'running';
     job.results = await renderBatchRecords({
       template: job.template,
       output: job.output,
@@ -206,6 +244,8 @@ async function runJob(job: RenderJob, storage: DocumentRenderStorage, ttlMs: num
       storage,
       templateResolver,
       async onProgress(result) {
+        progressResults.push(result);
+        job.results = progressResults;
         job.processed += 1;
         if (result.ok) job.succeeded += 1;
         else job.failed += 1;
@@ -213,6 +253,8 @@ async function runJob(job: RenderJob, storage: DocumentRenderStorage, ttlMs: num
           processed: job.processed,
           succeeded: job.succeeded,
           failed: job.failed,
+          resultsJson: JSON.stringify(progressResults),
+          leaseExpiresAt: futureIso(leaseMs),
         });
       },
     });
@@ -220,15 +262,35 @@ async function runJob(job: RenderJob, storage: DocumentRenderStorage, ttlMs: num
     await jobStore.update(job.jobId, {
       status: job.status,
       resultsJson: JSON.stringify(job.results),
+      expiresAt: futureIso(ttlMs),
+      leaseExpiresAt: futureIso(leaseMs),
     });
   } catch (error) {
     job.status = 'failed';
-    job.error = error instanceof Error ? error.message : '任务执行失败。';
-    await jobStore.update(job.jobId, {
-      status: 'failed',
-      error: job.error,
-    });
+    job.error = toPublicJobError(error);
+    if (!(error instanceof UserFacingError)) {
+      // eslint-disable-next-line no-console
+      console.error(`[document-render-job:${job.jobId}]`, error instanceof Error ? error.message : String(error));
+    }
+    try {
+      await jobStore.update(job.jobId, {
+        status: 'failed',
+        error: job.error,
+        resultsJson: JSON.stringify(progressResults),
+        expiresAt: futureIso(ttlMs),
+        leaseExpiresAt: futureIso(leaseMs),
+      });
+    } catch (updateError) {
+      // eslint-disable-next-line no-console
+      console.error(`[document-render-job:${job.jobId}] failed to persist failure`, updateError instanceof Error ? updateError.message : String(updateError));
+    }
   }
+}
+
+function sendJobStoreError(response: express.Response, requestId: string, error: unknown): void {
+  // eslint-disable-next-line no-console
+  console.error(`[document-render-job:${requestId}]`, error instanceof Error ? error.message : String(error));
+  response.status(500).json({ ok: false, requestId, error: '任务服务暂时不可用，请稍后重试。' });
 }
 
 export function createDocumentRenderJobRouter(options: {
@@ -241,6 +303,7 @@ export function createDocumentRenderJobRouter(options: {
   const router = express.Router();
   const storage = options.storage || createConfiguredStorage(options.storageDir);
   const jobTtlMs = getJobTtlMs(options.jobTtlMs);
+  const jobLeaseMs = getJobLeaseMs();
   // 优先使用传入的 jobStore，否则尝试 PostgreSQL，最后降级到内存
   const jobStore = options.jobStore || createPostgresJobStore() || createMemoryJobStore();
   router.use(documentRenderJsonParser);
@@ -261,10 +324,12 @@ export function createDocumentRenderJobRouter(options: {
 
     const now = new Date().toISOString();
     const jobId = `job_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    const ownerKey = await resolveJobOwnerKey(request);
     const expiresAt = new Date(Date.now() + jobTtlMs).toISOString();
 
     const job: RenderJob = {
       jobId,
+      ownerKey,
       status: 'pending',
       template: parsed.data.template,
       output: parsed.data.output,
@@ -279,48 +344,66 @@ export function createDocumentRenderJobRouter(options: {
       expiresAt,
     };
 
-    await jobStore.insert({
-      jobId,
-      status: 'pending',
-      templateJson: JSON.stringify(job.template),
-      outputJson: job.output ? JSON.stringify(job.output) : undefined,
-      total: job.total,
-      recordsJson: JSON.stringify(job.records),
-      expiresAt,
-    });
+    try {
+      await jobStore.insert({
+        jobId,
+        ownerKey,
+        leaseOwner: PROCESS_LEASE_OWNER,
+        leaseExpiresAt: futureIso(jobLeaseMs),
+        status: 'pending',
+        templateJson: JSON.stringify(job.template),
+        outputJson: job.output ? JSON.stringify(job.output) : undefined,
+        total: job.total,
+        recordsJson: JSON.stringify(job.records),
+        expiresAt,
+      });
+    } catch (error) {
+      sendJobStoreError(response, requestId, error);
+      return;
+    }
 
-    setImmediate(() => { void runJob(job, storage, jobTtlMs, jobStore, options.templateResolver); });
+    setImmediate(() => { void runJob(job, storage, jobTtlMs, jobLeaseMs, jobStore, options.templateResolver); });
     response.status(202).json({ ok: true, requestId, job: publicJob(job) });
   });
 
   router.get('/:jobId', async (request, response) => {
     const requestId = randomUUID();
     jobStore.cleanup().catch(() => undefined);
-    const row = await jobStore.get(String(request.params.jobId || ''));
-    if (!row) {
-      response.status(404).json({ ok: false, requestId, error: '任务不存在。' });
-      return;
+    try {
+      const ownerKey = await resolveJobOwnerKey(request);
+      const row = await jobStore.get(String(request.params.jobId || ''), ownerKey);
+      if (!row) {
+        response.status(404).json({ ok: false, requestId, error: '任务不存在。' });
+        return;
+      }
+      const job = rowToJob(row);
+      response.json({ ok: true, requestId, job: publicJob(job) });
+    } catch (error) {
+      sendJobStoreError(response, requestId, error);
     }
-    const job = rowToJob(row);
-    response.json({ ok: true, requestId, job: publicJob(job) });
   });
 
   router.get('/:jobId/results', async (request, response) => {
     const requestId = randomUUID();
     jobStore.cleanup().catch(() => undefined);
-    const row = await jobStore.get(String(request.params.jobId || ''));
-    if (!row) {
-      response.status(404).json({ ok: false, requestId, error: '任务不存在。' });
-      return;
+    try {
+      const ownerKey = await resolveJobOwnerKey(request);
+      const row = await jobStore.get(String(request.params.jobId || ''), ownerKey);
+      if (!row) {
+        response.status(404).json({ ok: false, requestId, error: '任务不存在。' });
+        return;
+      }
+      const job = rowToJob(row);
+      response.json({
+        ok: true,
+        requestId,
+        job: publicJob(job),
+        count: job.results.length,
+        records: job.results,
+      });
+    } catch (error) {
+      sendJobStoreError(response, requestId, error);
     }
-    const job = rowToJob(row);
-    response.json({
-      ok: true,
-      requestId,
-      job: publicJob(job),
-      count: job.results.length,
-      records: job.results,
-    });
   });
 
   return router;

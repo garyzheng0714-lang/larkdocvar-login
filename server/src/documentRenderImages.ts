@@ -104,7 +104,12 @@ async function validateImageUrl(rawUrl: string): Promise<VerifiedImageUrl> {
 
 export function buildImageUrlWithOssProcess(rawUrl: string, ossProcess?: string): string {
   if (!ossProcess?.trim()) return rawUrl;
-  const url = new URL(rawUrl);
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new UserFacingError('图片链接格式不正确。');
+  }
   url.searchParams.set('x-oss-process', ossProcess.trim());
   return url.toString();
 }
@@ -153,6 +158,13 @@ function normalizeFit(input?: string): ImageFit {
 export function isImagePlaceholderName(input: string): boolean {
   const value = input.trim();
   return value.startsWith('image:') || value.startsWith('图片:');
+}
+
+export function normalizeImageVariableName(input: string): string {
+  const value = input.trim();
+  if (value.startsWith('image:')) return value.slice('image:'.length).trim();
+  if (value.startsWith('图片:')) return value.slice('图片:'.length).trim();
+  return value;
 }
 
 function parseLength(input: number | string | undefined): { value: number; unit: ImageUnit } | undefined {

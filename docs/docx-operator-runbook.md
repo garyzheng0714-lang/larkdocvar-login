@@ -18,7 +18,7 @@
 | `FRONTEND_POST_LOGIN_URL` | 生产建议配置 | 登录成功后的前端地址，GitHub Actions 部署会写成 `https://{APP_DOMAIN}`。 |
 | `OAUTH_STATE_SIGNING_SECRET` | 可选 | OAuth state 签名密钥；不填时使用当前应用密钥派生。 |
 | `CORS_ALLOWED_ORIGINS` | 跨域部署时配置 | 逗号分隔允许来源；同源请求不需要。 |
-| `DATABASE_URL` | 侧边栏必需 | 保存登录会话和飞书云文档模板配置。 |
+| `DATABASE_URL` | 侧边栏必需 | 保存登录会话、飞书云文档模板配置和异步 Docx 批量生成任务。 |
 
 ### 生成文件存储
 
@@ -154,7 +154,7 @@ docker exec -i fbif-sidebar-docgen-postgres pg_restore -U postgres -d larkdocvar
 
 数据库表结构通过 `server/migrations/` 管理。服务启动时会先执行未应用的 migration，并记录到 `schema_migrations`。新增表或字段时，新建 migration 文件，不要把一次性 DDL 混进业务函数。
 
-生产健康检查必须同时看 `databaseConfigured` 和 `databaseReady`。`databaseConfigured:true` 只表示服务拿到了 `DATABASE_URL`；`databaseReady:true` 才表示 `users`、`auth_sessions`、`saved_configs`、`schema_migrations` 等登录必需表已存在。
+生产健康检查必须同时看 `databaseConfigured` 和 `databaseReady`。`databaseConfigured:true` 只表示服务拿到了 `DATABASE_URL`；`databaseReady:true` 才表示 `users`、`auth_sessions`、`saved_configs`、`render_jobs`、`schema_migrations` 等必需表已存在。
 
 ## 生产部署注意事项
 
@@ -185,7 +185,7 @@ docker exec -i fbif-sidebar-docgen-postgres pg_restore -U postgres -d larkdocvar
 | 登录失败诊断为 `pc_lark_not_webapp_container` | 当前宿主是 PC Lark 多维表格侧边栏，不是 H5 WebApp 授权容器。预期行为是立即切到插件内扫码登录；不要把它当 OAuth 配置错误或继续等待 `requestAuthCode` 回调。 |
 | 登录失败诊断为 `auth_api_missing_after_ready` 且 `hasH5Sdk=false/hasTt=false` | 前端包已加载，但当前飞书侧边栏宿主没有注入 H5 免登 JSAPI。真实 PC Lark no-WebApp 场景应命中 `pc_lark_not_webapp_container` 并扫码；若其他宿主命中本错误，再核对飞书开放平台 H5 可信域名、应用可用范围和插件所属应用。 |
 | 登录页显示 `登录失败：飞书登录失败，请重新点击登录。` | 先查生产日志是否有 `relation "users" does not exist` 或 `relation "auth_sessions" does not exist`，再查 `/api/health` 的 `databaseReady`。缺表时先备份 PostgreSQL，再执行 `server/migrations/001_initial_schema.sql`。 |
-| 异步任务查询 404 | 当前任务状态是进程内存，服务重启后不会保留历史任务。 |
+| 异步任务查询 404 | 先确认是否使用了提交任务时同一登录用户或 API Key，再确认任务是否已过期，最后查 `DATABASE_URL` 和 `render_jobs` 表。未配置数据库的本地开发/测试环境会使用进程内存，服务重启后不会保留历史任务。 |
 | 部署后登录状态或配置都像丢了 | 先检查 `.env` 里的 `POSTGRES_DATA_DIR` 是否是稳定目录，再检查 PostgreSQL 容器挂载路径。 |
 
 ## UI 验证要求

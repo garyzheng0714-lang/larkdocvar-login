@@ -110,6 +110,29 @@ test('批量生成每条记录独立返回状态，失败记录不影响成功�
   }
 });
 
+test('批量生成预加载模板失败时返回稳定 JSON 错误', async () => {
+  const api = await startServer();
+  try {
+    const response = await fetch(`${api.baseUrl}/api/v1/document-renders/batch`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        template: { format: 'docx', templateId: 'missing_template_001' },
+        records: [
+          { recordId: 'rec_missing_template', variables: { 客户名称: '客户', 金额: '100 元' } },
+        ],
+      }),
+    });
+    const body = await response.json() as any;
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get('content-type')?.includes('application/json'), true);
+    assert.equal(body.ok, false);
+    assert.equal(body.error, '模板不存在。');
+  } finally {
+    await api.close();
+  }
+});
+
 test('异步任务完成后按 TTL 清理，避免长期堆积内存', async () => {
   const restore = withPrivateTemplateUrls();
   const api = await startServer({ jobTtlMs: 50 });
@@ -143,6 +166,190 @@ test('异步任务完成后按 TTL 清理，避免长期堆积内存', async () 
   } finally {
     restore();
     await api.close();
+  }
+});
+
+test('异步任务完成状态等待进度写入完成', async () => {
+  const app = express();
+  const rows = new Map<string, any>();
+  const now = () => new Date().toISOString();
+  const jobStore = {
+    async insert(job: any) {
+      rows.set(job.jobId, {
+        ...job,
+        outputJson: job.outputJson ?? null,
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        resultsJson: '[]',
+        error: null,
+        createdAt: now(),
+        updatedAt: now(),
+      });
+    },
+    async get(jobId: string) {
+      return rows.get(jobId);
+    },
+    async update(jobId: string, updates: any) {
+      if (updates.processed !== undefined) {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+      const row = rows.get(jobId);
+      if (!row) return;
+      Object.assign(row, updates, { updatedAt: now() });
+    },
+    async cleanup() { return 0; },
+    async markStaleAsFailed() { return 0; },
+  };
+  app.use('/api/v1/document-render-jobs', createDocumentRenderJobRouter({ jobStore }));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    const submitResponse = await fetch(`${baseUrl}/api/v1/document-render-jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        template: { format: 'doc', content: '客户：{{客户名称}}' },
+        records: [
+          { recordId: 'rec_1', variables: { 客户名称: '客户 1' } },
+        ],
+      }),
+    });
+    const submitted = await submitResponse.json() as any;
+    const jobId = submitted.job.jobId;
+    let job = submitted.job;
+    for (let index = 0; index < 20 && job.status !== 'completed'; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const progressResponse = await fetch(`${baseUrl}/api/v1/document-render-jobs/${jobId}`);
+      const progress = await progressResponse.json() as any;
+      job = progress.job;
+    }
+    assert.equal(job.status, 'completed');
+    assert.equal(job.processed, 1);
+    assert.equal(job.succeeded, 1);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  }
+});
+
+test('异步任务按提交身份隔离查询结果', async () => {
+  const previousApiKey = process.env.DOCUMENT_RENDER_API_KEY;
+  process.env.DOCUMENT_RENDER_API_KEY = 'owner-secret';
+  const app = express();
+  app.use('/api/v1/document-render-jobs', createDocumentRenderJobRouter());
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    const submitResponse = await fetch(`${baseUrl}/api/v1/document-render-jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': 'owner-secret' },
+      body: JSON.stringify({
+        template: { format: 'doc', content: '客户：{{客户名称}}' },
+        records: [
+          { recordId: 'rec_1', variables: { 客户名称: '客户 1' } },
+        ],
+      }),
+    });
+    const submitted = await submitResponse.json() as any;
+    assert.equal(submitResponse.status, 202);
+    const jobId = submitted.job.jobId;
+
+    const anonymousResponse = await fetch(`${baseUrl}/api/v1/document-render-jobs/${jobId}/results`);
+    assert.equal(anonymousResponse.status, 404);
+
+    let job = submitted.job;
+    for (let index = 0; index < 20 && job.status !== 'completed'; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const progressResponse = await fetch(`${baseUrl}/api/v1/document-render-jobs/${jobId}`, {
+        headers: { 'x-api-key': 'owner-secret' },
+      });
+      const progress = await progressResponse.json() as any;
+      job = progress.job;
+    }
+    assert.equal(job.status, 'completed');
+    const ownerResponse = await fetch(`${baseUrl}/api/v1/document-render-jobs/${jobId}/results`, {
+      headers: { 'x-api-key': 'owner-secret' },
+    });
+    const ownerResults = await ownerResponse.json() as any;
+    assert.equal(ownerResponse.status, 200);
+    assert.equal(ownerResults.count, 1);
+  } finally {
+    if (previousApiKey === undefined) delete process.env.DOCUMENT_RENDER_API_KEY;
+    else process.env.DOCUMENT_RENDER_API_KEY = previousApiKey;
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  }
+});
+
+test('异步任务内部写库错误只暴露稳定失败文案', async () => {
+  const app = express();
+  const rows = new Map<string, any>();
+  const now = () => new Date().toISOString();
+  let failRunningUpdate = true;
+  const jobStore = {
+    async insert(job: any) {
+      rows.set(job.jobId, {
+        ...job,
+        outputJson: job.outputJson ?? null,
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        resultsJson: '[]',
+        error: null,
+        createdAt: now(),
+        updatedAt: now(),
+      });
+    },
+    async get(jobId: string) {
+      return rows.get(jobId);
+    },
+    async update(jobId: string, updates: any) {
+      if (updates.status === 'running' && failRunningUpdate) {
+        failRunningUpdate = false;
+        throw new Error('connect ECONNREFUSED 10.0.0.12:5432');
+      }
+      const row = rows.get(jobId);
+      if (!row) return;
+      Object.assign(row, updates, { updatedAt: now() });
+    },
+    async cleanup() { return 0; },
+    async markStaleAsFailed() { return 0; },
+  };
+  app.use('/api/v1/document-render-jobs', createDocumentRenderJobRouter({ jobStore }));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    const submitResponse = await fetch(`${baseUrl}/api/v1/document-render-jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        template: { format: 'doc', content: '客户：{{客户名称}}' },
+        records: [
+          { recordId: 'rec_1', variables: { 客户名称: '客户 1' } },
+        ],
+      }),
+    });
+    const submitted = await submitResponse.json() as any;
+    const jobId = submitted.job.jobId;
+    let job = submitted.job;
+    for (let index = 0; index < 20 && job.status !== 'failed'; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const progressResponse = await fetch(`${baseUrl}/api/v1/document-render-jobs/${jobId}`);
+      const progress = await progressResponse.json() as any;
+      job = progress.job;
+    }
+    assert.equal(job.status, 'failed');
+    assert.equal(job.error, '任务执行失败，请稍后重试。');
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   }
 });
 

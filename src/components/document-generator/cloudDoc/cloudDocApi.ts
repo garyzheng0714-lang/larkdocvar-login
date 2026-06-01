@@ -18,10 +18,12 @@ export async function parseJsonResponse<T>(response: Response): Promise<T> {
 export async function fetchTemplateVariables(
   templateUrl: string,
   headers: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<TemplateVariablesResponse> {
   return parseJsonResponse<TemplateVariablesResponse>(await fetch('/api/template/variables', {
     method: 'POST',
     credentials: 'include',
+    signal,
     headers,
     body: JSON.stringify({ templateUrl }),
   }));
@@ -31,10 +33,12 @@ export async function generateCloudDocuments(
   templateUrl: string,
   records: Array<{ recordId: string; variables: Record<string, string> }>,
   headers: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<GenerateResponse> {
   return parseJsonResponse<GenerateResponse>(await fetch('/api/documents/generate', {
     method: 'POST',
     credentials: 'include',
+    signal,
     headers,
     body: JSON.stringify({
       templateUrl,
@@ -71,5 +75,10 @@ export function saveCloudDocAutoConfig(input: {
         outputFieldId: input.outputFieldId,
       },
     }),
-  }).then(() => undefined);
+  }).then(async (response) => {
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.error || `保存配置失败（HTTP ${response.status}）`);
+    }
+  });
 }

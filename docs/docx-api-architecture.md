@@ -42,6 +42,7 @@ PostgreSQL schema 由 `server/migrations/` 管理，启动时通过 `server/src/
 | `users` | `open_id`、`name`、`email`、`avatar_url` | 保存飞书登录用户资料。 |
 | `auth_sessions` | `token`、`oauth_app_key`、`open_id`、`access_token`、`refresh_token`、`expires_at` | 保存侧边栏 httpOnly 登录会话和 OAuth token。 |
 | `saved_configs` | `id`、`open_id`、`config_name`、`payload_json` | 保存用户模板映射配置；同一用户同一配置名只保留一份。 |
+| `render_jobs` | `job_id`、`owner_key`、`lease_owner`、`lease_expires_at`、`status`、`processed`、`succeeded`、`failed`、`records_json`、`results_json` | 保存异步 Docx 批量任务状态、进度、结果、执行租约和提交者身份绑定。 |
 | `schema_migrations` | `version`、`name`、`applied_at` | 记录已执行 migration，避免重复执行 DDL。 |
 
 ## 模板资产结构
@@ -161,5 +162,5 @@ sequenceDiagram
 
 ## 已知实现边界
 
-- 异步任务当前存放在进程内存中，适合当前单进程服务和短期查询；如果后续要求服务重启后仍可查询任务历史，应把 job 状态持久化到 PostgreSQL 或对象存储。
+- 异步任务在配置 `DATABASE_URL` 时写入 PostgreSQL `render_jobs` 表，并按提交时的登录用户或 API Key 绑定查询权限；未配置数据库的本地开发/测试环境会降级为进程内存。运行中的任务会刷新 `lease_expires_at`，服务启动只会失败租约过期的未完成任务，避免多实例误杀。
 - 侧边栏当前已拆到 `src/components/document-generator/`，但 `PrimaryScreen.tsx` 和 `_design.css` 仍偏大。继续扩展前端时应优先按模板库、字段映射、生成进度等边界拆分。

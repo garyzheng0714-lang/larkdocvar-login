@@ -99,6 +99,26 @@ test('Docx 图片变量可以插入图片并设置尺寸和右对齐', async () 
   }
 });
 
+test('Docx 图片变量兼容 image 前缀形式的请求键', async () => {
+  const restore = enablePrivateImageUrlsForTest();
+  const imageServer = await startImageServer(await createPng());
+  try {
+    const template = await createDocxBuffer({
+      documentXml: '<w:p><w:r><w:t>{{image:logo}}</w:t></w:r></w:p>',
+    });
+    const rendered = await renderTest.renderDocx(template, {}, {
+      'image:logo': { url: imageServer.url },
+    });
+
+    assert.deepEqual(rendered.missing, []);
+    assert.deepEqual(rendered.images.found, ['logo']);
+    assert.equal(rendered.images.rendered.length, 1);
+  } finally {
+    await imageServer.close();
+    restore();
+  }
+});
+
 test('Docx 图片变量支持被 Word 拆成多个文本节点', async () => {
   const restore = enablePrivateImageUrlsForTest();
   const imageServer = await startImageServer(await createPng(80, 40));
@@ -168,6 +188,16 @@ test('图片变量可以追加阿里云 OSS x-oss-process 参数', async () => {
     await imageServer.close();
     restore();
   }
+});
+
+test('图片变量带 OSS 处理参数时非法 URL 仍返回可读错误', async () => {
+  const template = await createDocxBuffer({
+    documentXml: '<w:p><w:r><w:t>{{image:logo|oss=image/resize,w_600}}</w:t></w:r></w:p>',
+  });
+  await assert.rejects(
+    () => renderTest.renderDocx(template, {}, { logo: { url: '不是 URL' } }),
+    /图片链接格式不正确/,
+  );
 });
 
 test('图片变量不允许和其他文字放在同一段', async () => {

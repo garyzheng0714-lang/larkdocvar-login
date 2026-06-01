@@ -50,6 +50,10 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
   const [progress, setProgress] = useState<CloudDocState['progress']>({ total: 0, done: 0, phase: '' });
   const [results, setResults] = useState<GenerateResult[]>([]);
   const autoSaveTimer = useRef<number | null>(null);
+  const extractRunIdRef = useRef(0);
+  const generateRunIdRef = useRef(0);
+  const generatingRef = useRef(false);
+  const extractAbortRef = useRef<AbortController | null>(null);
 
   const targetCount = range === 'selected'
     ? selectedRecordIds.length
@@ -69,7 +73,9 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
         documentId,
         mapping: nextMapping,
         outputFieldId: nextOutputFieldId === AUTO_OUTPUT_FIELD ? '' : nextOutputFieldId,
-      }).catch(() => undefined);
+      }).catch((error) => {
+        setNotice({ type: 'error', text: `自动保存配置失败：${toErrorMessage(error)}` });
+      });
     }, 600);
   }, [activeTableId, demo, documentId, templateTitle, templateUrl]);
 
@@ -79,6 +85,11 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
   }, [outputFieldId, saveAutoConfig]);
 
   const extractVariables = useCallback(async () => {
+    extractAbortRef.current?.abort();
+    const runId = extractRunIdRef.current + 1;
+    extractRunIdRef.current = runId;
+    const controller = new AbortController();
+    extractAbortRef.current = controller;
     setExtracting(true);
     setNotice(null);
     setResults([]);
@@ -93,8 +104,10 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
         : await fetchTemplateVariables(
             templateUrl.trim(),
             await buildBitableSidebarHeaders(activeTableId),
+            controller.signal,
           );
 
+      if (extractRunIdRef.current !== runId || controller.signal.aborted) return;
       const nextMapping = payload.variables.reduce<Record<string, string>>((acc, variable) => {
         acc[variable] = findBestMatchedField(variable, textFields)?.id || '';
         return acc;
@@ -111,13 +124,22 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
           : '未识别到变量，请确认模板中使用了 {{变量名}}。',
       });
     } catch (error) {
+      if (extractRunIdRef.current !== runId || controller.signal.aborted) return;
       setNotice({ type: 'error', text: `提取变量失败：${toErrorMessage(error)}` });
     } finally {
-      setExtracting(false);
+      if (extractRunIdRef.current === runId) {
+        setExtracting(false);
+        extractAbortRef.current = null;
+      }
     }
   }, [activeTableId, demo, outputFieldId, saveAutoConfig, templateUrl, textFields]);
 
   const generate = useCallback(async () => {
+    if (generatingRef.current) return;
+    generatingRef.current = true;
+    const runId = generateRunIdRef.current + 1;
+    generateRunIdRef.current = runId;
+    const controller = new AbortController();
     setGenerating(true);
     setNotice(null);
     setResults([]);
@@ -126,6 +148,7 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
         const count = Math.max(1, targetCount || 3);
         setProgress({ total: count, done: 0, phase: '正在替换变量...' });
         await new Promise((resolve) => window.setTimeout(resolve, 450));
+        if (generateRunIdRef.current !== runId || controller.signal.aborted) return;
         const demoResults = Array.from({ length: count }, (_, index): GenerateResult => ({
           recordId: `mock-${index + 1}`,
           status: 'success',
@@ -139,12 +162,14 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
       }
 
       const table = await resolveCloudTable(activeTableId);
+      if (generateRunIdRef.current !== runId || controller.signal.aborted) return;
       const targetIds = range === 'selected'
         ? selectedRecordIds
         : await getAllRecordIds(table);
       if (targetIds.length === 0) throw new Error(range === 'selected' ? '未检测到选中记录。' : '当前表没有可处理的记录。');
 
       const outputField = await ensureOutputField({ table, fields, outputFieldId, refreshBitable });
+      if (generateRunIdRef.current !== runId || controller.signal.aborted) return;
       setOutputFieldId(outputField);
       const sidebarHeaders = await buildBitableSidebarHeaders(activeTableId);
       const generated: GenerateResult[] = [];
@@ -152,15 +177,19 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
       setProgress({ total: targetIds.length, done: 0, phase: '正在读取表格变量...' });
 
       for (let i = 0; i < batches.length; i += 1) {
+        if (generateRunIdRef.current !== runId || controller.signal.aborted) return;
         const records = await readMappedVariables(table, batches[i], variables, mapping);
+        if (generateRunIdRef.current !== runId || controller.signal.aborted) return;
         setProgress({
           total: targetIds.length,
           done: Math.min(targetIds.length, i * BATCH_SIZE),
           phase: `正在生成第 ${i + 1}/${batches.length} 批...`,
         });
-        const payload = await generateCloudDocuments(templateUrl.trim(), records, sidebarHeaders);
+        const payload = await generateCloudDocuments(templateUrl.trim(), records, sidebarHeaders, controller.signal);
+        if (generateRunIdRef.current !== runId || controller.signal.aborted) return;
 
         for (const item of payload.results) {
+          if (generateRunIdRef.current !== runId || controller.signal.aborted) return;
           if (item.status === 'success' && item.docUrl) {
             try {
               await table.setCellValue(outputField, item.recordId, item.docUrl);
@@ -185,6 +214,7 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
 
       const failed = generated.filter((item) => item.status === 'failed').length;
       const succeeded = generated.length - failed;
+      if (generateRunIdRef.current !== runId || controller.signal.aborted) return;
       setResults(generated);
       setNotice({
         type: failed > 0 ? 'error' : 'success',
@@ -192,10 +222,14 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
       });
       await refreshBitable?.();
     } catch (error) {
+      if (generateRunIdRef.current !== runId || controller.signal.aborted) return;
       setNotice({ type: 'error', text: `替换失败：${toErrorMessage(error)}` });
     } finally {
-      setGenerating(false);
-      setProgress((current) => current.total > 0 ? { ...current, done: current.total, phase: '已完成' } : current);
+      if (generateRunIdRef.current === runId) {
+        generatingRef.current = false;
+        setGenerating(false);
+        setProgress((current) => current.total > 0 ? { ...current, done: current.total, phase: '已完成' } : current);
+      }
     }
   }, [
     activeTableId,

@@ -433,8 +433,8 @@
             <p><code>auth_sessions</code> 里保存飞书 access token 和 refresh token。功能上合理，但安全上应限制数据库访问、缩短生命周期，并考虑加密存储。</p>
           </div>
           <div class="risk">
-            <strong><span class="pill warn">P1 建议</span> 异步任务持久化</strong>
-            <p>现在 <code>/api/v1/document-render-jobs</code> 的任务状态在进程内存里。单机短任务可以接受；如果用户希望重启后还能查进度，需要落 PostgreSQL。</p>
+            <strong><span class="pill ok">已修复</span> 异步任务持久化</strong>
+            <p>配置 <code>DATABASE_URL</code> 时，<code>/api/v1/document-render-jobs</code> 的任务状态会写入 PostgreSQL <code>render_jobs</code> 表，并按提交时的登录用户或 API Key 绑定查询权限；未配置数据库的本地开发/测试环境才降级为进程内存。</p>
           </div>
           <div class="risk">
             <strong><span class="pill warn">P2 建议</span> 模板索引从 JSON 逐步迁到数据库</strong>
@@ -493,9 +493,9 @@
               </tr>
               <tr>
                 <td>异步任务进度</td>
-                <td>当前 Node 进程内存</td>
-                <td>任务 id、进度、结果列表。</td>
-                <td><span class="pill warn">短期可用</span> 重启会丢，后续应持久化。</td>
+                <td>PostgreSQL 表 <code>render_jobs</code>，含提交身份绑定</td>
+                <td>任务 id、进度、输入记录和结果列表。</td>
+                <td><span class="pill ok">已持久化</span> 未完成任务仅在执行租约过期后标记为失败。</td>
               </tr>
             </tbody>
           </table>
@@ -524,8 +524,8 @@
           <text x="945" y="100" text-anchor="middle" font-size="13" fill="#52617a">生成 Docx 下载链接</text>
 
           <rect x="310" y="200" width="460" height="70" rx="12" fill="#ffe9e8" stroke="#ffb8b2"></rect>
-          <text x="540" y="230" text-anchor="middle" font-size="17" font-weight="700" fill="#8a2220">内存里的任务队列</text>
-          <text x="540" y="254" text-anchor="middle" font-size="13" fill="#52617a">适合短任务；服务重启后历史进度消失</text>
+          <text x="540" y="230" text-anchor="middle" font-size="17" font-weight="700" fill="#8a2220">PostgreSQL render_jobs</text>
+          <text x="540" y="254" text-anchor="middle" font-size="13" fill="#52617a">保存异步任务进度、结果和提交身份</text>
 
           <line x1="230" y1="83" x2="310" y2="83" stroke="#607089" stroke-width="2" marker-end="url(#arrow2)"></line>
           <line x1="500" y1="83" x2="580" y2="83" stroke="#607089" stroke-width="2" marker-end="url(#arrow2)"></line>

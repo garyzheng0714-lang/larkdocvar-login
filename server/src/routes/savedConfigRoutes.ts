@@ -2,7 +2,9 @@ import type express from 'express';
 import { z } from 'zod';
 import {
   getSavedConfig,
+  getLatestSavedConfigByName,
   getSavedConfigByName,
+  listSavedConfigsByPrefix,
   listSavedConfigs,
   saveOrUpdateConfig,
   upsertUser,
@@ -128,6 +130,15 @@ function buildSavedTemplateRecord(config: SavedConfigRow): {
 
 type SavedTemplateRecord = NonNullable<ReturnType<typeof buildSavedTemplateRecord>>;
 
+function getAutoConfigNames(docId: string, tableId: string): string[] {
+  const names = [buildTemplateConfigName(docId, tableId)];
+  const legacyName = buildTemplateConfigName(docId);
+  if (!names.includes(legacyName)) {
+    names.push(legacyName);
+  }
+  return names;
+}
+
 async function getConfigOpenId(): Promise<string> {
   await upsertUser({
     openId: ANONYMOUS_OPEN_ID,
@@ -137,6 +148,25 @@ async function getConfigOpenId(): Promise<string> {
     avatarUrl: null,
   });
   return ANONYMOUS_OPEN_ID;
+}
+
+async function getCompatibleAutoConfig(openId: string, configNames: string[]): Promise<SavedConfigRow | undefined> {
+  const candidates: SavedConfigRow[] = [];
+  for (const configName of configNames) {
+    const row = await getSavedConfigByName(openId, configName);
+    if (row) candidates.push(row);
+  }
+  for (const configName of configNames) {
+    const row = await getLatestSavedConfigByName(configName);
+    if (row) candidates.push(row);
+  }
+  return candidates.sort((a, b) => {
+    const richness = getConfigRichnessScore(b.payload_json) - getConfigRichnessScore(a.payload_json);
+    if (richness !== 0) return richness;
+    if (a.open_id === openId && b.open_id !== openId) return -1;
+    if (b.open_id === openId && a.open_id !== openId) return 1;
+    return b.updated_at.localeCompare(a.updated_at);
+  })[0];
 }
 
 export function registerSavedConfigRoutes(app: express.Express): void {
@@ -162,7 +192,14 @@ export function registerSavedConfigRoutes(app: express.Express): void {
     try {
       const openId = await getConfigOpenId();
       const tableId = String(request.query.tableId || '').trim();
-      const rows = await listSavedConfigs(openId);
+      const ownRows = await listSavedConfigs(openId);
+      const legacyRows = await listSavedConfigsByPrefix('template::');
+      const seen = new Set<string>();
+      const rows = [...ownRows, ...legacyRows].filter((row) => {
+        if (seen.has(row.id)) return false;
+        seen.add(row.id);
+        return true;
+      });
 
       const byTemplateKey = new Map<string, SavedTemplateRecord>();
       for (const row of rows) {
@@ -210,8 +247,7 @@ export function registerSavedConfigRoutes(app: express.Express): void {
 
     try {
       const openId = await getConfigOpenId();
-      const configName = buildTemplateConfigName(docId, tableId);
-      const row = await getSavedConfigByName(openId, configName);
+      const row = await getCompatibleAutoConfig(openId, getAutoConfigNames(docId, tableId));
       if (!row) {
         response.json({ ok: true, found: false });
         return;

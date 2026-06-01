@@ -271,6 +271,15 @@ async function listSavedConfigs(openId: string): Promise<SavedConfigRow[]> {
   return rows.map((row) => mapConfigRow(row as Record<string, unknown>));
 }
 
+async function listSavedConfigsByPrefix(configNamePrefix: string): Promise<SavedConfigRow[]> {
+  const db = await initDatabase();
+  const { rows } = await db.query(
+    'SELECT * FROM saved_configs WHERE config_name LIKE $1 ORDER BY updated_at DESC, id DESC',
+    [`${configNamePrefix}%`],
+  );
+  return rows.map((row) => mapConfigRow(row as Record<string, unknown>));
+}
+
 async function getSavedConfig(openId: string, configId: string): Promise<SavedConfigRow | undefined> {
   const db = await initDatabase();
   const { rows } = await db.query(
@@ -288,6 +297,18 @@ async function getSavedConfigByName(openId: string, configName: string): Promise
   const { rows } = await db.query(
     'SELECT * FROM saved_configs WHERE open_id = $1 AND config_name = $2',
     [openId, configName],
+  );
+  if (!rows[0]) {
+    return undefined;
+  }
+  return mapConfigRow(rows[0] as Record<string, unknown>);
+}
+
+async function getLatestSavedConfigByName(configName: string): Promise<SavedConfigRow | undefined> {
+  const db = await initDatabase();
+  const { rows } = await db.query(
+    'SELECT * FROM saved_configs WHERE config_name = $1 ORDER BY updated_at DESC, id DESC LIMIT 1',
+    [configName],
   );
   if (!rows[0]) {
     return undefined;
@@ -328,6 +349,9 @@ async function deleteSavedConfig(openId: string, configId: string): Promise<bool
 
 interface RenderJobRow {
   jobId: string;
+  ownerKey: string;
+  leaseOwner: string | null;
+  leaseExpiresAt: string | null;
   status: string;
   templateJson: string;
   outputJson: string | null;
@@ -346,6 +370,9 @@ interface RenderJobRow {
 function mapRenderJobRow(row: Record<string, unknown>): RenderJobRow {
   return {
     jobId: String(row.job_id),
+    ownerKey: String(row.owner_key ?? 'legacy'),
+    leaseOwner: row.lease_owner != null ? String(row.lease_owner) : null,
+    leaseExpiresAt: row.lease_expires_at != null ? toIsoString(row.lease_expires_at) : null,
     status: String(row.status),
     templateJson: String(row.template_json),
     outputJson: row.output_json != null ? String(row.output_json) : null,
@@ -364,6 +391,9 @@ function mapRenderJobRow(row: Record<string, unknown>): RenderJobRow {
 
 async function insertRenderJob(job: {
   jobId: string;
+  ownerKey: string;
+  leaseOwner: string;
+  leaseExpiresAt: string;
   status: string;
   templateJson: string;
   outputJson?: string;
@@ -373,17 +403,17 @@ async function insertRenderJob(job: {
 }): Promise<RenderJobRow> {
   const db = await initDatabase();
   const { rows } = await db.query(
-    `INSERT INTO render_jobs (job_id, status, template_json, output_json, total, records_json, expires_at)
-     VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, $7::timestamptz)
+    `INSERT INTO render_jobs (job_id, owner_key, lease_owner, lease_expires_at, status, template_json, output_json, total, records_json, expires_at)
+     VALUES ($1, $2, $3, $4::timestamptz, $5, $6, NULLIF($7, ''), $8, $9, $10::timestamptz)
      RETURNING *`,
-    [job.jobId, job.status, job.templateJson, job.outputJson ?? '', job.total, job.recordsJson, job.expiresAt],
+    [job.jobId, job.ownerKey, job.leaseOwner, job.leaseExpiresAt, job.status, job.templateJson, job.outputJson ?? '', job.total, job.recordsJson, job.expiresAt],
   );
   return mapRenderJobRow(rows[0] as Record<string, unknown>);
 }
 
-async function getRenderJob(jobId: string): Promise<RenderJobRow | undefined> {
+async function getRenderJob(jobId: string, ownerKey: string): Promise<RenderJobRow | undefined> {
   const db = await initDatabase();
-  const { rows } = await db.query('SELECT * FROM render_jobs WHERE job_id = $1', [jobId]);
+  const { rows } = await db.query('SELECT * FROM render_jobs WHERE job_id = $1 AND owner_key = $2', [jobId, ownerKey]);
   if (!rows[0]) return undefined;
   return mapRenderJobRow(rows[0] as Record<string, unknown>);
 }
@@ -395,6 +425,9 @@ async function updateRenderJob(jobId: string, updates: {
   failed?: number;
   resultsJson?: string;
   error?: string;
+  expiresAt?: string;
+  leaseOwner?: string;
+  leaseExpiresAt?: string;
 }): Promise<RenderJobRow | undefined> {
   const db = await initDatabase();
   const setClauses: string[] = ['updated_at = NOW()'];
@@ -425,6 +458,18 @@ async function updateRenderJob(jobId: string, updates: {
     setClauses.push(`error = $${paramIndex++}`);
     values.push(updates.error);
   }
+  if (updates.expiresAt !== undefined) {
+    setClauses.push(`expires_at = $${paramIndex++}::timestamptz`);
+    values.push(updates.expiresAt);
+  }
+  if (updates.leaseOwner !== undefined) {
+    setClauses.push(`lease_owner = $${paramIndex++}`);
+    values.push(updates.leaseOwner);
+  }
+  if (updates.leaseExpiresAt !== undefined) {
+    setClauses.push(`lease_expires_at = $${paramIndex++}::timestamptz`);
+    values.push(updates.leaseExpiresAt);
+  }
 
   const { rows } = await db.query(
     `UPDATE render_jobs SET ${setClauses.join(', ')} WHERE job_id = $1 RETURNING *`,
@@ -445,7 +490,7 @@ async function cleanupExpiredRenderJobs(): Promise<number> {
 async function markStaleRenderJobsAsFailed(): Promise<number> {
   const db = await initDatabase();
   const result = await db.query(
-    "UPDATE render_jobs SET status = 'failed', error = '服务重启，任务中断', updated_at = NOW() WHERE status IN ('pending', 'running')",
+    "UPDATE render_jobs SET status = 'failed', error = '服务重启，任务中断', updated_at = NOW() WHERE status IN ('pending', 'running') AND lease_expires_at <= NOW()",
   );
   return result.rowCount ?? 0;
 }
@@ -460,8 +505,10 @@ export {
   updateSessionTokens,
   deleteSessionByToken,
   listSavedConfigs,
+  listSavedConfigsByPrefix,
   getSavedConfig,
   getSavedConfigByName,
+  getLatestSavedConfigByName,
   saveOrUpdateConfig,
   deleteSavedConfig,
   insertRenderJob,

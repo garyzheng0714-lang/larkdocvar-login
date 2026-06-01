@@ -1,5 +1,8 @@
 CREATE TABLE IF NOT EXISTS render_jobs (
   job_id        TEXT PRIMARY KEY,
+  owner_key     TEXT NOT NULL DEFAULT 'legacy',
+  lease_owner   TEXT,
+  lease_expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '15 minutes'),
   status        TEXT NOT NULL DEFAULT 'pending',
   template_json TEXT NOT NULL,
   output_json   TEXT,
@@ -16,5 +19,7 @@ CREATE TABLE IF NOT EXISTS render_jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_render_jobs_status ON render_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_render_jobs_lease ON render_jobs(status, lease_expires_at);
 CREATE INDEX IF NOT EXISTS idx_render_jobs_expires_at ON render_jobs(expires_at);
 CREATE INDEX IF NOT EXISTS idx_render_jobs_created_at ON render_jobs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_render_jobs_owner_job ON render_jobs(owner_key, job_id);

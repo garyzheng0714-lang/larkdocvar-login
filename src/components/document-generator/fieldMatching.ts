@@ -14,7 +14,7 @@ export function normalizeFieldName(input: string): string {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, '')
-    .replace(/[【】[\]()（）{}<>《》_.\-]/g, '');
+    .replace(/[【】[\]()（）{}<>《》_.\-*＊]/g, '');
 }
 
 function exactComparable(input: string): string {

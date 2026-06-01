@@ -9,7 +9,7 @@ export function isCompatibleField(variable: TemplateVariable, field: TableField)
 
 export function findSmartField(variable: TemplateVariable, fields: TableField[]): string | undefined {
   return matchField(variable.name, fields, {
-    strategy: 'exact',
+    strategy: 'normalized',
     suggestedId: variable.suggested,
     compatible: (field) => isCompatibleField(variable, field),
   })?.id;

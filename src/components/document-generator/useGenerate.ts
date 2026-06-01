@@ -214,6 +214,13 @@ function parseImageUrls(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
+function normalizeImageVariableName(name: string): string {
+  const value = name.trim();
+  if (value.startsWith('image:')) return value.slice('image:'.length).trim();
+  if (value.startsWith('图片:')) return value.slice('图片:'.length).trim();
+  return value;
+}
+
 function base64ToFile(base64: string, fileName: string, contentType: string): File {
   const binary = window.atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -223,8 +230,8 @@ function base64ToFile(base64: string, fileName: string, contentType: string): Fi
   return new File([bytes.buffer], fileName, { type: contentType });
 }
 
-async function downloadAsFile(url: string, fileName: string, contentType: string): Promise<File> {
-  const response = await fetch(url, { credentials: url.startsWith('/') ? 'include' : 'omit' });
+async function downloadAsFile(url: string, fileName: string, contentType: string, signal: AbortSignal): Promise<File> {
+  const response = await fetch(url, { credentials: url.startsWith('/') ? 'include' : 'omit', signal });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const blob = await response.blob();
   return new File([blob], fileName, { type: blob.type || contentType });
@@ -254,6 +261,9 @@ export function useGenerateReal(): GenerateRunner {
   const itemsRef = useRef<RecordItem[]>(items);
   itemsRef.current = items;
   const lastOptionsRef = useRef<GenerateOptions | null>(null);
+  const activeRunIdRef = useRef(0);
+  const runningRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   const counts = useMemo(() => computeCounts(items), [items]);
 
@@ -263,17 +273,24 @@ export function useGenerateReal(): GenerateRunner {
       recordId: string,
       file: { url: string; fileName: string; contentType: string; fileBase64?: string },
       writeBackField: string,
+      signal: AbortSignal,
     ): Promise<string | null> => {
       if (!writeBackField) return null;
+      if (signal.aborted) return null;
       try {
         const table = await bitable.base.getTableById(tableId);
+        if (signal.aborted) return null;
         const field = await table.getField<IAttachmentField>(writeBackField);
+        if (signal.aborted) return null;
         const uploadFile = file.fileBase64
           ? base64ToFile(file.fileBase64, file.fileName, file.contentType)
-          : await downloadAsFile(file.url, file.fileName, file.contentType);
+          : await downloadAsFile(file.url, file.fileName, file.contentType, signal);
+        if (signal.aborted) return null;
         const current = await field.getValue(recordId).catch((): IOpenAttachment[] => []);
+        if (signal.aborted) return null;
         const existing = Array.isArray(current) ? current : [];
         const uploaded = await field.transform(uploadFile);
+        if (signal.aborted) return null;
         await table.setCellValue(writeBackField, recordId, [...existing, ...uploaded]);
         return null;
       } catch {
@@ -284,8 +301,9 @@ export function useGenerateReal(): GenerateRunner {
   );
 
   const runBatch = useCallback(
-    async (tableId: string | null, slice: RecordSpec[], options: GenerateOptions) => {
+    async (tableId: string | null, slice: RecordSpec[], options: GenerateOptions, runId: number, signal: AbortSignal) => {
       if (!options.template) return;
+      if (activeRunIdRef.current !== runId || signal.aborted) return;
       const sliceIds = new Set(slice.map((s) => s.id));
       setItems((prev) =>
         prev.map((it) => (sliceIds.has(it.id) ? { ...it, status: 'processing' } : it)),
@@ -300,14 +318,15 @@ export function useGenerateReal(): GenerateRunner {
           for (const v of options.template?.variables ?? []) {
             const fieldId = options.mapping[v.name];
             if (v.kind === 'image') {
+              const imageName = normalizeImageVariableName(v.name);
               if (fieldId && fieldId !== CUSTOM_MAPPING_VALUE && tableId) {
                 const urls = await readAttachmentUrls(tableId, fieldId, r.id);
-                if (urls.length > 0) imageVariables[v.name] = { urls };
+                if (urls.length > 0) imageVariables[imageName] = { urls };
               } else if (fieldId === CUSTOM_MAPPING_VALUE || options.sourceMode === 'standalone') {
                 const urls = parseImageUrls(options.customText[v.name]);
-                if (urls.length > 0) imageVariables[v.name] = { urls };
+                if (urls.length > 0) imageVariables[imageName] = { urls };
               }
-              if (!imageVariables[v.name]) missing.push(`图片变量「${v.name}」`);
+              if (!imageVariables[imageName]) missing.push(`图片变量「${v.name}」`);
               continue;
             }
             if (fieldId === CUSTOM_MAPPING_VALUE || options.sourceMode === 'standalone' || !tableId) {
@@ -340,6 +359,7 @@ export function useGenerateReal(): GenerateRunner {
       );
 
       const localFailures = prepared.filter((item): item is { recordId: string; error: string } => Boolean(item.error));
+      if (activeRunIdRef.current !== runId || signal.aborted) return;
       if (localFailures.length > 0) {
         const errorsById = new Map(localFailures.map((item) => [item.recordId, item.error]));
         setItems((prev) =>
@@ -357,9 +377,11 @@ export function useGenerateReal(): GenerateRunner {
       if (batchPayload.length === 0) return;
 
       try {
+        if (activeRunIdRef.current !== runId || signal.aborted) return;
         const res = await fetch('/api/v1/document-renders/batch', {
           method: 'POST',
           credentials: 'include',
+          signal,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             template: { format: 'docx', templateId: options.template.id },
@@ -375,10 +397,12 @@ export function useGenerateReal(): GenerateRunner {
         if (!json.ok || !Array.isArray(json.records)) {
           throw new Error(json.error || '批量生成接口返回异常');
         }
+        if (activeRunIdRef.current !== runId || signal.aborted) return;
         const normalized = json.records.map(normalizeBatchRecord);
         const byId = new Map(normalized.map((r) => [r.recordId, r]));
         const warnings = new Map<string, string>();
         for (const r of json.records) {
+          if (activeRunIdRef.current !== runId || signal.aborted) return;
           const item = normalizeBatchRecord(r);
           if (item.ok && item.downloadUrl) {
             const warning = tableId
@@ -392,11 +416,13 @@ export function useGenerateReal(): GenerateRunner {
                     fileBase64: item.fileBase64,
                   },
                   options.writeBackField,
+                  signal,
                 )
               : null;
             if (warning) warnings.set(item.recordId, warning);
           }
         }
+        if (activeRunIdRef.current !== runId || signal.aborted) return;
         setItems((prev) =>
           prev.map((it) => {
             const r = byId.get(it.id);
@@ -415,6 +441,7 @@ export function useGenerateReal(): GenerateRunner {
           }),
         );
       } catch (err) {
+        if (activeRunIdRef.current !== runId || signal.aborted) return;
         const message = err instanceof Error ? err.message : String(err);
         setItems((prev) =>
           prev.map((it) =>
@@ -429,27 +456,43 @@ export function useGenerateReal(): GenerateRunner {
   const start = useCallback(
     async (records: RecordSpec[], options?: GenerateOptions) => {
       if (!options || !options.template) return;
+      if (runningRef.current) return;
+      runningRef.current = true;
+      const runId = activeRunIdRef.current + 1;
+      activeRunIdRef.current = runId;
+      const controller = new AbortController();
+      abortRef.current = controller;
       lastOptionsRef.current = options;
       setStartedAt(Date.now());
       setItems(records.map((r) => ({ ...r, status: 'pending', error: null })));
       setPhase('running');
       const tableId = await getActiveTableId();
+      if (activeRunIdRef.current !== runId || controller.signal.aborted) return;
       if (!tableId && options.sourceMode !== 'standalone') {
         setItems((prev) =>
           prev.map((it) => ({ ...it, status: 'failed' as const, error: '未获取到当前数据表' })),
         );
         setPhase('terminated');
+        runningRef.current = false;
+        abortRef.current = null;
         return;
       }
-      for (let i = 0; i < records.length; i += BATCH_SIZE) {
-        if ((phaseRef.current as Phase) === 'terminated') return;
-        while ((phaseRef.current as Phase) === 'paused') {
-          await new Promise((r) => window.setTimeout(r, 200));
-          if ((phaseRef.current as Phase) === 'terminated') return;
+      try {
+        for (let i = 0; i < records.length; i += BATCH_SIZE) {
+          if ((phaseRef.current as Phase) === 'terminated' || activeRunIdRef.current !== runId || controller.signal.aborted) return;
+          while ((phaseRef.current as Phase) === 'paused') {
+            await new Promise((r) => window.setTimeout(r, 200));
+            if ((phaseRef.current as Phase) === 'terminated' || activeRunIdRef.current !== runId || controller.signal.aborted) return;
+          }
+          await runBatch(tableId, records.slice(i, i + BATCH_SIZE), options, runId, controller.signal);
         }
-        await runBatch(tableId, records.slice(i, i + BATCH_SIZE), options);
+        if ((phaseRef.current as Phase) !== 'terminated' && activeRunIdRef.current === runId && !controller.signal.aborted) setPhase('done');
+      } finally {
+        if (activeRunIdRef.current === runId) {
+          runningRef.current = false;
+          abortRef.current = null;
+        }
       }
-      if ((phaseRef.current as Phase) !== 'terminated') setPhase('done');
     },
     [runBatch],
   );
@@ -457,25 +500,52 @@ export function useGenerateReal(): GenerateRunner {
   const retry = useCallback(async () => {
     const options = lastOptionsRef.current;
     if (!options) return;
+    if (runningRef.current) return;
     const failedSpecs: RecordSpec[] = itemsRef.current
       .filter((i) => i.status === 'failed')
       .map((i) => ({ id: i.id, displayName: i.displayName }));
     if (failedSpecs.length === 0) return;
+    runningRef.current = true;
+    const runId = activeRunIdRef.current + 1;
+    activeRunIdRef.current = runId;
+    const controller = new AbortController();
+    abortRef.current = controller;
     setItems((prev) =>
       prev.map((i) => (i.status === 'failed' ? { ...i, status: 'pending', error: null } : i)),
     );
     setPhase('running');
     const tableId = await getActiveTableId();
-    if (!tableId && options.sourceMode !== 'standalone') return;
-    for (let i = 0; i < failedSpecs.length; i += BATCH_SIZE) {
-      if ((phaseRef.current as Phase) === 'terminated') return;
-      while ((phaseRef.current as Phase) === 'paused') {
-        await new Promise((r) => window.setTimeout(r, 200));
-        if ((phaseRef.current as Phase) === 'terminated') return;
-      }
-      await runBatch(tableId, failedSpecs.slice(i, i + BATCH_SIZE), options);
+    if (activeRunIdRef.current !== runId || controller.signal.aborted) return;
+    if (!tableId && options.sourceMode !== 'standalone') {
+      const retryIds = new Set(failedSpecs.map((item) => item.id));
+      setItems((prev) =>
+        prev.map((it) =>
+          retryIds.has(it.id)
+            ? { ...it, status: 'failed' as const, error: '未获取到当前数据表' }
+            : it,
+        ),
+      );
+      setPhase('terminated');
+      runningRef.current = false;
+      abortRef.current = null;
+      return;
     }
-    if ((phaseRef.current as Phase) !== 'terminated') setPhase('done');
+    try {
+      for (let i = 0; i < failedSpecs.length; i += BATCH_SIZE) {
+        if ((phaseRef.current as Phase) === 'terminated' || activeRunIdRef.current !== runId || controller.signal.aborted) return;
+        while ((phaseRef.current as Phase) === 'paused') {
+          await new Promise((r) => window.setTimeout(r, 200));
+          if ((phaseRef.current as Phase) === 'terminated' || activeRunIdRef.current !== runId || controller.signal.aborted) return;
+        }
+        await runBatch(tableId, failedSpecs.slice(i, i + BATCH_SIZE), options, runId, controller.signal);
+      }
+      if ((phaseRef.current as Phase) !== 'terminated' && activeRunIdRef.current === runId && !controller.signal.aborted) setPhase('done');
+    } finally {
+      if (activeRunIdRef.current === runId) {
+        runningRef.current = false;
+        abortRef.current = null;
+      }
+    }
   }, [runBatch]);
 
   return {
@@ -487,6 +557,10 @@ export function useGenerateReal(): GenerateRunner {
     pause: () => setPhase((p) => (p === 'running' ? 'paused' : p)),
     resume: () => setPhase((p) => (p === 'paused' ? 'running' : p)),
     stop: () => {
+      activeRunIdRef.current += 1;
+      runningRef.current = false;
+      abortRef.current?.abort();
+      abortRef.current = null;
       setItems((prev) =>
         prev.map((i) =>
           i.status === 'processing' || i.status === 'pending'
@@ -498,6 +572,10 @@ export function useGenerateReal(): GenerateRunner {
     },
     retry,
     reset: () => {
+      activeRunIdRef.current += 1;
+      runningRef.current = false;
+      abortRef.current?.abort();
+      abortRef.current = null;
       setItems([]);
       setPhase('idle');
     },

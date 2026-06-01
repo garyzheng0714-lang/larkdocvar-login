@@ -10,6 +10,9 @@ describe('Render Job 持久化', () => {
     const expectedTable = 'render_jobs';
     const expectedColumns = [
       'job_id',        // TEXT PRIMARY KEY
+      'owner_key',     // TEXT NOT NULL (提交者身份绑定)
+      'lease_owner',   // TEXT (当前执行进程租约持有者)
+      'lease_expires_at', // TIMESTAMPTZ (租约过期后才能判定 stale)
       'status',        // TEXT NOT NULL (pending/running/completed/failed/partial_failed)
       'template_json', // TEXT NOT NULL (JSON 序列化的模板配置)
       'output_json',   // TEXT (JSON 序列化的输出配置)
@@ -29,10 +32,9 @@ describe('Render Job 持久化', () => {
     assert.ok(expectedColumns.length > 0, '应该有列定义');
   });
 
-  it('服务重启后应该能恢复 pending/running 状态的 job', () => {
-    // 期望：服务启动时，pending/running 状态的 job 应该被标记为 failed
-    // 因为进程内存中的任务状态已经丢失
-    const restartBehavior = 'mark_stale_as_failed';
-    assert.equal(restartBehavior, 'mark_stale_as_failed');
+  it('服务重启后只应失败租约过期的 pending/running job', () => {
+    // 期望：多实例部署时，一个实例启动不能把另一个实例仍在执行的任务误标失败。
+    const restartBehavior = 'mark_expired_lease_as_failed';
+    assert.equal(restartBehavior, 'mark_expired_lease_as_failed');
   });
 });

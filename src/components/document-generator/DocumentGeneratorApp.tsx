@@ -135,6 +135,8 @@ export function DocumentGeneratorApp({
     });
   }, [activeTableId, fieldSignature, fields, mode]);
 
+  const generationBusy = runner.phase === 'running' || runner.phase === 'paused';
+
   return (
     <div
       className={`app app-${mode} density-${density}`}
@@ -151,7 +153,12 @@ export function DocumentGeneratorApp({
           mode={mode}
           createAttachmentField={createAttachmentField}
           openPicker={() => setPicker(true)}
+          generationBusy={generationBusy}
           startGenerate={() => {
+            if (generationBusy) {
+              setProgress(true);
+              return;
+            }
             const records = recordsFor(state);
             if (records.length === 0) return;
             runner.start(records, {

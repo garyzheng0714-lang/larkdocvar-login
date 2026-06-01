@@ -94,7 +94,7 @@ export async function renderBatchRecords(
   options: {
     storage: DocumentRenderStorage;
     templateResolver?: DocumentTemplateResolver;
-    onProgress?: (result: DocumentRenderBatchRecordResult, index: number) => void;
+    onProgress?: (result: DocumentRenderBatchRecordResult, index: number) => void | Promise<void>;
   },
 ): Promise<DocumentRenderBatchRecordResult[]> {
   // 批量渲染时预加载模板，避免每条记录重复下载/加载
@@ -138,9 +138,19 @@ export async function renderBatchRecords(
     } catch (error) {
       results.push(toErrorResult(record.recordId, requestId, error));
     }
-    options.onProgress?.(results[results.length - 1], index + 1);
+    await options.onProgress?.(results[results.length - 1], index + 1);
   }
   return results;
+}
+
+function sendBatchError(response: express.Response, requestId: string, error: unknown): void {
+  if (error instanceof UserFacingError) {
+    response.status(400).json({ ok: false, requestId, error: error.message });
+    return;
+  }
+  // eslint-disable-next-line no-console
+  console.error(`[document-render-batch:${requestId}]`, error instanceof Error ? error.message : String(error));
+  response.status(500).json({ ok: false, requestId, error: 'Docx 批量生成失败，请稍后重试。' });
 }
 
 export function createDocumentRenderBatchRouter(options: {
@@ -161,16 +171,20 @@ export function createDocumentRenderBatchRouter(options: {
       response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
       return;
     }
-    const records = await renderBatchRecords(parsed.data, { storage, templateResolver: options.templateResolver });
-    const succeeded = records.filter((record) => record.ok).length;
-    response.json({
-      ok: true,
-      requestId,
-      total: records.length,
-      succeeded,
-      failed: records.length - succeeded,
-      records,
-    });
+    try {
+      const records = await renderBatchRecords(parsed.data, { storage, templateResolver: options.templateResolver });
+      const succeeded = records.filter((record) => record.ok).length;
+      response.json({
+        ok: true,
+        requestId,
+        total: records.length,
+        succeeded,
+        failed: records.length - succeeded,
+        records,
+      });
+    } catch (error) {
+      sendBatchError(response, requestId, error);
+    }
   });
 
   return router;
