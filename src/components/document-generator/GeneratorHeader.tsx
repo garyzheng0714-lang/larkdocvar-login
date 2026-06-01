@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react';
 import { GeneratorModeSwitch } from './GeneratorModeSwitch';
-import { Icon } from './icons';
 import type { GeneratorKind } from './types';
 
 interface GeneratorHeaderProps {
@@ -21,10 +20,7 @@ export function GeneratorHeader({
           <img className="hdr-logo" src="/fbif-logo.webp" alt="FBIF" />
           <span className="hdr-title">批量生成文档工具</span>
         </div>
-        <div className="hdr-actions">
-          <button className="hdr-icon" title="使用帮助" type="button"><Icon.Help /></button>
-          {userMenu}
-        </div>
+        {userMenu ? <div className="hdr-actions">{userMenu}</div> : null}
       </div>
       <div className="hdr-mode-row">
         <GeneratorModeSwitch value={generatorKind} onChange={onGeneratorKindChange} />

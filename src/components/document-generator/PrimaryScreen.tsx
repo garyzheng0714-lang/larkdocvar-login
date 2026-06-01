@@ -3,7 +3,6 @@ import type { Dispatch, SetStateAction } from 'react';
 import { Icon, FieldTypeIcon } from './icons';
 import { Dropdown } from './Dropdown';
 import { GeneratorHeader } from './GeneratorHeader';
-import { copyText } from './copyText';
 import { CUSTOM_MAPPING_VALUE, reconcileMapping } from './mapping';
 import type { GeneratorKind, PrimaryState, TableField, TemplateVariable } from './types';
 
@@ -15,6 +14,7 @@ interface PrimaryScreenProps {
   createAttachmentField?: (name?: string) => Promise<TableField>;
   openPicker: () => void;
   startGenerate: () => void;
+  generationBusy?: boolean;
   accent: string;
   userMenu?: React.ReactNode;
   generatorKind: GeneratorKind;
@@ -29,6 +29,7 @@ export function PrimaryScreen({
   createAttachmentField,
   openPicker,
   startGenerate,
+  generationBusy = false,
   accent,
   userMenu,
   generatorKind,
@@ -78,17 +79,6 @@ export function PrimaryScreen({
                 <span className="tpl-row-action">
                   替换 <Icon.ChevronR />
                 </span>
-              </button>
-              <button
-                className="template-copy-btn tpl-row-copy"
-                type="button"
-                title={`复制模板名称：${tpl.name}`}
-                aria-label={`复制模板名称：${tpl.name}`}
-                onClick={() => {
-                  void copyText(tpl.name);
-                }}
-              >
-                <Icon.Copy />
               </button>
             </div>
           ) : (
@@ -231,11 +221,11 @@ export function PrimaryScreen({
         <button
           className="btn-primary"
           type="button"
-          disabled={!canGenerate}
+          disabled={!canGenerate && !generationBusy}
           onClick={startGenerate}
-          style={{ background: canGenerate ? accent : '#c8ccd2' }}
+          style={{ background: canGenerate || generationBusy ? accent : '#c8ccd2' }}
         >
-          开始生成
+          {generationBusy ? '查看进度' : '开始生成'}
         </button>
       </footer>
     </div>

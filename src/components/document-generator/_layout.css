@@ -178,16 +178,12 @@
   z-index: 2;
 }
 .hdr-logo {
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, #4f8ef7 0%, #2b5fed 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
+  width: 46px;
+  height: 28px;
+  border-radius: 0;
+  background: transparent;
+  object-fit: contain;
+  display: block;
   flex-shrink: 0;
 }
 .hdr-title {

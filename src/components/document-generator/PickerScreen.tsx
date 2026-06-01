@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from './icons';
-import { copyText } from './copyText';
 import type { Template, TemplateThumbnail } from './types';
 
 interface PickerScreenProps {
@@ -107,18 +106,6 @@ export function PickerScreen({
                   accent={accent}
                   onClick={() => setSelectedId(t.id)}
                 />
-                <button
-                  className="template-copy-btn tcard-copy"
-                  type="button"
-                  title={`复制模板名称：${t.name}`}
-                  aria-label={`复制模板名称：${t.name}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void copyText(t.name);
-                  }}
-                >
-                  <Icon.Copy />
-                </button>
               </div>
             ))}
           </div>
