@@ -111,7 +111,13 @@ async function initDatabase(): Promise<pg.Pool> {
     throw new Error('DATABASE_URL 未配置，无法连接 PostgreSQL。');
   }
 
-  pool = new pg.Pool({ connectionString });
+  // 显式限制连接池，避免批量任务高并发 + 每请求清理时把数据库连接耗尽导致整体 5xx
+  pool = new pg.Pool({
+    connectionString,
+    max: Number(process.env.PG_POOL_MAX) > 0 ? Number(process.env.PG_POOL_MAX) : 10,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 10_000,
+  });
 
   initPromise = (async () => {
     const database = pool as pg.Pool;
