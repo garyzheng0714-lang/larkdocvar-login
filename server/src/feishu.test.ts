@@ -18,6 +18,21 @@ test('replaceElements replaces placeholders split across text runs', () => {
   );
 });
 
+test('replaceElements 跨样式 run 时替换值采用变量名主体的样式（修复样式不统一）', () => {
+  const input = [
+    { text_run: { content: '{{', text_element_style: { bold: true } } },
+    { text_run: { content: '姓名}}', text_element_style: { italic: true } } },
+  ];
+
+  const result = __test__.replaceElements(input, { 姓名: '张三' });
+
+  assert.equal(result.changed, true);
+  const valueRun = result.elements.find((element) => (element as any).text_run?.content === '张三') as any;
+  assert.ok(valueRun, '应能找到替换值 run');
+  // 变量名"姓名"主体落在斜体 run，替换值应继承斜体，而非起点 {{ 所在 run 的加粗
+  assert.deepEqual(valueRun.text_run.text_element_style, { italic: true });
+});
+
 test('replaceElements keeps unknown placeholders unchanged', () => {
   const input = [
     { text_run: { content: '你好 {{姓名}}' } },

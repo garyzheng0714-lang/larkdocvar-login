@@ -66,8 +66,20 @@ function replaceTextRunGroup(
     }
   };
 
-  const findSourceElement = (offset: number): Record<string, any> => {
-    return segments.find((segment) => offset >= segment.start && offset < segment.end)?.element ?? group[0];
+  // 取占位符"变量名主体"重叠字符最多的那个 text_run 的样式作为替换值样式，
+  // 而非占位符起点 {{ 所在 run。飞书编辑器常把 {{ 与变量名拆进不同样式的 run，
+  // 用起点样式会让替换值随机继承 {{ 的残留样式，导致生成结果样式不统一。
+  const findStyleElement = (bodyStart: number, bodyEnd: number): Record<string, any> => {
+    let best = group[0];
+    let bestOverlap = -1;
+    for (const segment of segments) {
+      const overlap = Math.min(segment.end, bodyEnd) - Math.max(segment.start, bodyStart);
+      if (overlap > bestOverlap) {
+        bestOverlap = overlap;
+        best = segment.element;
+      }
+    }
+    return best;
   };
 
   let changed = false;
@@ -84,7 +96,7 @@ function replaceTextRunGroup(
     appendOriginalRange(lastIndex, match.index);
     const replacement = variables[name] ?? '';
     if (replacement) {
-      output.push(cloneTextRunElement(findSourceElement(match.index), replacement));
+      output.push(cloneTextRunElement(findStyleElement(match.index + 2, match.index + match[0].length - 2), replacement));
     }
     lastIndex = match.index + match[0].length;
   }
