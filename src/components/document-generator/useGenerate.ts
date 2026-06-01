@@ -10,6 +10,7 @@ import type {
   RecordSpec,
 } from './types';
 import { CUSTOM_MAPPING_VALUE } from './mapping';
+import { stringifyCellValue } from './cloudFieldMapping';
 
 function computeCounts(items: RecordItem[]): Counts {
   return {
@@ -98,6 +99,8 @@ interface BatchRecordResponse {
   ok?: boolean;
   status?: 'succeeded' | 'failed';
   error?: string;
+  missingVariables?: string[];
+  unusedVariables?: string[];
   download?: {
     url?: string;
     fileName?: string;
@@ -121,12 +124,58 @@ interface NormalizedBatchRecord {
   fileBase64?: string;
 }
 
+function formatVariableList(prefix: string, variables: unknown): string | null {
+  if (!Array.isArray(variables)) return null;
+  const names = variables
+    .map((name) => (typeof name === 'string' ? name.trim() : ''))
+    .filter(Boolean);
+  if (names.length === 0) return null;
+  return `${prefix}${names.join('、')}`;
+}
+
+function formatBatchRecordError(record: BatchRecordResponse): string {
+  const parts = [
+    typeof record.error === 'string' && record.error.trim() ? record.error.trim() : '',
+    formatVariableList('缺少：', record.missingVariables) || '',
+    formatVariableList('未使用：', record.unusedVariables) || '',
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join('') : '生成成功但没有返回下载链接';
+}
+
+async function readBatchResponseError(response: Response): Promise<string> {
+  const fallback = `请求失败（HTTP ${response.status}）`;
+  try {
+    const body = (await response.json()) as {
+      error?: unknown;
+      missingVariables?: unknown;
+      unusedVariables?: unknown;
+    };
+    return formatBatchRecordError({
+      recordId: '',
+      ok: false,
+      error: typeof body.error === 'string' ? body.error : fallback,
+      missingVariables: Array.isArray(body.missingVariables) ? body.missingVariables : undefined,
+      unusedVariables: Array.isArray(body.unusedVariables) ? body.unusedVariables : undefined,
+    });
+  } catch {
+    return fallback;
+  }
+}
+
+function formatFieldReadError(variableName: string): string {
+  return `读取变量「${variableName}」对应字段失败，请检查字段权限或刷新字段后重试。`;
+}
+
+function formatAttachmentFieldReadError(variableName: string): string {
+  return `读取图片变量「${variableName}」对应附件字段失败，请检查字段权限或刷新字段后重试。`;
+}
+
 function normalizeBatchRecord(record: BatchRecordResponse): NormalizedBatchRecord {
   const downloadUrl = record.download?.url || record.downloadUrl || record.url;
   return {
     recordId: record.recordId,
     ok: record.ok === true || record.status === 'succeeded',
-    error: record.error,
+    error: formatBatchRecordError(record),
     downloadUrl,
     fileName: record.download?.fileName || record.fileName || 'document.docx',
     contentType: record.download?.contentType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -146,22 +195,18 @@ async function readAttachmentUrls(
   fieldId: string,
   recordId: string,
 ): Promise<string[]> {
-  try {
-    const table = await bitable.base.getTableById(tableId);
-    const value = await table.getCellValue(fieldId, recordId);
-    if (!Array.isArray(value)) return [];
-    const urls: string[] = [];
-    for (const item of value) {
-      if (item && typeof item === 'object') {
-        const obj = item as Record<string, unknown>;
-        const url = (obj.url ?? obj.tmp_url ?? obj.downloadUrl) as string | undefined;
-        if (typeof url === 'string' && url) urls.push(url);
-      }
+  const table = await bitable.base.getTableById(tableId);
+  const value = await table.getCellValue(fieldId, recordId);
+  if (!Array.isArray(value)) return [];
+  const urls: string[] = [];
+  for (const item of value) {
+    if (item && typeof item === 'object') {
+      const obj = item as Record<string, unknown>;
+      const url = (obj.url ?? obj.tmp_url ?? obj.downloadUrl) as string | undefined;
+      if (typeof url === 'string' && url) urls.push(url);
     }
-    return urls;
-  } catch {
-    return [];
   }
+  return urls;
 }
 
 async function readCellString(
@@ -169,29 +214,15 @@ async function readCellString(
   fieldId: string,
   recordId: string,
 ): Promise<string> {
-  try {
-    const table = await bitable.base.getTableById(tableId);
-    const ext = table as unknown as {
-      getCellString?: (f: string, r: string) => Promise<string>;
-    };
-    if (typeof ext.getCellString === 'function') {
-      return String((await ext.getCellString(fieldId, recordId)) ?? '');
-    }
-    const value = await table.getCellValue(fieldId, recordId);
-    if (Array.isArray(value)) {
-      return value
-        .map((v) => {
-          if (v && typeof v === 'object' && 'text' in v) {
-            return String((v as { text: unknown }).text ?? '');
-          }
-          return String(v ?? '');
-        })
-        .join('');
-    }
-    return String(value ?? '');
-  } catch {
-    return '';
+  const table = await bitable.base.getTableById(tableId);
+  const ext = table as unknown as {
+    getCellString?: (f: string, r: string) => Promise<string>;
+  };
+  if (typeof ext.getCellString === 'function') {
+    return String((await ext.getCellString(fieldId, recordId)) ?? '');
   }
+  const value = await table.getCellValue(fieldId, recordId);
+  return stringifyCellValue(value);
 }
 
 function interpolateFileName(tpl: string, variables: Record<string, string>): string {
@@ -301,8 +332,13 @@ export function useGenerateReal(): GenerateRunner {
             const fieldId = options.mapping[v.name];
             if (v.kind === 'image') {
               if (fieldId && fieldId !== CUSTOM_MAPPING_VALUE && tableId) {
-                const urls = await readAttachmentUrls(tableId, fieldId, r.id);
-                if (urls.length > 0) imageVariables[v.name] = { urls };
+                try {
+                  const urls = await readAttachmentUrls(tableId, fieldId, r.id);
+                  if (urls.length > 0) imageVariables[v.name] = { urls };
+                } catch {
+                  missing.push(formatAttachmentFieldReadError(v.name));
+                  continue;
+                }
               } else if (fieldId === CUSTOM_MAPPING_VALUE || options.sourceMode === 'standalone') {
                 const urls = parseImageUrls(options.customText[v.name]);
                 if (urls.length > 0) imageVariables[v.name] = { urls };
@@ -318,14 +354,21 @@ export function useGenerateReal(): GenerateRunner {
               }
               continue;
             }
+            let readFailed = false;
             if (fieldId === CUSTOM_MAPPING_VALUE || options.sourceMode === 'standalone' || !tableId) {
               variables[v.name] = options.customText[v.name] ?? '';
             } else if (fieldId) {
-              variables[v.name] = await readCellString(tableId, fieldId, r.id);
+              try {
+                variables[v.name] = await readCellString(tableId, fieldId, r.id);
+              } catch {
+                readFailed = true;
+                variables[v.name] = '';
+                missing.push(formatFieldReadError(v.name));
+              }
             } else {
               variables[v.name] = '';
             }
-            if (options.onMissing === '停止该条' && !variables[v.name].trim()) {
+            if (options.onMissing === '停止该条' && !readFailed && !variables[v.name].trim()) {
               if (!fieldId) {
                 missing.push(`变量「${v.name}」未选择字段。`);
               } else if (fieldId === CUSTOM_MAPPING_VALUE || options.sourceMode === 'standalone' || !tableId) {
@@ -380,7 +423,7 @@ export function useGenerateReal(): GenerateRunner {
             records: batchPayload,
           }),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) throw new Error(await readBatchResponseError(res));
         const json = (await res.json()) as {
           ok?: boolean;
           records?: BatchRecordResponse[];
@@ -517,3 +560,10 @@ export function useGenerateReal(): GenerateRunner {
     },
   };
 }
+
+export const __test__ = {
+  formatBatchRecordError,
+  readBatchResponseError,
+  formatFieldReadError,
+  formatAttachmentFieldReadError,
+};

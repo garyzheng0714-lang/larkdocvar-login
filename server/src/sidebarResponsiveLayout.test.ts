@@ -114,6 +114,12 @@ test('默认缺失变量策略保持严格，避免静默生成空文档', () =>
   assert.match(documentGeneratorAppSource, /onMissing:\s*'停止该条'/);
 });
 
+test('当前视图没有记录时不能开始生成，避免用户误以为已经提交', () => {
+  assert.match(primaryScreenSource, /hasRecords/);
+  assert.match(primaryScreenSource, /state\.selectedCount\s*>\s*0/);
+  assert.match(primaryScreenSource, /没有可生成记录/);
+});
+
 test('缺失变量原因区分未选字段、固定值为空和当前记录字段值为空', () => {
   assert.match(progressModalSource, /className="rec-error"/);
   assert.match(progressModalSource, /\{item\.error\}/);

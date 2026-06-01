@@ -52,7 +52,8 @@ export function PrimaryScreen({
           : !mapping[v.name],
       ).length
     : 0;
-  const canGenerate = !!tpl && unmappedCount === 0;
+  const hasRecords = isStandalone || state.selectedCount > 0;
+  const canGenerate = !!tpl && unmappedCount === 0 && hasRecords;
 
   return (
     <div className="screen">
@@ -214,6 +215,8 @@ export function PrimaryScreen({
             {tpl
               ? unmappedCount > 0
                 ? <span className="ftr-warn">还有 {unmappedCount} 个变量未填</span>
+                : !hasRecords
+                  ? <span className="ftr-warn">没有可生成记录</span>
                 : <span>预计 ~{Math.ceil((isStandalone ? 1 : state.selectedCount) * 0.8)} 秒</span>
               : '请先选择模板'}
           </div>
