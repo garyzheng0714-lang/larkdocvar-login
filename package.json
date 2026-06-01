@@ -17,6 +17,7 @@
     "verify:docx-client": "node --import tsx server/src/scripts/verifyDocxClientOpen.ts",
     "verify:feishu-import": "node --import tsx server/src/scripts/verifyFeishuDocxImport.ts",
     "verify:document-render-milestone1": "node --import tsx server/src/scripts/verifyDocumentRenderMilestone1Full.ts",
+    "sync:docx-api-doc": "bash scripts/sync-docx-api-doc.sh",
     "verify:secrets": "node --import tsx server/src/scripts/verifyNoTrackedSecrets.ts",
     "audit:document-render-milestone1": "node --import tsx server/src/scripts/auditDocumentRenderMilestone1.ts",
     "configure:oss-local": "node --import tsx server/src/scripts/configureDocumentRenderOssLocal.ts",
