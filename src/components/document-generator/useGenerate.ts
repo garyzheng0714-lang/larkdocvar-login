@@ -307,7 +307,15 @@ export function useGenerateReal(): GenerateRunner {
                 const urls = parseImageUrls(options.customText[v.name]);
                 if (urls.length > 0) imageVariables[v.name] = { urls };
               }
-              if (!imageVariables[v.name]) missing.push(`图片变量「${v.name}」`);
+              if (!imageVariables[v.name]) {
+                if (!fieldId) {
+                  missing.push(`图片变量「${v.name}」未选择附件字段。`);
+                } else if (fieldId === CUSTOM_MAPPING_VALUE || options.sourceMode === 'standalone') {
+                  missing.push(`图片变量「${v.name}」的固定图片地址为空。`);
+                } else {
+                  missing.push(`当前记录中「${v.name}」对应附件字段没有文件。`);
+                }
+              }
               continue;
             }
             if (fieldId === CUSTOM_MAPPING_VALUE || options.sourceMode === 'standalone' || !tableId) {
@@ -318,11 +326,17 @@ export function useGenerateReal(): GenerateRunner {
               variables[v.name] = '';
             }
             if (options.onMissing === '停止该条' && !variables[v.name].trim()) {
-              missing.push(`变量「${v.name}」`);
+              if (!fieldId) {
+                missing.push(`变量「${v.name}」未选择字段。`);
+              } else if (fieldId === CUSTOM_MAPPING_VALUE || options.sourceMode === 'standalone' || !tableId) {
+                missing.push(`变量「${v.name}」的固定值为空。`);
+              } else {
+                missing.push(`当前记录中「${v.name}」对应字段的值为空。`);
+              }
             }
           }
           if (missing.length > 0 && options.onMissing === '停止该条') {
-            return { recordId: r.id, error: `${missing.join('、')}为空。` };
+            return { recordId: r.id, error: missing.join('；') };
           }
           const fileName = interpolateFileName(options.fileNameTpl, variables);
           const payload: Record<string, unknown> = {
