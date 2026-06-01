@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from './icons';
+import { computeEtaSeconds } from './progressEta';
 import type { Counts, Phase, RecordItem } from './types';
 
 interface ProgressModalProps {
@@ -46,9 +47,7 @@ export function ProgressModal({
   const downloadableItems = items.filter((item) => item.status === 'succeeded' && item.downloadUrl);
   const pct = counts.total === 0 ? 0 : Math.round((processedCount / counts.total) * 100);
   const elapsedSec = startedAt > 0 ? Math.max(0, Math.round((Date.now() - startedAt) / 1000)) : 0;
-  // 没有真实样本前不臆造速率：rate=0 → eta=null，UI 显示"正在估算…"而非误导性秒数。
-  const rate = processedCount > 0 && elapsedSec > 0 ? processedCount / elapsedSec : 0;
-  const eta = rate > 0 ? Math.ceil((counts.total - processedCount) / rate) : null;
+  const eta = computeEtaSeconds(processedCount, counts.total, elapsedSec);
 
   const isDone = phase === 'done' || phase === 'terminated';
   const headerLabel =
