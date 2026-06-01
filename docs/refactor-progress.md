@@ -12,7 +12,7 @@
 | **0 止血护栏** | CI 测试门禁 / ErrorBoundary / image 误判修复 / 错误文案带变量名 / accept 纯 docx / ETA 去魔法值 | ✅ 完成 | `3735b51` |
 | **1 换引擎** | easy-template-x + run 归一化重写 Docx 渲染（默认启用，env=legacy 回退）；脚注兜底；缩略图修复；飞书路径 split-run 样式修复 | ✅ 完成 | `3ceb444` `465bdc9` `e16e9c4` |
 | **2 可靠性** | pg 连接池上限✅；模板归属/owner_key 隔离✅；render_jobs 落库 + 心跳续租 + markStale 按租约回收✅。**但**「DB 驱动队列」实为 DB 持久化的进程内异步任务（setImmediate 执行，无独立 worker 拉取、无 cancel 端点、无 owner-scoped CAS，单实例模型）；**且前端尚未接入**——侧边栏生产路径仍走同步 `/document-renders/batch` | 🔶 后端就绪 / 队列前端未接入 | `8a1fa8c` `bd8f0af` `8f61de3` |
-| **3 信任体验** | 「留空继续」前后端真贯通✅。Gotenberg PDF 预览：后端 `convertDocxToPdfPreview` + `includePdfPreview` 契约就绪✅，**但 docker-compose 无 gotenberg 服务、前端无预览入口**，对侧边栏终端用户不可达 | 🔶 留空继续完成 / PDF 预览仅后端契约 | `1af644c` |
+| **3 信任体验** | 「留空继续」前后端真贯通✅。Gotenberg PDF 预览：后端 `convertDocxToPdfPreview` + `includePdfPreview` 契约 + docker-compose `gotenberg` 服务均就绪✅（业务系统经 API Key 调 `includePdfPreview` 即可用；e2e docx→pdf 转换需真实 `docker compose up` 验证，本机无 docker 未跑）；**仅侧边栏前端无预览入口未接** | 🔶 留空继续完成 / PDF API 可用·侧边栏未接 | `1af644c` |
 | **4 可维护性** | 拆分 documentRenderApi.ts / PrimaryScreen.tsx；清 _components.css 死类；抽 useBatchRunner 复用开始生成和重试路径 | ✅ 完成 | `3671b3d` |
 | **收尾** | 同步 docs/docx-api-integration.md（含更新日志）+ CONTEXT.md ✅（机器可验）。线上飞书云文档同步、Chrome 真实页面验证属人工/外部项，见下「最终验证记录」如实标注 | 🔶 文档同步完成 / UI 与飞书同步待复验 | 收尾提交 |
 

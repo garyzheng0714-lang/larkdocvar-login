@@ -26,9 +26,13 @@ services:
       SESSION_MAX_AGE_SECONDS: ${SESSION_MAX_AGE_SECONDS:-604800}
       FRONTEND_POST_LOGIN_URL: ${FRONTEND_POST_LOGIN_URL:-}
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-larkdocvar}
+      # PDF 预览（output.includePdfPreview）依赖 Gotenberg(LibreOffice) 保真转换；默认指向下方编排的 gotenberg 服务
+      GOTENBERG_URL: ${GOTENBERG_URL:-http://gotenberg:3000}
     depends_on:
       postgres:
         condition: service_healthy
+      gotenberg:
+        condition: service_started
     ports:
       - "127.0.0.1:${HOST_PORT:-19094}:${CONTAINER_PORT:-3180}"
     healthcheck:
@@ -56,6 +60,18 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+
+  # Gotenberg = LibreOffice 无头转换微服务（MIT），把生成的 docx 转成保真 PDF 预览。
+  # 仅供后端 convertDocxToPdfPreview 内部调用，不对宿主机开放端口（expose 仅在 compose 网络内可达）。
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: ${GOTENBERG_CONTAINER_NAME:-fbif-sidebar-docgen-gotenberg}
+    restart: unless-stopped
+    command:
+      - gotenberg
+      - --api-timeout=60s
+    expose:
+      - "3000"
 
 volumes:
   postgres_data:
