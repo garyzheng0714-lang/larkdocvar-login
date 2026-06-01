@@ -10,6 +10,7 @@ import type {
   RecordSpec,
 } from './types';
 import { CUSTOM_MAPPING_VALUE } from './mapping';
+import { runBatchSlices } from './useBatchRunner';
 
 function computeCounts(items: RecordItem[]): Counts {
   return {
@@ -480,15 +481,17 @@ export function useGenerateReal(): GenerateRunner {
         return;
       }
       try {
-        for (let i = 0; i < records.length; i += BATCH_SIZE) {
-          if ((phaseRef.current as Phase) === 'terminated' || activeRunIdRef.current !== runId || controller.signal.aborted) return;
-          while ((phaseRef.current as Phase) === 'paused') {
-            await new Promise((r) => window.setTimeout(r, 200));
-            if ((phaseRef.current as Phase) === 'terminated' || activeRunIdRef.current !== runId || controller.signal.aborted) return;
-          }
-          await runBatch(tableId, records.slice(i, i + BATCH_SIZE), options, runId, controller.signal);
-        }
-        if ((phaseRef.current as Phase) !== 'terminated' && activeRunIdRef.current === runId && !controller.signal.aborted) setPhase('done');
+        const result = await runBatchSlices({
+          records,
+          batchSize: BATCH_SIZE,
+          isInterrupted: () =>
+            (phaseRef.current as Phase) === 'terminated'
+            || activeRunIdRef.current !== runId
+            || controller.signal.aborted,
+          isPaused: () => (phaseRef.current as Phase) === 'paused',
+          runSlice: (slice) => runBatch(tableId, slice, options, runId, controller.signal),
+        });
+        if (result === 'completed') setPhase('done');
       } finally {
         if (activeRunIdRef.current === runId) {
           runningRef.current = false;
@@ -533,15 +536,17 @@ export function useGenerateReal(): GenerateRunner {
       return;
     }
     try {
-      for (let i = 0; i < failedSpecs.length; i += BATCH_SIZE) {
-        if ((phaseRef.current as Phase) === 'terminated' || activeRunIdRef.current !== runId || controller.signal.aborted) return;
-        while ((phaseRef.current as Phase) === 'paused') {
-          await new Promise((r) => window.setTimeout(r, 200));
-          if ((phaseRef.current as Phase) === 'terminated' || activeRunIdRef.current !== runId || controller.signal.aborted) return;
-        }
-        await runBatch(tableId, failedSpecs.slice(i, i + BATCH_SIZE), options, runId, controller.signal);
-      }
-      if ((phaseRef.current as Phase) !== 'terminated' && activeRunIdRef.current === runId && !controller.signal.aborted) setPhase('done');
+      const result = await runBatchSlices({
+        records: failedSpecs,
+        batchSize: BATCH_SIZE,
+        isInterrupted: () =>
+          (phaseRef.current as Phase) === 'terminated'
+          || activeRunIdRef.current !== runId
+          || controller.signal.aborted,
+        isPaused: () => (phaseRef.current as Phase) === 'paused',
+        runSlice: (slice) => runBatch(tableId, slice, options, runId, controller.signal),
+      });
+      if (result === 'completed') setPhase('done');
     } finally {
       if (activeRunIdRef.current === runId) {
         runningRef.current = false;

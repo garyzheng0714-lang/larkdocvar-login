@@ -2,7 +2,7 @@ import { createHash, createHmac } from 'node:crypto';
 import { normalizeObjectPrefix, sanitizeObjectRequestId } from './objectStorageKeys';
 import { DOCX_CONTENT_TYPE, buildContentDisposition, ensureDocxExtension, sanitizeFileName } from './documentRenderFile';
 import { UserFacingError } from './documentRenderStorageErrors';
-import type { DocumentRenderStorage, SaveGeneratedDocxInput, SavedGeneratedDocx } from './documentRenderApi';
+import type { DocumentRenderStorage, SaveGeneratedDocxInput, SavedGeneratedDocx } from './documentRenderStorage';
 
 export type TosStorageConfig = {
   accessKeyId: string;

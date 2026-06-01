@@ -30,6 +30,11 @@ const primaryScreenSource = readFileSync(
   new URL('../../src/components/document-generator/PrimaryScreen.tsx', import.meta.url),
   'utf8',
 );
+const primaryScreenPartsSource = readFileSync(
+  new URL('../../src/components/document-generator/PrimaryScreenParts.tsx', import.meta.url),
+  'utf8',
+);
+const primaryScreenUiSource = primaryScreenSource + primaryScreenPartsSource;
 
 const generatorHeaderSource = readFileSync(
   new URL('../../src/components/document-generator/GeneratorHeader.tsx', import.meta.url),
@@ -72,12 +77,12 @@ test('多维表格侧边栏标题和字段映射固定值入口保持显式可�
   assert.match(generatorHeaderSource, /<div className="hdr-mode-row">/);
   assert.match(css, /\.app-brand-header\s*\{[\s\S]*?flex-direction:\s*column;/);
   assert.match(css, /\.hdr-mode-row\s*\{[\s\S]*?width:\s*100%;/);
-  assert.match(primaryScreenSource, /mapping-mode-switch/);
-  assert.match(primaryScreenSource, /mapping-field-search/);
-  assert.match(primaryScreenSource, /mapping-fixed-input/);
-  assert.match(primaryScreenSource, /固定值/);
-  assert.match(primaryScreenSource, /onCustomText\(e\.target\.value\)/);
-  assert.doesNotMatch(primaryScreenSource, /onCustomText\(.*\.trim\(\)\)/);
+  assert.match(primaryScreenUiSource, /mapping-mode-switch/);
+  assert.match(primaryScreenUiSource, /mapping-field-search/);
+  assert.match(primaryScreenUiSource, /mapping-fixed-input/);
+  assert.match(primaryScreenUiSource, /固定值/);
+  assert.match(primaryScreenUiSource, /onCustomText\(e\.target\.value\)/);
+  assert.doesNotMatch(primaryScreenUiSource, /onCustomText\(.*\.trim\(\)\)/);
   assert.match(css, /\.mapping-field-trigger\s*\{/);
   assert.match(css, /\.mapping-fixed-input\s*\{/);
 });
