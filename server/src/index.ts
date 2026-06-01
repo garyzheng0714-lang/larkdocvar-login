@@ -111,7 +111,7 @@ const enforceDocumentRenderBrowserOrigin = createMutationOriginGuard({
   requireOriginOrReferer: false,
 });
 const requireBitableSidebarAuth = createBitableSidebarAuthGuard();
-const requireBitableSidebarLogin = createBitableSidebarAuthGuard(async () => true);
+const requireBitableSidebarLogin = createBitableSidebarAuthGuard();
 const requireCloudDocAccess: express.RequestHandler = async (request, response, next) => {
   try {
     const session = await peekSessionForRequest(request);

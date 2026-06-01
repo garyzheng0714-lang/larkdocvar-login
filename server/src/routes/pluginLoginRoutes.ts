@@ -21,6 +21,34 @@ function normalizeOpenId(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function hashBitableIdentity(value: string): string {
+  return crypto.createHash('sha256').update(value).digest('hex').slice(0, 32);
+}
+
+function readHeader(request: express.Request, name: string): string {
+  const value = request.headers[name.toLowerCase()];
+  const raw = Array.isArray(value) ? value[0] : value;
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+export function buildBitableSidebarFallbackUser(input: {
+  sdkUserId: string;
+  baseUserId?: string;
+  tenantKey?: string;
+  baseId?: string;
+}): FeishuUserInfo | null {
+  const sdkUserId = normalizeOpenId(input.sdkUserId);
+  if (!sdkUserId) return null;
+
+  const stableUserId = normalizeOpenId(input.baseUserId) || sdkUserId;
+  const stableScope = normalizeOpenId(input.tenantKey) || normalizeOpenId(input.baseId) || 'unknown';
+  const syntheticOpenId = `bitable:${hashBitableIdentity(`${stableScope}:${stableUserId}`)}`;
+  return {
+    open_id: syntheticOpenId,
+    name: '飞书侧边栏用户',
+  };
+}
+
 async function findUserInfo(openId: string, preferredAppKey: FeishuOAuthAppKey | null): Promise<{
   appKey: FeishuOAuthAppKey;
   userInfo: FeishuUserInfo;
@@ -48,24 +76,31 @@ export function registerPluginLoginRoutes(app: express.Express, options: PluginL
 
       const preferredAppKey = normalizeFeishuOAuthAppKey(request.body?.app_key);
       const found = await findUserInfo(openId, preferredAppKey);
-      if (!found) {
-        response.status(403).json({ ok: false, error: 'user_not_found_in_tenant' });
+      const appKey = found?.appKey ?? preferredAppKey ?? 'fbif';
+      const userInfo = found?.userInfo ?? buildBitableSidebarFallbackUser({
+        sdkUserId: openId,
+        baseUserId: readHeader(request, 'x-bitable-base-user-id'),
+        tenantKey: readHeader(request, 'x-bitable-tenant-key'),
+        baseId: readHeader(request, 'x-bitable-base-id'),
+      });
+      if (!userInfo) {
+        response.status(403).json({ ok: false, error: 'bitable_user_unavailable' });
         return;
       }
 
       const user = await upsertUser({
-        openId: found.userInfo.open_id,
-        name: found.userInfo.name,
-        enName: found.userInfo.en_name,
-        avatarUrl: found.userInfo.avatar_url,
-        email: found.userInfo.email,
+        openId: userInfo.open_id,
+        name: userInfo.name,
+        enName: userInfo.en_name,
+        avatarUrl: userInfo.avatar_url,
+        email: userInfo.email,
       });
 
       const sessionToken = crypto.randomBytes(32).toString('hex');
       const expiresAt = new Date(Date.now() + options.maxAgeSeconds * 1000).toISOString();
       await upsertSession({
         token: sessionToken,
-        oauthAppKey: found.appKey,
+        oauthAppKey: appKey,
         openId: user.open_id,
         accessToken: 'bitable-sidebar',
         refreshToken: '',
