@@ -85,6 +85,19 @@ test('缺失变量在 missing 中如实列出（供上层报可读错误）', as
   assert.deepEqual(result.missing, ['乙']);
 });
 
+test('变量值里含字面 {{ 或 }} 不被误判为残留占位符（公式/代码/JSON 常见，绝不能让整单失败）', async () => {
+  // WHY：残留判定一旦对替换后文本裸扫 includes('{{'/'}}')，用户填 "f(x) }} 结束"、"{ a: {{1}} }"
+  // 这类含字面括号的值就会被当成"模板仍有未替换占位符"导致整批生成无故失败——这是头号信任杀手。
+  // 正确语义：占位符已替换完毕，值里的字面括号只是普通文本。
+  const tpl = await buildDocx(`<w:p><w:r><w:t>公式：{{表达式}}；说明：{{说明}}</w:t></w:r></w:p>`);
+  const result = await renderDocxWithEasyTemplate(tpl, { 表达式: 'f(x) }} 结束', 说明: '形如 {{ 开头' });
+  const xml = await extractDocumentXml(result.buffer);
+  assert.match(xml, /f\(x\) \}\} 结束/, '含字面 }} 的值应原样写入');
+  assert.match(xml, /形如 \{\{ 开头/, '含字面 {{ 的值应原样写入');
+  assert.equal(result.hasResidualPlaceholders, false, '占位符已全部替换，值里的字面括号不算残留');
+  assert.deepEqual(result.missing, []);
+});
+
 test('基础替换返回 found 与 previewText', async () => {
   const tpl = await buildDocx(`<w:p><w:r><w:t>客户：{{客户名称}}</w:t></w:r></w:p>`);
   const result = await renderDocxWithEasyTemplate(tpl, { 客户名称: '上海测试' });

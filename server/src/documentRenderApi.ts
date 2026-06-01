@@ -134,6 +134,20 @@ function extractVariablesFromText(input: string): string[] {
   return variables;
 }
 
+// 残留占位符判定：渲染完成后文本里若仍残留形如 {{...}}（含空占位 {{ }}）的"完整 token"，
+// 即视为没替换干净，拒绝产出半成品。关键是只认完整 token——绝不能对替换后的文本做裸
+// includes('{{'/'}}') 扫描：用户填入的值里含字面的孤立 {{ 或 }}（公式 f(x) }}、代码、JSON、
+// 模板示例都很常见）并不构成 token，过去被误判成残留导致整单生成无故失败，是头号信任杀手。
+const RESIDUAL_PLACEHOLDER_PATTERN = /\{\{[^{}]*\}\}/;
+
+function textHasResidualPlaceholder(text: string): boolean {
+  return RESIDUAL_PLACEHOLDER_PATTERN.test(text);
+}
+
+function xmlHasResidualPlaceholders(xml: string): boolean {
+  return textHasResidualPlaceholder(collectTextNodeSegments(xml).combinedText);
+}
+
 function renderText(input: string, variables: Record<string, string>): string {
   return input.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, rawName: string) => {
     const name = rawName.trim();
@@ -575,11 +589,11 @@ async function renderDocxWithEasyTemplate(
     const file = finalZip.file(name);
     if (!file) continue;
     let xml = await file.async('string');
-    if (xml.includes('{{')) {
+    if (xmlHasResidualPlaceholders(xml)) {
       xml = replacePlaceholdersInTextNodes(xml, variables).xml;
       finalZip.file(name, xml);
     }
-    if (xml.includes('{{') || xml.includes('}}')) hasResidualPlaceholders = true;
+    if (xmlHasResidualPlaceholders(xml)) hasResidualPlaceholders = true;
   }
   const finalBuffer = Buffer.from(await finalZip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
   const finalDocumentXml = (await finalZip.file('word/document.xml')?.async('string')) || '';
@@ -641,10 +655,10 @@ export async function renderDocx(templateBuffer: Buffer, variables: Record<strin
     if (!file) continue;
     const xml = await file.async('string');
     const rendered = replacePlaceholdersInTextNodes(xml, variables);
-    for (const name of rendered.found) {
-      foundSet.add(name);
+    for (const found of rendered.found) {
+      foundSet.add(found);
     }
-    hasResidualPlaceholders ||= rendered.xml.includes('{{') || rendered.xml.includes('}}');
+    hasResidualPlaceholders ||= xmlHasResidualPlaceholders(rendered.xml);
     zip.file(name, rendered.xml);
     if (name === 'word/document.xml') {
       renderedDocumentXml = rendered.xml;
@@ -676,7 +690,7 @@ function buildDocResponse(input: DocumentRenderRequest, requestId: string) {
   if (unused.length > 0) throw new UnusedVariablesError(unused);
   const renderVariables = input.missingStrategy === 'blank' ? withBlankMissingVariables(variables, missing) : variables;
   const previewText = renderText(content, renderVariables);
-  if (previewText.includes('{{') || previewText.includes('}}')) throw new UserFacingError('模板中仍有未替换的变量占位符，请检查模板。');
+  if (textHasResidualPlaceholder(previewText)) throw new UserFacingError('模板中仍有未替换的变量占位符，请检查模板。');
 
   return {
     ok: true,
