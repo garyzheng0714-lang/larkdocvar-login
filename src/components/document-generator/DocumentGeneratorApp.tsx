@@ -84,7 +84,7 @@ export function DocumentGeneratorApp({
     fileNameTpl: initialTemplate ? `{{${initialTemplate.variables?.[0]?.name ?? '客户名称'}}}-${initialTemplate.name}` : '文档',
     selectedCount,
     expires: '24 小时',
-    onMissing: '停止该条',
+    onMissing: '留空继续',
     writeBack: false,
     writeBackField: '',
   }));

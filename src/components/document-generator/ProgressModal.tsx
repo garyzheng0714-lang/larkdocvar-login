@@ -292,7 +292,12 @@ function RecordRow({ idx, item, accent }: { idx: number; item: RecordItem; accen
   return (
     <div className={'rec-row rec-' + item.status}>
       <span className="rec-idx">{String(idx).padStart(2, '0')}</span>
-      <span className="rec-name">{item.displayName}</span>
+      <span className="rec-main">
+        <span className="rec-name">{item.displayName}</span>
+        {item.status === 'failed' && item.error ? (
+          <span className="rec-error">{item.error}</span>
+        ) : null}
+      </span>
       <span className="rec-status">
         {item.status === 'pending' && <span className="rs rs-pend">待处理</span>}
         {item.status === 'processing' && (
