@@ -233,6 +233,13 @@ function rowToJob(row: { jobId: string; ownerKey: string; status: string; templa
 
 async function runJob(job: RenderJob, storage: DocumentRenderStorage, ttlMs: number, leaseMs: number, jobStore: JobStore, templateResolver?: DocumentTemplateResolver): Promise<void> {
   const progressResults: DocumentRenderBatchRecordResult[] = [];
+  // 心跳续租：单条记录可能耗时超过 lease（远程模板下载/转换卡顿等），仅在每条完成后续租
+  // 会留下"活着的进程仍在跑、lease 却先过期"的窗口，被 markStale 误判为 stale 失败。
+  // 定时刷新 lease_expires_at，保证活进程持有的任务不会被误杀；进程崩溃则心跳停止、lease 自然过期。
+  const heartbeat = setInterval(() => {
+    void jobStore.update(job.jobId, { leaseExpiresAt: futureIso(leaseMs) }).catch(() => undefined);
+  }, Math.max(30_000, Math.floor(leaseMs / 3)));
+  if (typeof heartbeat.unref === 'function') heartbeat.unref();
   try {
     await jobStore.update(job.jobId, { status: 'running', leaseOwner: PROCESS_LEASE_OWNER, leaseExpiresAt: futureIso(leaseMs) });
     job.status = 'running';
@@ -284,6 +291,8 @@ async function runJob(job: RenderJob, storage: DocumentRenderStorage, ttlMs: num
       // eslint-disable-next-line no-console
       console.error(`[document-render-job:${job.jobId}] failed to persist failure`, updateError instanceof Error ? updateError.message : String(updateError));
     }
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
@@ -408,3 +417,8 @@ export function createDocumentRenderJobRouter(options: {
 
   return router;
 }
+
+export const __test__ = {
+  createMemoryJobStore,
+  PROCESS_LEASE_OWNER,
+};
