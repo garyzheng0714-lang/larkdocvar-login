@@ -11,8 +11,8 @@
 |---|---|---|---|
 | **0 止血护栏** | CI 测试门禁 / ErrorBoundary / image 误判修复 / 错误文案带变量名 / accept 纯 docx / ETA 去魔法值 | ✅ 完成 | `3735b51` |
 | **1 换引擎** | easy-template-x + run 归一化重写 Docx 渲染（默认启用，env=legacy 回退）；脚注兜底；缩略图修复；飞书路径 split-run 样式修复 | ✅ 完成 | `3ceb444` `465bdc9` `e16e9c4` |
-| **2 可靠性** | pg 连接池上限✅；模板归属/owner_key 隔离✅；render_jobs 落库 + 心跳续租 + markStale 按租约回收✅。**但**「DB 驱动队列」实为 DB 持久化的进程内异步任务（setImmediate 执行，无独立 worker 拉取、无 cancel 端点、无 owner-scoped CAS，单实例模型）；**且前端尚未接入**——侧边栏生产路径仍走同步 `/document-renders/batch` | 🔶 后端就绪 / 队列前端未接入 | `8a1fa8c` `bd8f0af` `8f61de3` |
-| **3 信任体验** | 「留空继续」前后端真贯通✅。Gotenberg PDF 预览：后端 `convertDocxToPdfPreview` + `includePdfPreview` 契约 + docker-compose `gotenberg` 服务均就绪✅（业务系统经 API Key 调 `includePdfPreview` 即可用；e2e docx→pdf 转换需真实 `docker compose up` 验证，本机无 docker 未跑）；**仅侧边栏前端无预览入口未接** | 🔶 留空继续完成 / PDF API 可用·侧边栏未接 | `1af644c` |
+| **2 可靠性** | pg 连接池上限✅；模板归属/owner_key 隔离✅。批量可靠性的**用户价值由侧边栏客户端编排交付**（`runBatchSlices` 客户端分批 + 实时逐条进度 + 暂停 + 终止，UI 实测可用）——经决策**保持此方案**（切服务端队列会失去暂停/终止粒度）。`render_jobs` 落库 + 心跳续租 + markStale 按租约回收定位为**业务系统 API 路径**的异步机制（非侧边栏缺口）；其多实例 owner-scoped CAS 见「仍未做」 | ✅ 用户可用（客户端编排）/ 队列服务 API 路径 | `8a1fa8c` `bd8f0af` `8f61de3` |
+| **3 信任体验** | 「留空继续」前后端真贯通✅。Gotenberg PDF 预览：后端契约 + docker-compose `gotenberg` 服务 + **侧边栏「预览样式 PDF」入口**均已接✅（模板卡片下按钮→`includePdfPreview`→新标签打开 PDF；mock 下 UI 接线实测正常）。注：图片占位符不参与预览；真实 docx→pdf e2e 转换需部署侧 Gotenberg 实测（本机无 docker 未跑） | ✅ 留空继续 + 预览前端已接 / e2e 待部署侧实测 | `1af644c` `70b3a83` |
 | **4 可维护性** | 拆分 documentRenderApi.ts / PrimaryScreen.tsx；清 _components.css 死类；抽 useBatchRunner 复用开始生成和重试路径 | ✅ 完成 | `3671b3d` |
 | **收尾** | 同步 docs/docx-api-integration.md（含更新日志）+ CONTEXT.md ✅（机器可验）。线上飞书云文档同步、Chrome 真实页面验证属人工/外部项，见下「最终验证记录」如实标注 | 🔶 文档同步完成 / UI 与飞书同步待复验 | 收尾提交 |
 
@@ -31,11 +31,17 @@
 - 🟠 **render job markStale 误杀窗口 + 占位测试（已修 `8f61de3`）**：续租只在每条记录完成后发生，单条耗时超 15min lease 会被误判 stale；加心跳续租消除窗口。占位式常量断言测试换成真实行为测试（markStale 不误杀新鲜租约、owner 不串号）。
 - 🔶 **如实降级（本提交）**：阶段 2「DB 驱动队列」与阶段 3「Gotenberg 保真预览/PDF 导出」前端均未接入、Gotenberg 编排无服务，从「✅ 完成」降为「后端契约就绪 / 前端未接入」，与任务 #9 对齐。
 
-仍未做（按优先级与产品取舍待定，不冒充已完成）：
+已据决策完成（第二轮）：
 
-- 队列接入前端（提交→轮询→拉结果）或保持后端 API 供业务系统调用；lease 的 owner-scoped 原子 CAS（多实例严格防抢占）。
-- Gotenberg：docker-compose 增服务 + 前端预览入口（若产品确定要面向侧边栏用户交付 PDF 预览）。
-- ETA 估算抽纯函数补测；`useBatchRunner.ts` 名实不符（纯函数 `runBatchSlices`）建议改名 `batchRunner.ts` 并补中断/暂停语义测试。
+- 侧边栏批量**保持客户端编排**（实时进度+暂停+终止），`render_jobs` 队列定位为业务系统 API 路径机制——阶段2 用户价值视为已交付。
+- Gotenberg PDF 预览：docker-compose 加 `gotenberg` 服务 + 侧边栏「预览样式 PDF」入口已接（`70b3a83`）。
+- ETA 抽纯函数 `computeEtaSeconds` 补测、`runBatchSlices` 中断/暂停语义补测（`15fa2d4`）。
+
+仍未做（低优先 / 待评估，不冒充已完成）：
+
+- PDF 预览真实 docx→pdf e2e 转换需部署侧 Gotenberg 实测（本机无 docker）；图片占位符暂不参与预览。
+- `render_jobs` 多实例 owner-scoped 原子 CAS（严格防抢占，需 PG 集成测试）——当前单实例模型够用。
+- `useBatchRunner.ts` 名实不符（纯函数 `runBatchSlices`）可改名 `batchRunner.ts`；前端 image 判定与后端前缀常量可收敛去重；`documentRenderStorage` 配置缺失分支补直接单测。
 
 ## 已知技术债 / 后续
 
