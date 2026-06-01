@@ -14,7 +14,7 @@
 | **2 可靠性** | pg 连接池上限✅；模板归属/owner_key 隔离✅。批量可靠性的**用户价值由侧边栏客户端编排交付**（`runBatchSlices` 客户端分批 + 实时逐条进度 + 暂停 + 终止，UI 实测可用）——经决策**保持此方案**（切服务端队列会失去暂停/终止粒度）。`render_jobs` 落库 + 心跳续租 + markStale 按租约回收定位为**业务系统 API 路径**的异步机制（非侧边栏缺口）；其多实例 owner-scoped CAS 见「仍未做」 | ✅ 用户可用（客户端编排）/ 队列服务 API 路径 | `8a1fa8c` `bd8f0af` `8f61de3` |
 | **3 信任体验** | 「留空继续」前后端真贯通✅。Gotenberg PDF 预览：后端契约 + docker-compose `gotenberg` 服务 + **侧边栏「预览样式 PDF」入口**均已接✅（模板卡片下按钮→`includePdfPreview`→新标签打开 PDF；mock 下 UI 接线实测正常）。注：图片占位符不参与预览；真实 docx→pdf e2e 转换需部署侧 Gotenberg 实测（本机无 docker 未跑） | ✅ 留空继续 + 预览前端已接 / e2e 待部署侧实测 | `1af644c` `70b3a83` |
 | **4 可维护性** | 拆分 documentRenderApi.ts / PrimaryScreen.tsx；清 _components.css 死类；抽 useBatchRunner 复用开始生成和重试路径 | ✅ 完成 | `3671b3d` |
-| **收尾** | 同步 docs/docx-api-integration.md（含更新日志）+ CONTEXT.md ✅（机器可验）。线上飞书云文档同步、Chrome 真实页面验证属人工/外部项，见下「最终验证记录」如实标注 | 🔶 文档同步完成 / UI 与飞书同步待复验 | 收尾提交 |
+| **收尾** | 同步 docs/docx-api-integration.md（含更新日志）+ CONTEXT.md ✅；Chrome 真实页面验证 ✅（第二轮实测）；线上飞书云文档核验+补漂移+固化同步脚本 ✅；origin 分歧已对齐 ✅。详见「最终验证记录」 | ✅ 完成 | 收尾提交 `7ab2d89` |
 
 ## 关键决策（详见 agent 记忆 project_docx-render-engine-choice）
 
@@ -42,6 +42,7 @@
 - PDF 预览真实 docx→pdf e2e 转换需部署侧 Gotenberg 实测（本机无 docker）；图片占位符暂不参与预览。
 - `render_jobs` 多实例 owner-scoped 原子 CAS（严格防抢占，需 PG 集成测试）——当前单实例模型够用。
 - `useBatchRunner.ts` 名实不符（纯函数 `runBatchSlices`）可改名 `batchRunner.ts`；前端 image 判定与后端前缀常量可收敛去重；`documentRenderStorage` 配置缺失分支补直接单测。
+- 飞书云文档同步已固化为 `scripts/sync-docx-api-doc.sh`；后续 API 文档变更后运行 `npm run sync:docx-api-doc -- --yes` 即可（无嵌入资源，overwrite 安全）。
 
 ## 已知技术债 / 后续
 
@@ -59,4 +60,5 @@
   - Word 文档路径：模板卡片、字段映射 8 行（字段/固定值切换 + 下拉 + 智能匹配）、文件命名 token 编辑器、写回字段、生成数量、高级设置（下载有效期 + 缺失变量时「留空继续」默认值）均渲染正常、对齐良好、无裁切重叠；控制台无报错。
   - 完整生成流程：点「开始生成」→ 进度弹窗（进度条/✓成功·失败·进行中·待处理计数/逐条记录状态/终止·暂停按钮/「预计还需 N 秒」实测 ETA）→ 完成态（100%、6 成功 0 失败、关闭按钮）逐帧正常，底栏文案随状态正确切换。
   - 飞书云文档路径：链接输入 + 提取变量按钮、底栏「请先提取变量 / 开始替换（置灰）」空状态正常。
-- 线上飞书云文档同步：⏳ **待确认**。仓库内无指向云文档 token 的同步脚本，第一轮「已同步」无法核验；按红线应补一个走飞书开放平台 API 的同步脚本固化流程。
+- 线上飞书云文档同步 ✅（2026-06-02 第二轮核验）：`lark-cli docs +fetch` 拉线上文档与本地 `docs/docx-api-integration.md` 比对——基本一致（第一轮「已同步」基本属实），仅 2026-05-31 更新日志行漏了「租约」措辞，已用 `str_replace` 局部补齐（保留评论，未整篇 overwrite），线上现与本地完全一致。已新增 `scripts/sync-docx-api-doc.sh`（`npm run sync:docx-api-doc`）固化红线同步流程。
+- origin 分歧 ✅：origin 的失败原因清晰化改进已手工移植到重构后结构（`593fecc`），并 `merge -s ours` 对齐（领先 22 / 落后 0）。
