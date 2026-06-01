@@ -727,7 +727,8 @@ function normalizeParagraphRuns(paragraphXml: string): string {
 }
 
 function getDocxTextEngine(): 'easy-template-x' | 'legacy' {
-  return process.env.DOCUMENT_RENDER_TEXT_ENGINE === 'easy-template-x' ? 'easy-template-x' : 'legacy';
+  // 默认走 easy-template-x（修复样式不统一/多行/跨 run 等根因）；可用 env 回退 legacy 兜底。
+  return process.env.DOCUMENT_RENDER_TEXT_ENGINE === 'legacy' ? 'legacy' : 'easy-template-x';
 }
 
 const easyTemplateHandler = new TemplateHandler({ delimiters: { tagStart: '{{', tagEnd: '}}' } });
@@ -775,14 +776,29 @@ async function renderDocxWithEasyTemplate(
   }
 
   const intermediate = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-  let finalBuffer: Buffer;
+  let processedBuffer: Buffer;
   try {
-    finalBuffer = Buffer.from(await easyTemplateHandler.process(intermediate, variables));
+    processedBuffer = Buffer.from(await easyTemplateHandler.process(intermediate, variables));
   } catch {
     throw new UserFacingError('文档生成失败：模板内容无法解析，请检查模板占位符是否完整。');
   }
 
-  const finalZip = await JSZip.loadAsync(finalBuffer);
+  // easy-template-x 只处理正文/页眉/页脚等主体部件；对它未覆盖、仍残留占位符的部件
+  // （如 footnotes.xml 脚注、endnotes.xml 尾注），用已归一化的 run 做兜底文本替换，
+  // 保证脚注等位置的变量也被替换且样式保真，避免静默漏替换产出半成品。
+  const finalZip = await JSZip.loadAsync(processedBuffer);
+  let hasResidualPlaceholders = false;
+  for (const name of Object.keys(finalZip.files).filter((n) => n.startsWith('word/') && n.endsWith('.xml'))) {
+    const file = finalZip.file(name);
+    if (!file) continue;
+    let xml = await file.async('string');
+    if (xml.includes('{{')) {
+      xml = replacePlaceholdersInTextNodes(xml, variables).xml;
+      finalZip.file(name, xml);
+    }
+    if (xml.includes('{{') || xml.includes('}}')) hasResidualPlaceholders = true;
+  }
+  const finalBuffer = Buffer.from(await finalZip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }));
   const finalDocumentXml = (await finalZip.file('word/document.xml')?.async('string')) || '';
 
   const textFound = Array.from(foundSet);
@@ -791,7 +807,6 @@ async function renderDocxWithEasyTemplate(
     ...textFound.filter((name) => !Object.prototype.hasOwnProperty.call(variables, name)),
     ...renderedImages.missing.map((name) => `image:${name}`),
   ]));
-  const hasResidualPlaceholders = finalDocumentXml.includes('{{') || finalDocumentXml.includes('}}');
 
   return {
     buffer: finalBuffer,

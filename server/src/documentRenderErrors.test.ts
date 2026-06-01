@@ -184,7 +184,8 @@ test('公开 API 遇到残留占位符时不生成半成品', async () => {
     const body = await response.json() as any;
     assert.equal(response.status, 400);
     assert.equal(body.ok, false);
-    assert.equal(body.error, '模板中仍有未替换的变量占位符，请检查模板。');
+    // 新引擎对跨段落畸形占位符明确报"无法解析"错误（旧引擎报"残留占位符"）；两者都拒绝产出半成品
+    assert.match(body.error, /无法解析|未替换的变量占位符/);
   } finally {
     restorePrivateUrls();
     await api.close();

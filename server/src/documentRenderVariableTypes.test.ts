@@ -71,7 +71,8 @@ test('公开 Docx API 支持数字、布尔值和 null 变量值', async () => {
     const downloadResponse = await fetch(new URL(body.download.url, baseUrl));
     const outputZip = await JSZip.loadAsync(Buffer.from(await downloadResponse.arrayBuffer()));
     const documentXml = await outputZip.file('word/document.xml')?.async('string');
-    assert.match(documentXml || '', /金额：12800，确认：true，备注：/);
+    // 新引擎可能把文本拆成多个 w:t，去掉标签后验证文本连续正确（数字/布尔/null 均已正确转字符串）
+    assert.match((documentXml || '').replace(/<[^>]+>/g, ''), /金额：12800，确认：true，备注：/);
     assert.doesNotMatch(documentXml || '', /\{\{[^{}]+?\}\}/);
   } finally {
     restorePrivateUrls();

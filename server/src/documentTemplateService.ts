@@ -351,6 +351,15 @@ export class DocumentTemplateService {
     const buffer = annotated.buffer;
     const rendered = await renderDocx(buffer, {});
     const variables = annotated.variables.length > 0 ? annotated.variables : rendered.found;
+    // 缩略图预览：用变量名自身作为值再渲染一次，让占位符显示为变量名。
+    // （renderDocx 对未提供的变量会替换成空串，直接用空变量渲染会丢失占位符文本。）
+    const previewVariables: Record<string, string> = {};
+    for (const name of variables) {
+      if (!isImagePlaceholderName(name)) previewVariables[name] = stripImagePrefix(name);
+    }
+    const preview = Object.keys(previewVariables).length > 0
+      ? await renderDocx(buffer, previewVariables)
+      : rendered;
     const fileName = ensureDocxExtension(sanitizeFileName(input.fileName || input.name || '模板.docx', '模板.docx'));
     return {
       versionId: buildVersionId(templateId, versionNumber),
@@ -361,7 +370,7 @@ export class DocumentTemplateService {
       sha256: sha256(buffer),
       size: buffer.length,
       variables,
-      thumbnail: buildTemplateThumbnail(rendered.previewText, variables),
+      thumbnail: buildTemplateThumbnail(preview.previewText, variables),
       createdAt: new Date().toISOString(),
     };
   }
