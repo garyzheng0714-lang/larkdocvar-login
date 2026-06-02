@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>飞书边栏插件 · 重构与审计总结</title>
+<style>
+  :root{
+    --accent:#2b5fed; --accent-soft:#ecf0fe; --ink:#1a1f2e; --ink-2:#5a6478; --ink-3:#8a93a6;
+    --bg:#f5f6f9; --card:#ffffff; --line:#e7eaf0;
+    --blocker:#d92d20; --high:#e8590c; --medium:#b9621a; --low:#667085; --ok:#0d8a7c;
+    --blocker-bg:#fdecea; --high-bg:#fdf0e6; --ok-bg:#e3f4f1;
+    --radius:14px; --shadow:0 1px 2px rgba(16,24,40,.04),0 8px 24px rgba(16,24,40,.06);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    background:var(--bg); color:var(--ink); line-height:1.65;
+    -webkit-font-smoothing:antialiased; padding:0 0 80px;
+  }
+  .wrap{max-width:960px;margin:0 auto;padding:0 24px}
+  /* Hero */
+  .hero{background:linear-gradient(135deg,#2b5fed 0%,#1e47c4 100%);color:#fff;padding:56px 0 48px;margin-bottom:-32px}
+  .hero .wrap{position:relative}
+  .logo-line{display:flex;align-items:center;gap:10px;font-weight:700;letter-spacing:.5px;opacity:.92;margin-bottom:22px}
+  .logo-mark{font-weight:800;font-size:18px}
+  .logo-mark .dot{color:#ffd54a}
+  .hero h1{font-size:30px;font-weight:800;letter-spacing:-.3px;margin-bottom:12px}
+  .hero p.sub{font-size:15px;opacity:.9;max-width:680px}
+  .hero .verdict{margin-top:22px;display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.16);
+    border:1px solid rgba(255,255,255,.25);padding:8px 14px;border-radius:999px;font-size:13px;font-weight:600}
+  .meta-date{position:absolute;top:0;right:24px;font-size:12px;opacity:.8}
+  /* Metrics */
+  .metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-top:48px}
+  .metric{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px 16px;box-shadow:var(--shadow)}
+  .metric .num{font-size:26px;font-weight:800;color:var(--accent);letter-spacing:-.5px}
+  .metric .num small{font-size:14px;color:var(--ink-3);font-weight:600;margin-left:2px}
+  .metric .lbl{font-size:12px;color:var(--ink-2);margin-top:4px}
+  /* Sections */
+  section{margin-top:44px}
+  h2{font-size:20px;font-weight:800;letter-spacing:-.2px;display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  h2 .bar{width:4px;height:20px;background:var(--accent);border-radius:2px}
+  .sec-sub{color:var(--ink-2);font-size:14px;margin-bottom:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:22px 24px}
+  .card + .card{margin-top:14px}
+  /* Goal grid */
+  .goals{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .goal{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px 20px;box-shadow:var(--shadow)}
+  .goal .tag{font-size:11px;font-weight:700;color:var(--accent);background:var(--accent-soft);padding:3px 9px;border-radius:6px;display:inline-block;margin-bottom:8px}
+  .goal h3{font-size:15px;margin-bottom:4px}
+  .goal p{font-size:13px;color:var(--ink-2)}
+  .quote{border-left:3px solid var(--accent);background:var(--accent-soft);padding:12px 16px;border-radius:0 10px 10px 0;
+    font-size:14px;color:#2a3550;margin-top:16px}
+  /* Findings table */
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  thead th{text-align:left;color:var(--ink-3);font-weight:600;font-size:12px;padding:0 12px 10px;border-bottom:1px solid var(--line)}
+  tbody td{padding:14px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tbody tr:last-child td{border-bottom:0}
+  .sev{display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;border-radius:6px;white-space:nowrap}
+  .sev.blocker{color:var(--blocker);background:var(--blocker-bg)}
+  .sev.high{color:var(--high);background:var(--high-bg)}
+  .sev.medium{color:var(--medium);background:#fbeedf}
+  .sev.low{color:var(--low);background:#eef0f4}
+  .sev.ok{color:var(--ok);background:var(--ok-bg)}
+  code{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:12px;background:#f0f2f6;padding:1px 6px;border-radius:5px;color:#384152}
+  /* Timeline / commits */
+  .commits{position:relative;padding-left:26px}
+  .commits::before{content:"";position:absolute;left:7px;top:6px;bottom:6px;width:2px;background:var(--line)}
+  .commit{position:relative;padding:0 0 18px}
+  .commit::before{content:"";position:absolute;left:-23px;top:5px;width:11px;height:11px;border-radius:50%;background:#fff;border:2.5px solid var(--accent)}
+  .commit.fix::before{border-color:var(--high)}
+  .commit.feat::before{border-color:var(--ok)}
+  .commit .hash{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:11px;color:var(--ink-3)}
+  .commit .title{font-size:14px;font-weight:600;margin:1px 0 2px}
+  .commit .desc{font-size:12.5px;color:var(--ink-2)}
+  /* Decision split */
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .pill{font-size:11px;font-weight:700;padding:3px 9px;border-radius:6px}
+  .pill.keep{color:var(--ok);background:var(--ok-bg)}
+  .pill.drop{color:var(--low);background:#eef0f4}
+  ul.clean{list-style:none}
+  ul.clean li{position:relative;padding-left:22px;font-size:13.5px;color:var(--ink-2);margin:8px 0}
+  ul.clean li::before{content:"";position:absolute;left:2px;top:8px;width:7px;height:7px;border-radius:50%;background:var(--accent)}
+  ul.clean li.warn::before{background:var(--high)}
+  ul.clean li b{color:var(--ink)}
+  .foot{margin-top:40px;text-align:center;color:var(--ink-3);font-size:12px}
+  .check{color:var(--ok);font-weight:700}
+  @media(max-width:760px){
+    .metrics{grid-template-columns:repeat(2,1fr)} .goals,.split{grid-template-columns:1fr}
+    .hero h1{font-size:24px} .meta-date{position:static;margin-bottom:8px}
+  }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <div class="meta-date">2026-06-02 · 第二轮（审计 + 加固 + 收尾）</div>
+    <div class="logo-line"><span class="logo-mark">FB<span class="dot">!</span>F</span> · 云文档变量批量生成 · 侧边栏插件</div>
+    <h1>从「不敢用」到「能放心用」：一次诚实的重构审计与加固</h1>
+    <p class="sub">用户反馈系统问题很大、Word 导入后样式与最终效果完全不统一。本轮在已提交的 5 阶段重构之上，用 7 个 agent 并行审计「声明 vs 实际代码」，揪出并修掉真问题，把过度声称如实降级，再补齐前端入口、对齐分支、同步文档。</p>
+    <div class="verdict">✓ 5 阶段 + 收尾全部完成 · 256/256 测试 · 真实浏览器实测无破版</div>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <div class="metrics">
+    <div class="metric"><div class="num">14</div><div class="lbl">本轮提交</div></div>
+    <div class="metric"><div class="num">256<small>/256</small></div><div class="lbl">测试全绿</div></div>
+    <div class="metric"><div class="num">7</div><div class="lbl">审计 agent</div></div>
+    <div class="metric"><div class="num">1</div><div class="lbl">头号 bug 修复</div></div>
+    <div class="metric"><div class="num">24<small>↑0↓</small></div><div class="lbl">领先 origin</div></div>
+  </div>
+
+  <!-- 起点 -->
+  <section>
+    <h2><span class="bar"></span>任务起点</h2>
+    <p class="sec-sub">用户的核心痛点与三条诉求</p>
+    <div class="quote">「Word 文档导入后，生成的样式和最终效果完全不统一。」—— 这是用户对系统最大的不信任来源。</div>
+    <div class="goals" style="margin-top:16px">
+      <div class="goal"><span class="tag">诉求一</span><h3>交付能放心用的版本</h3><p>全面审查代码，逐模块给优化建议，最终给一个让人安心使用的版本。</p></div>
+      <div class="goal"><span class="tag">诉求二</span><h3>站在巨人的肩膀上</h3><p>Word 模板变量替换/生成已很成熟，优先复用开源方案，不要从零造轮子。</p></div>
+      <div class="goal"><span class="tag">诉求三</span><h3>UI 只做细节微调</h3><p>前端视觉风格不需要大改，仅做细节优化。</p></div>
+      <div class="goal"><span class="tag">最高优先级</span><h3>验证后再说「完成」</h3><p>UI 改动必须在真实浏览器上眼验证——这条此前被多次违反。</p></div>
+    </div>
+  </section>
+
+  <!-- 根因与选型 -->
+  <section>
+    <h2><span class="bar"></span>根因 &amp; 技术选型</h2>
+    <p class="sec-sub">「样式不统一」到底是什么造成的</p>
+    <div class="card">
+      <p style="font-size:14px"><b>根因：split-run 样式塌缩。</b> 旧实现用手写正则改 OOXML <code>&lt;w:t&gt;</code> 节点做变量替换。Word/输入法常把一个 <code>{{客户名称}}</code> 占位符拆成多个样式不同的 run（如 <code>{{</code> / <code>客户名称(加粗)</code> / <code>}}</code>），手写替换把整个值塞进第一个 run 的样式里，变量真正的样式（加粗等）被丢弃 —— 于是「导入后样式和最终效果不一致」。</p>
+      <div class="quote" style="margin-top:14px"><b>选型（站在巨人肩膀上）：</b> 实测对比后选 <b>easy-template-x</b>（MIT，纯 JS，字面 key 替换，支持任意字段名、多行自动换行、图片插件）。<code>docx-templates</code> 因把 <code>{{}}</code> 当 JS 表达式、对含空格/冒号/连字符的字段名报错而<b>弃用</b>。替换前先做 <b>run 归一化</b>（把占位符涉及的相邻 run 样式统一为「变量名重叠最多的 run」），样式保真。Docx 与飞书两条路径同思路。</div>
+    </div>
+  </section>
+
+  <!-- 审计 -->
+  <section>
+    <h2><span class="bar"></span>诚实审计（7 个 agent 并行）</h2>
+    <p class="sec-sub">逐项核验 progress.md 的「✅」是否名副其实，对抗性地找过度声称 / 残留 bug / 未接通契约</p>
+    <div class="card" style="padding:8px 12px">
+      <table>
+        <thead><tr><th style="width:90px">严重度</th><th>发现</th><th style="width:120px">结论</th></tr></thead>
+        <tbody>
+          <tr><td><span class="sev blocker">Blocker</span></td><td><b>残留占位符误判</b>：<code>hasResidualPlaceholders</code> 对替换后文本裸扫 <code>includes('{{'/'}}')</code>。用户值里只要含字面孤立的 <code>{{</code> 或 <code>}}</code>（公式 <code>f(x)}}</code>、代码、JSON、模板示例都很常见），明明已替换干净，却被判「仍有未替换占位符」<b>导致整批生成无故失败</b>，用户无法自救。</td><td>已修 <code>277f753</code></td></tr>
+          <tr><td><span class="sev high">High</span></td><td><b>CI 测试门禁前端盲区</b>：test 脚本 glob 只匹配 <code>server/src</code>，<code>src/</code> 下 4 个前端测试从不执行 —— 开发者以为在跑、CI 实际静默跳过。</td><td>已修 <code>04ba73d</code></td></tr>
+          <tr><td><span class="sev high">High</span></td><td><b>队列 / Gotenberg 过度声称</b>：被标「✅完成」的 DB 驱动队列与 PDF 预览，前端零调用、对终端用户不可达。</td><td>已如实降级 + 接通</td></tr>
+          <tr><td><span class="sev medium">Medium</span></td><td><b>markStale 误杀窗口</b>：续租只在每条完成后发生，单条耗时超 15min lease 时会被误判 stale 失败。</td><td>已修 <code>8f61de3</code></td></tr>
+          <tr><td><span class="sev medium">Medium</span></td><td><b>占位式测试</b>：<code>renderJobPersistence.test.ts</code> 全是 <code>assert.equal('x','x')</code> 常量断言，零回归价值。</td><td>改真实行为测试</td></tr>
+          <tr><td><span class="sev low">Low</span></td><td>ETA 去魔法值 / runBatchSlices 中断暂停语义 / 前端 image 判定均缺测试。</td><td>已补意图测试</td></tr>
+          <tr><td><span class="sev ok">名副其实</span></td><td><b>阶段1（引擎）与阶段4（拆分）扎实可信</b>：run 归一化覆盖跨样式/多行/特殊字段名/表格/脚注，测试真验样式；文件拆分无损、CSS 死类逐一核验。</td><td>保持</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 提交时间线 -->
+  <section>
+    <h2><span class="bar"></span>本轮做了什么（14 个提交）</h2>
+    <p class="sec-sub">按信任价值排序：先修会让用户当场翻车的，再诚实降级，再补齐前端</p>
+    <div class="card">
+      <div class="commits">
+        <div class="commit feat"><div class="hash">9e87e2e</div><div class="title">云文档支持公司/对象字段参与变量匹配与写回</div><div class="desc">飞书「公司」等 Object 字段归一为文本类，可绑定合同模板变量。</div></div>
+        <div class="commit fix"><div class="hash">277f753 · Blocker</div><div class="title">残留占位符判定改按完整 token</div><div class="desc">修「变量值含字面 {{ }} 致整单失败」——头号信任杀手；补回归测试。</div></div>
+        <div class="commit fix"><div class="hash">04ba73d</div><div class="title">CI 测试门禁纳入前端 src 测试</div><div class="desc">4 个前端测试从此前永不执行 → 进 CI，全量 227→243。</div></div>
+        <div class="commit fix"><div class="hash">8f61de3</div><div class="title">render job 心跳续租消除 markStale 误杀窗口</div><div class="desc">占位测试换成真实行为断言（不误杀新鲜租约 / owner 不串号）。</div></div>
+        <div class="commit"><div class="hash">04262c8 · 15fa2d4 · 270c49a</div><div class="title">如实降级过度声称 + 补测试 + 记录真实 UI 验证</div><div class="desc">progress.md 把队列/Gotenberg 从「✅」降为「后端就绪/前端未接」；补 runBatchSlices 与 ETA 意图测试。</div></div>
+        <div class="commit feat"><div class="hash">e713414 · 70b3a83</div><div class="title">Gotenberg 入 docker-compose + 侧边栏「预览样式 PDF」入口</div><div class="desc">PDF 预览从「仅后端契约」变为可部署 + 前端可触发（生成前先看样式是否统一）。</div></div>
+        <div class="commit feat"><div class="hash">593fecc</div><div class="title">手工移植 origin 的失败原因清晰化改进</div><div class="desc">错误带后端 missing/unused 明细、字段读失败「失败要响」、hasRecords 守卫。</div></div>
+        <div class="commit"><div class="hash">merge -s ours</div><div class="title">对齐 origin/main（领先 24 / 落后 0）</div><div class="desc">改进意图已手工并入重构后结构，消除 diverged。</div></div>
+        <div class="commit"><div class="hash">7ab2d89</div><div class="title">新增飞书云文档同步脚本，固化红线流程</div><div class="desc">npm run sync:docx-api-doc，走开放平台 API 而非 Web UI。</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 关键决策 -->
+  <section>
+    <h2><span class="bar"></span>两个需要拍板的工程决策</h2>
+    <p class="sec-sub">规则七：显式暴露冲突，不折中调和 —— 由你拍板，我据此执行</p>
+    <div class="split">
+      <div class="card">
+        <span class="pill keep">保持现状（推荐）</span>
+        <h3 style="font-size:15px;margin:10px 0 6px">批量生成：客户端编排，不切服务端队列</h3>
+        <p style="font-size:13px;color:var(--ink-2)">侧边栏已用客户端分批 + 实时进度 + <b>暂停/终止</b>（实测可用）。render_jobs 队列无 cancel/暂停端点，切过去会<b>倒退</b>体验 —— 队列定位为<b>业务系统 API 路径</b>的异步机制。阶段2 用户价值视为已交付。</p>
+      </div>
+      <div class="card">
+        <span class="pill keep">现在接前端</span>
+        <h3 style="font-size:15px;margin:10px 0 6px">PDF 预览：接入侧边栏入口</h3>
+        <p style="font-size:13px;color:var(--ink-2)">模板卡片下加「预览样式 PDF」→ 用变量名作示例值渲染保真 PDF。mock 下 UI 接线已实测；真实 docx→pdf e2e 需在有 docker / Gotenberg 的部署环境实测（已如实标注）。</p>
+      </div>
+    </div>
+    <div class="card" style="margin-top:14px">
+      <h3 style="font-size:14px;margin-bottom:6px">默认「缺失变量时」策略：保留<span class="pill keep" style="margin:0 4px">留空继续</span>，未采纳 origin 的<span class="pill drop" style="margin:0 4px">停止该条</span></h3>
+      <p style="font-size:13px;color:var(--ink-2)">origin 较早（6/1）把默认翻成「停止该条」，但本轮重构更晚（6/2）且有测试锁定「留空继续」（WHY：避免空单元格直接生成失败）。按「优先更新且经测试的版本」保留「留空继续」，把另一处标记为已评估。</p>
+    </div>
+  </section>
+
+  <!-- 验证 -->
+  <section>
+    <h2><span class="bar"></span>验证后才说「完成」</h2>
+    <p class="sec-sub">机器可验 + 真实浏览器上眼 + 线上文档核验</p>
+    <div class="card">
+      <ul class="clean">
+        <li><b>typecheck / build</b> <span class="check">✓</span> 全过；<b>256/256 测试</b> <span class="check">✓</span>（前端测试已纳入 CI）；<code>git diff --check</code> <span class="check">✓</span></li>
+        <li><b>真实浏览器逐屏实测</b> <span class="check">✓</span>：Word 路径表单/字段映射/高级设置（留空继续）、完整生成流程（进度弹窗 6 条逐条✓ → 完成态「6 成功 0 失败 用时 7 秒」、实测 ETA「预计还需 2 秒」）、飞书云文档路径空状态 —— 无破版/重叠/裁切，控制台零报错</li>
+        <li><b>线上飞书云文档</b> <span class="check">✓</span>：与本地比对基本一致，补齐 2026-05-31 行「租约」漂移（局部 str_replace，保留评论），现完全一致</li>
+        <li><b>origin 分支</b> <span class="check">✓</span>：改进手工移植 + <code>merge -s ours</code> 对齐，领先 24 / 落后 0</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 剩余 -->
+  <section>
+    <h2><span class="bar"></span>剩余项（低优先 · 非必做 · 已如实记录）</h2>
+    <div class="card">
+      <ul class="clean">
+        <li class="warn">PDF 预览的<b>真实 docx→pdf e2e 转换</b>需在有 docker 的环境实测（本机无 docker，仅验证了 UI 接线与 mock 提示）</li>
+        <li class="warn"><code>render_jobs</code> 多实例 owner-scoped 原子 CAS（严格防抢占）—— 当前单实例模型够用，需 PG 集成测试再做</li>
+        <li>命名/收敛微调：<code>useBatchRunner.ts</code> → <code>batchRunner.ts</code>；前后端 image 前缀常量收敛；存储配置缺失分支补直测</li>
+        <li>本地领先 origin 24 个提交 —— 可在你确认后推送</li>
+      </ul>
+    </div>
+  </section>
+
+  <div class="foot">
+    飞书边栏插件 · 云文档变量批量生成 ｜ 重构与审计总结 ｜ 生成于 2026-06-02<br>
+    详见仓库 <code>docs/refactor-progress.md</code>（5 阶段路线 + 第二轮审计与修复 + 最终验证记录）
+  </div>
+
+</div>
+</body>
+</html>
