@@ -471,7 +471,8 @@ function normalizeParagraphRuns(paragraphXml: string): string {
   let charCursor = 0;
   while ((runMatch = runPattern.exec(paragraphXml)) !== null) {
     const runXml = runMatch[0];
-    const rPrMatch = runXml.match(/<w:rPr>[\s\S]*?<\/w:rPr>/);
+    // rPr 正则放宽：兼容自闭合 <w:rPr/> 与带属性 <w:rPr ...>，否则失配退化为空串会把样式抹掉。
+    const rPrMatch = runXml.match(/<w:rPr\b[^>]*?(?:\/>|>[\s\S]*?<\/w:rPr>)/);
     const rPr = rPrMatch ? rPrMatch[0] : '';
     const text = Array.from(runXml.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)).map((part) => unescapeXml(part[1] || '')).join('');
     runs.push({ runXml, rPr, text, matchStart: runMatch.index, matchEnd: runMatch.index + runXml.length, charStart: charCursor, charEnd: charCursor + text.length });
@@ -501,7 +502,18 @@ function normalizeParagraphRuns(paragraphXml: string): string {
       if (overlap > bestOverlap) { bestOverlap = overlap; bestIndex = i; }
     }
     const representativeRPr = runs[bestIndex].rPr;
-    for (const i of covered) repByRunIndex.set(i, representativeRPr);
+    // easy-template-x 把整个变量值塞进【占位符起始 run】（covered 中最靠前的那个），值的样式只由它决定。
+    const startIndex = covered[0];
+    // 起始 run 的最终样式 = 代表样式 ∪ 主体区间其它 covered run 的字符级强调样式（下划线/加粗/斜体/删除线等）。
+    // 排除起始 run 自身样式（它常裹着花括号，样式不代表变量名，应被主体代表样式取代——保住「样式统一到主体」语义）；
+    // 但变量名主体某些字符独有的强调样式（如填空横线 <w:u> 只描在「丙」上）必须并进来，否则替换值丢失这些样式（用户报障）。
+    let startRPr = representativeRPr;
+    for (const i of covered) {
+      if (i === startIndex) continue;
+      startRPr = mergeRunPropertiesXml(startRPr, runs[i].rPr);
+    }
+    // 起始 run 写并集样式；其余 covered run 仍统一为代表样式（维持占位符整体样式一致的既有设计）。
+    for (const i of covered) repByRunIndex.set(i, i === startIndex ? startRPr : representativeRPr);
   }
   if (repByRunIndex.size === 0) return paragraphXml;
 
@@ -509,18 +521,48 @@ function normalizeParagraphRuns(paragraphXml: string): string {
   const indices = Array.from(repByRunIndex.keys()).sort((a, b) => b - a); // 从后往前改写，避免位置偏移
   for (const i of indices) {
     const run = runs[i];
-    const representativeRPr = repByRunIndex.get(i) || '';
+    const targetRPr = repByRunIndex.get(i) || '';
     let newRunXml: string;
     if (run.rPr) {
-      newRunXml = run.runXml.replace(run.rPr, representativeRPr); // 代表样式为空时即删除原 rPr
-    } else if (representativeRPr) {
-      newRunXml = run.runXml.replace(/(<w:r\b[^>]*>)/, `$1${representativeRPr}`);
+      newRunXml = run.runXml.replace(run.rPr, targetRPr); // targetRPr 为空串时即删除原 rPr
+    } else if (targetRPr) {
+      newRunXml = run.runXml.replace(/(<w:r\b[^>]*>)/, `$1${targetRPr}`);
     } else {
       newRunXml = run.runXml;
     }
     output = output.slice(0, run.matchStart) + newRunXml + output.slice(run.matchEnd);
   }
   return output;
+}
+
+// 取出 <w:rPr> 的内部内容（成对标签取其间内容，自闭合 <w:rPr/> 视为空内容）。
+function extractRunPropertiesInner(rPr: string): string {
+  const paired = rPr.match(/<w:rPr\b[^>]*>([\s\S]*?)<\/w:rPr>/);
+  if (paired) return paired[1];
+  return ''; // 自闭合 <w:rPr/>
+}
+
+// 合并两个 <w:rPr>：以 baseRPr 为基底，把 ownRPr 里 base 缺失的顶层字符级样式子标签并进去。
+// 按子标签名去重，base 已有的样式不被 own 覆盖（保住整段一致样式的代表语义）；
+// own 独有的样式（如只覆盖变量名部分字符的 <w:u>）则保留，避免 run 归一化误删字符级样式。
+function mergeRunPropertiesXml(baseRPr: string, ownRPr: string): string {
+  if (!ownRPr) return baseRPr;
+  if (!baseRPr) return ownRPr;
+  // 注意：必须先剥掉 <w:rPr> 外层壳再匹配子标签，否则正则会把整个 <w:rPr>…</w:rPr> 当成单个子元素。
+  const childPattern = /<w:([A-Za-z]+)\b[^>]*?(?:\/>|>[\s\S]*?<\/w:\1>)/g;
+  const baseInner = extractRunPropertiesInner(baseRPr);
+  const ownInner = extractRunPropertiesInner(ownRPr);
+  const baseTags = new Set(Array.from(baseInner.matchAll(childPattern)).map((m) => m[1]));
+  const additions: string[] = [];
+  for (const m of ownInner.matchAll(childPattern)) {
+    if (!baseTags.has(m[1])) additions.push(m[0]);
+  }
+  if (additions.length === 0) return baseRPr;
+  // 把 own 独有子元素插到 base 的 </w:rPr> 之前；base 为自闭合 <w:rPr/> 时先展开成成对标签。
+  if (/<w:rPr\b[^>]*\/>/.test(baseRPr)) {
+    return baseRPr.replace(/<w:rPr\b([^>]*?)\/>/, `<w:rPr$1>${additions.join('')}</w:rPr>`);
+  }
+  return baseRPr.replace(/<\/w:rPr>/, `${additions.join('')}</w:rPr>`);
 }
 
 function getDocxTextEngine(): 'easy-template-x' | 'legacy' {
