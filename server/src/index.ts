@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createMutationOriginGuard } from './browserOriginGuard';
+import { createCloudDocAccessGuard } from './cloudDocAccessGuard';
 import { createDocumentRenderRouter } from './documentRenderApi';
 import { requireDocumentRenderApiKey } from './documentRenderApiKeyGuard';
 import { createDocumentRenderBatchRouter } from './documentRenderBatchApi';
@@ -97,7 +98,7 @@ const enforceDocumentRenderBrowserOrigin = createMutationOriginGuard({
   allowedOrigins: corsAllowedOrigins,
   requireOriginOrReferer: false,
 });
-const allowCloudDocAccess: express.RequestHandler = (_request, _response, next) => next();
+const requireCloudDocAccess = createCloudDocAccessGuard();
 
 if (feishuService) {
   // Prewarm the user directory cache asynchronously so the search works fast on first attempt.
@@ -116,7 +117,7 @@ app.use(express.json({ limit: '2mb' }));
 
 registerSavedConfigRoutes(app);
 registerHealthRoutes(app, { hasCredential, hasDatabaseUrl });
-registerCloudDocRoutes(app, { feishuService, requireCloudDocAccess: allowCloudDocAccess });
+registerCloudDocRoutes(app, { feishuService, requireCloudDocAccess });
 
 const serverDir = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(serverDir, '../../dist');

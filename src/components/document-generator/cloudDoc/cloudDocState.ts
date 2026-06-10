@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { findBestMatchedField } from '../cloudFieldMapping';
 import { AUTO_OUTPUT_FIELD, BATCH_SIZE } from './constants';
 import {
@@ -42,8 +42,8 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
   const [documentId, setDocumentId] = useState('');
   const [variables, setVariables] = useState<string[]>([]);
   const [mapping, setMapping] = useState<Record<string, string>>({});
-  const [outputFieldId, setOutputFieldId] = useState(AUTO_OUTPUT_FIELD);
-  const [range, setRange] = useState<'selected' | 'all'>(selectedCount > 0 ? 'selected' : 'all');
+  const [outputFieldId, setOutputFieldIdState] = useState(AUTO_OUTPUT_FIELD);
+  const [range, setRangeState] = useState<'selected' | 'all'>(selectedCount > 0 ? 'selected' : 'all');
   const [notice, setNotice] = useState<CloudDocState['notice']>(null);
   const [extracting, setExtracting] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -54,6 +54,8 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
   const generateRunIdRef = useRef(0);
   const generatingRef = useRef(false);
   const extractAbortRef = useRef<AbortController | null>(null);
+  const generateAbortRef = useRef<AbortController | null>(null);
+  const lastActiveTableIdRef = useRef(activeTableId || '');
 
   const targetCount = range === 'selected'
     ? selectedRecordIds.length
@@ -61,6 +63,26 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
   const unmappedCount = variables.filter((variable) => !mapping[variable]).length;
   const canExtract = demo || templateUrl.trim().length > 0;
   const canGenerate = variables.length > 0 && unmappedCount === 0 && targetCount > 0 && (demo || bitableAvailable);
+
+  const cancelActiveGeneration = useCallback((message: string): boolean => {
+    if (!generatingRef.current) return false;
+    generateRunIdRef.current += 1;
+    generateAbortRef.current?.abort();
+    generateAbortRef.current = null;
+    generatingRef.current = false;
+    setGenerating(false);
+    setNotice({ type: 'error', text: message });
+    setProgress((current) => current.total > 0 ? { ...current, phase: '已中止' } : current);
+    return true;
+  }, []);
+
+  useEffect(() => {
+    const nextTableId = activeTableId || '';
+    if (lastActiveTableIdRef.current !== nextTableId) {
+      lastActiveTableIdRef.current = nextTableId;
+      cancelActiveGeneration('当前数据表已变化，本次生成已中止，请确认字段绑定后重新生成。');
+    }
+  }, [activeTableId, cancelActiveGeneration]);
 
   const saveAutoConfig = useCallback((nextMapping: Record<string, string>, nextOutputFieldId: string) => {
     if (demo || !templateUrl.trim() || !templateTitle) return;
@@ -81,8 +103,19 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
 
   const applyMapping = useCallback((next: Record<string, string>) => {
     setMapping(next);
+    cancelActiveGeneration('变量绑定已变化，本次生成已中止，请确认后重新生成。');
     saveAutoConfig(next, outputFieldId);
-  }, [outputFieldId, saveAutoConfig]);
+  }, [cancelActiveGeneration, outputFieldId, saveAutoConfig]);
+
+  const updateOutputFieldId = useCallback((next: string) => {
+    setOutputFieldIdState(next);
+    cancelActiveGeneration('写回字段已变化，本次生成已中止，请确认后重新生成。');
+  }, [cancelActiveGeneration]);
+
+  const updateRange = useCallback((next: 'selected' | 'all') => {
+    setRangeState(next);
+    cancelActiveGeneration('生成范围已变化，本次生成已中止，请确认后重新生成。');
+  }, [cancelActiveGeneration]);
 
   const extractVariables = useCallback(async () => {
     extractAbortRef.current?.abort();
@@ -140,6 +173,7 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
     const runId = generateRunIdRef.current + 1;
     generateRunIdRef.current = runId;
     const controller = new AbortController();
+    generateAbortRef.current = controller;
     setGenerating(true);
     setNotice(null);
     setResults([]);
@@ -170,7 +204,7 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
 
       const outputField = await ensureOutputField({ table, fields, outputFieldId, refreshBitable });
       if (generateRunIdRef.current !== runId || controller.signal.aborted) return;
-      setOutputFieldId(outputField);
+      setOutputFieldIdState(outputField);
       const sidebarHeaders = await buildBitableSidebarHeaders(activeTableId);
       const generated: GenerateResult[] = [];
       const batches = chunk(targetIds, BATCH_SIZE);
@@ -227,6 +261,7 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
     } finally {
       if (generateRunIdRef.current === runId) {
         generatingRef.current = false;
+        generateAbortRef.current = null;
         setGenerating(false);
         setProgress((current) => current.total > 0 ? { ...current, done: current.total, phase: '已完成' } : current);
       }
@@ -265,8 +300,8 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
     canExtract,
     canGenerate,
     setTemplateUrl,
-    setRange,
-    setOutputFieldId,
+    setRange: updateRange,
+    setOutputFieldId: updateOutputFieldId,
     applyMapping,
     saveAutoConfig,
     extractVariables,

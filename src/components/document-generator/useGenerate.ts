@@ -295,6 +295,11 @@ async function getActiveTableId(): Promise<string | null> {
   }
 }
 
+async function resolveRunTableId(options: GenerateOptions): Promise<string | null> {
+  if (options.activeTableId) return options.activeTableId;
+  return getActiveTableId();
+}
+
 export function useGenerateReal(): GenerateRunner {
   const [items, setItems] = useState<RecordItem[]>([]);
   const [phase, setPhase] = useState<Phase>('idle');
@@ -537,7 +542,7 @@ export function useGenerateReal(): GenerateRunner {
       setStartedAt(Date.now());
       setItems(records.map((r) => ({ ...r, status: 'pending', error: null })));
       setPhase('running');
-      const tableId = await getActiveTableId();
+      const tableId = await resolveRunTableId(options);
       if (activeRunIdRef.current !== runId || controller.signal.aborted) return;
       if (!tableId && options.sourceMode !== 'standalone') {
         setItems((prev) =>
@@ -587,7 +592,7 @@ export function useGenerateReal(): GenerateRunner {
       prev.map((i) => (i.status === 'failed' ? { ...i, status: 'pending', error: null } : i)),
     );
     setPhase('running');
-    const tableId = await getActiveTableId();
+    const tableId = await resolveRunTableId(options);
     if (activeRunIdRef.current !== runId || controller.signal.aborted) return;
     if (!tableId && options.sourceMode !== 'standalone') {
       const retryIds = new Set(failedSpecs.map((item) => item.id));

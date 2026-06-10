@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FieldType, bitable } from '@lark-base-open/js-sdk';
 import type { ITable } from '@lark-base-open/js-sdk';
 import type { TableField, FieldKind } from './types';
@@ -93,11 +93,7 @@ async function resolveActiveTable(): Promise<ResolvedTable | null> {
     selection = null;
   }
   if (selection?.tableId) {
-    try {
-      return { table: await bitable.base.getTableById(selection.tableId), tableId: selection.tableId };
-    } catch {
-      // fall through
-    }
+    return { table: await bitable.base.getTableById(selection.tableId), tableId: selection.tableId };
   }
   try {
     const active = await bitable.base.getActiveTable();
@@ -117,6 +113,18 @@ async function resolveActiveTable(): Promise<ResolvedTable | null> {
   } catch {
     return null;
   }
+}
+
+async function getAllRecordIds(table: ITable): Promise<string[]> {
+  const collected: string[] = [];
+  let pageToken: number | undefined;
+  while (true) {
+    const page = await table.getRecordIdListByPage({ pageSize: 200, pageToken });
+    collected.push(...page.recordIds);
+    if (!page.hasMore) break;
+    pageToken = page.pageToken;
+  }
+  return collected;
 }
 
 export interface BitableContext {
@@ -142,12 +150,16 @@ export function useBitable(): BitableContext {
   const [error, setError] = useState<string | null>(null);
   const [available, setAvailable] = useState(true);
   const [activeTableId, setActiveTableId] = useState<string | null>(null);
+  const refreshSeqRef = useRef(0);
 
   const refresh = useCallback(async () => {
+    const seq = refreshSeqRef.current + 1;
+    refreshSeqRef.current = seq;
     setLoading(true);
     setError(null);
     try {
       const resolved = await resolveActiveTable();
+      if (refreshSeqRef.current !== seq) return;
       if (!resolved) {
         setAvailable(false);
         setActiveTableId(null);
@@ -159,8 +171,6 @@ export function useBitable(): BitableContext {
         return;
       }
       const { table, tableId } = resolved;
-      setAvailable(true);
-      setActiveTableId(tableId);
       const rawList = (await table.getFieldMetaList()) as unknown[];
       const normalized: TableField[] = [];
       const seen = new Set<string>();
@@ -171,29 +181,22 @@ export function useBitable(): BitableContext {
           normalized.push(meta);
         }
       }
+      const selectedIds = await getSelectedRecordIds(table);
+      const recordIds = await getAllRecordIds(table).catch(() => []);
+      if (refreshSeqRef.current !== seq) return;
+      setAvailable(true);
+      setActiveTableId(tableId);
       setFields(normalized);
-      setSelectedRecordIds(await getSelectedRecordIds(table));
-      try {
-        const collected: string[] = [];
-        let pageToken: number | undefined;
-        for (let i = 0; i < 5; i += 1) {
-          const page = await table.getRecordIdListByPage({ pageSize: 200, pageToken });
-          collected.push(...page.recordIds);
-          if (!page.hasMore) break;
-          pageToken = page.pageToken;
-        }
-        setAllRecordIds(collected);
-        setTotalRecordCount(collected.length);
-      } catch {
-        setAllRecordIds([]);
-        setTotalRecordCount(0);
-      }
+      setSelectedRecordIds(selectedIds);
+      setAllRecordIds(recordIds);
+      setTotalRecordCount(recordIds.length);
     } catch (err) {
+      if (refreshSeqRef.current !== seq) return;
       setAvailable(false);
       setActiveTableId(null);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (refreshSeqRef.current === seq) setLoading(false);
     }
   }, []);
 

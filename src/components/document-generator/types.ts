@@ -93,6 +93,7 @@ export interface RecordSpec {
 export interface GenerateOptions {
   template: Template | null;
   sourceMode?: 'bitable' | 'standalone';
+  activeTableId?: string | null;
   mapping: Record<string, string>;
   customText: Record<string, string>;
   fileNameTpl: string;

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import './_design.css';
 import { PrimaryScreen } from './PrimaryScreen';
@@ -30,6 +30,10 @@ const ACCENTS: Record<AccentKey, Accent> = {
 };
 
 const CATEGORIES = ['全部', '合同类', '通知类', '报表类', '证明类'];
+
+function sortedEntries(value: Record<string, string>): Array<[string, string]> {
+  return Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
+}
 
 export interface DocumentGeneratorAppProps {
   userMenu?: ReactNode;
@@ -91,9 +95,34 @@ export function DocumentGeneratorApp({
   const [picker, setPicker] = useState(false);
   const [newTpl, setNewTpl] = useState(false);
   const [progress, setProgress] = useState(false);
+  const activeRunSignatureRef = useRef<string | null>(null);
   const fieldSignature = useMemo(
     () => fields.map((f) => `${f.id}:${f.name}:${f.type}`).join('|'),
     [fields],
+  );
+  const runSignature = useMemo(
+    () => JSON.stringify({
+      activeTableId: activeTableId || '',
+      templateId: state.template?.id || '',
+      mapping: sortedEntries(state.mapping),
+      customText: sortedEntries(state.customText),
+      fileNameTpl: state.fileNameTpl,
+      writeBackField: state.writeBackField,
+      expires: state.expires,
+      onMissing: state.onMissing,
+      fields: fieldSignature,
+    }),
+    [
+      activeTableId,
+      fieldSignature,
+      state.customText,
+      state.expires,
+      state.fileNameTpl,
+      state.mapping,
+      state.onMissing,
+      state.template,
+      state.writeBackField,
+    ],
   );
 
   useEffect(() => {
@@ -137,6 +166,21 @@ export function DocumentGeneratorApp({
 
   const generationBusy = runner.phase === 'running' || runner.phase === 'paused';
 
+  useEffect(() => {
+    if (!generationBusy) {
+      activeRunSignatureRef.current = null;
+      return;
+    }
+    if (!activeRunSignatureRef.current) {
+      activeRunSignatureRef.current = runSignature;
+      return;
+    }
+    if (activeRunSignatureRef.current !== runSignature) {
+      runner.stop();
+      activeRunSignatureRef.current = runSignature;
+    }
+  }, [generationBusy, runSignature, runner]);
+
   return (
     <div
       className={`app app-${mode} density-${density}`}
@@ -164,6 +208,7 @@ export function DocumentGeneratorApp({
             runner.start(records, {
               template: state.template,
               sourceMode: mode,
+              activeTableId,
               mapping: state.mapping,
               customText: state.customText,
               fileNameTpl: state.fileNameTpl,

@@ -16,10 +16,8 @@ function rejectOrigin(response: express.Response, request: express.Request): voi
 }
 
 export function getRequestOrigin(request: express.Request): string {
-  const forwardedProto = String(request.headers['x-forwarded-proto'] || '').split(',')[0].trim();
-  const forwardedHost = String(request.headers['x-forwarded-host'] || '').split(',')[0].trim();
-  const protocol = forwardedProto || request.protocol || 'http';
-  const host = forwardedHost || request.headers.host || '';
+  const protocol = request.protocol || 'http';
+  const host = request.headers.host || '';
   return host ? `${protocol}://${host}` : '';
 }
 

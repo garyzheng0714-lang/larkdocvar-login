@@ -83,6 +83,28 @@ test('浏览器来源校验拒绝不在白名单里的 Origin', async () => {
   }
 });
 
+test('浏览器来源校验不信任客户端伪造的 X-Forwarded 来源头', async () => {
+  const api = await startGuardedServer({ requireOriginOrReferer: false });
+  try {
+    const response = await fetch(`${api.baseUrl}/mutate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: 'http://evil.example.test',
+        'X-Forwarded-Proto': 'http',
+        'X-Forwarded-Host': 'evil.example.test',
+      },
+      body: '{}',
+    });
+    const body = await response.json() as any;
+    assert.equal(response.status, 403);
+    assert.equal(body.ok, false);
+    assert.equal(body.error, '请求来源不被允许。');
+  } finally {
+    await api.close();
+  }
+});
+
 test('浏览器来源校验允许白名单 Origin', async () => {
   const api = await startGuardedServer({ requireOriginOrReferer: false });
   try {

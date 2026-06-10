@@ -92,7 +92,7 @@ export function registerCloudDocRoutes(app: express.Express, options: CloudDocRo
     }
   });
 
-  app.get('/api/users/search', async (request, response) => {
+  app.get('/api/users/search', options.requireCloudDocAccess, async (request, response) => {
     try {
       if (!options.feishuService) {
         response.status(500).json({
@@ -145,9 +145,9 @@ export function registerCloudDocRoutes(app: express.Express, options: CloudDocRo
       const payload: GenerateInput = {
         templateUrl: parsed.data.templateUrl,
         records: parsed.data.records,
-        permissionMode: parsed.data.options?.permissionMode === 'closed' ? 'closed' : 'tenant_readable',
-        ownerTransfer: undefined,
-        collaborators: undefined,
+        permissionMode: parsed.data.options?.permissionMode ?? 'tenant_readable',
+        ownerTransfer: parsed.data.options?.ownerTransferEnabled ? parsed.data.options.ownerTransfer : undefined,
+        collaborators: parsed.data.options?.collaborators,
       };
       const results = await options.feishuService.generateDocuments(payload);
       response.json({
