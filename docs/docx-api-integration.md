@@ -6,6 +6,7 @@
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-06-22 | 契约调整 | 模板管理 API 支持飞书多维表格侧边栏身份头作为登录会话兜底。 | 侧边栏在 iframe cookie 不可用时，可随模板创建、更新版本和删除请求传 `X-Bitable-Open-Id`、`X-Bitable-Base-Id`、`X-Bitable-Table-Id`、`X-Bitable-Tenant-Key`；服务端校验 Base/Table/Tenant 后用该身份绑定模板创建者。业务系统仍应使用 API Key。 | 已同步 |
 | 2026-06-22 | 契约调整 | 未指定 `templateId` 时，服务端自动生成简短递增模板编号。 | 自动模板编号从历史日期随机格式调整为 `tpl_001`、`tpl_002` 这类递增编号；手动传入的合法 `templateId` 仍兼容。 | 已同步 |
 | 2026-06-02 | 维护性 | 拆分 Docx 生成存储边界到 `documentRenderStorage.ts`；`documentRenderApi.ts` 回到 900 行以内；侧边栏主屏拆分组件并清理旧 CSS；批量开始生成和重试路径共用 `runBatchSlices`。 | 路由和请求响应字段不变；`createConfiguredStorage`、`DocumentRenderStorage` 等兼容导出保留。 | 已同步 |
 | 2026-06-02 | 契约新增 | 新增 `missingStrategy=blank` 留空继续契约；新增 `output.includePdfPreview` Gotenberg PDF 预览。 | 文本变量缺失可按空字符串生成，响应仍返回 `variables.missing`；请求 PDF 预览时需配置 `GOTENBERG_URL`。 | 已同步 |
@@ -125,6 +126,18 @@ DOCUMENT_RENDER_TOS_PREFIX=renders
 | `x-api-key` | string | 二选一 | 直接传 API Key。 |
 
 已登录的侧边栏用户可以通过登录会话调用同一组接口。业务系统不要依赖侧边栏登录态，应使用 API Key。
+
+飞书多维表格侧边栏内的模板管理请求仍应带 `credentials: include`。当 iframe cookie 没有传到服务端时，侧边栏可额外发送以下身份头，作为模板创建者和模板管理权限判断的兜底：
+
+| 名称 | 类型 | 必填 | 描述 |
+|---|---|---|---|
+| `X-Bitable-Open-Id` | string | 建议 | 当前侧边栏用户的 open_id，来自 Base JS SDK；没有登录会话时优先用它绑定模板创建者。 |
+| `X-Bitable-Base-User-Id` | string | 兜底 | 当 `X-Bitable-Open-Id` 不可用时，服务端可用该值作为侧边栏身份兜底。 |
+| `X-Bitable-Base-Id` | string | 是 | 当前多维表格 Base ID；生产环境必须命中 `BITABLE_SIDEBAR_ALLOWED_BASE_IDS`。 |
+| `X-Bitable-Table-Id` | string | 是 | 当前数据表 ID；配置 `BITABLE_SIDEBAR_ALLOWED_TABLE_IDS` 时必须命中白名单。 |
+| `X-Bitable-Tenant-Key` | string | 生产必填 | 当前飞书租户；生产环境需通过 `FEISHU_ALLOWED_TENANT_KEYS` 校验。 |
+
+这组侧边栏身份头只用于飞书多维表格侧边栏自身的同源请求。服务端如果已经识别出登录会话，会优先使用登录会话里的用户身份；业务系统、外部脚本和第三方服务不要伪造这组头，应继续使用 `Authorization` 或 `x-api-key`。
 
 ### 通用错误响应
 

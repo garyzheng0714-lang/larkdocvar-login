@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { Icon } from './icons';
 import { Dropdown } from './Dropdown';
 import { copyTextToClipboard } from './clipboard';
+import { buildOptionalBitableSidebarHeaders } from './cloudDoc/bitableAdapter';
 import type { Template } from './types';
 
 interface SelectedFile {
@@ -70,10 +71,11 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
       const endpoint = template
         ? `/api/v1/document-templates/${encodeURIComponent(template.id)}/versions`
         : '/api/v1/document-templates';
+      const sidebarHeaders = await buildOptionalBitableSidebarHeaders();
       const response = await fetch(endpoint, {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...sidebarHeaders },
         body: JSON.stringify({
           name: name.trim(),
           fileName: file.name,

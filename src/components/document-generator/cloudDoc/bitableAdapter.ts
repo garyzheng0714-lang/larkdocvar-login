@@ -10,6 +10,22 @@ const CLOUD_DOC_OUTPUT_RAW_TYPES = new Set<number>([
   FieldType.Object,
 ]);
 
+function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error('Bitable sidebar SDK timeout')), timeoutMs);
+    task.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export async function resolveCloudTable(activeTableId?: string | null): Promise<ITable> {
   if (activeTableId) {
     return bitable.base.getTableById(activeTableId);
@@ -22,8 +38,9 @@ export async function resolveCloudTable(activeTableId?: string | null): Promise<
 }
 
 export async function buildBitableSidebarHeaders(activeTableId?: string | null): Promise<Record<string, string>> {
-  const [selection, baseUserId, tenantKey] = await Promise.all([
+  const [selection, openId, baseUserId, tenantKey] = await Promise.all([
     bitable.base.getSelection().catch(() => null),
+    bitable.bridge.getUserId().catch(() => ''),
     bitable.bridge.getBaseUserId().catch(() => ''),
     bitable.bridge.getTenantKey().catch(() => ''),
   ]);
@@ -34,11 +51,20 @@ export async function buildBitableSidebarHeaders(activeTableId?: string | null):
   }
   return {
     'Content-Type': 'application/json',
+    ...(openId ? { 'X-Bitable-Open-Id': openId } : {}),
     'X-Bitable-Base-Id': baseId,
     'X-Bitable-Table-Id': tableId,
     ...(baseUserId ? { 'X-Bitable-Base-User-Id': baseUserId } : {}),
     ...(tenantKey ? { 'X-Bitable-Tenant-Key': tenantKey } : {}),
   };
+}
+
+export async function buildOptionalBitableSidebarHeaders(activeTableId?: string | null, timeoutMs = 1200): Promise<Record<string, string>> {
+  try {
+    return await withTimeout(buildBitableSidebarHeaders(activeTableId), timeoutMs);
+  } catch {
+    return {};
+  }
 }
 
 export async function getAllRecordIds(table: ITable): Promise<string[]> {

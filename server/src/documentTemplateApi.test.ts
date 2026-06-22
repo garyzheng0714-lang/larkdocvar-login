@@ -25,7 +25,7 @@ async function createDocx(text: string): Promise<Buffer> {
   return zip.generateAsync({ type: 'nodebuffer' });
 }
 
-async function startServer(options: { enforceOwnership?: boolean } = {}): Promise<{ baseUrl: string; close: () => Promise<void>; hits: Record<string, number> }> {
+async function startServer(options: { enforceOwnership?: boolean; useDefaultActor?: boolean } = {}): Promise<{ baseUrl: string; close: () => Promise<void>; hits: Record<string, number> }> {
   const dir = await mkdtemp(join(tmpdir(), 'document-template-api-'));
   const service = new DocumentTemplateService(new LocalTemplateObjectStore(dir));
   const app = express();
@@ -42,9 +42,11 @@ async function startServer(options: { enforceOwnership?: boolean } = {}): Promis
   });
   app.use('/api/v1/document-templates', createDocumentTemplateRouter(service, options.enforceOwnership ? {
     enforceOwnership: true,
-    resolveActor: async (request) => ({
-      openId: typeof request.headers['x-test-open-id'] === 'string' ? request.headers['x-test-open-id'] : undefined,
-      isAdmin: request.headers['x-test-admin'] === 'true',
+    ...(options.useDefaultActor ? {} : {
+      resolveActor: async (request) => ({
+        openId: typeof request.headers['x-test-open-id'] === 'string' ? request.headers['x-test-open-id'] : undefined,
+        isAdmin: request.headers['x-test-admin'] === 'true',
+      }),
     }),
   } : undefined));
   app.use('/api/v1/document-renders', createDocumentRenderRouter({ templateResolver: service, storageDir: dir }));
@@ -65,6 +67,37 @@ function withPrivateTemplateUrls(): () => void {
   return () => {
     if (previous === undefined) delete process.env.DOCUMENT_TEMPLATE_ALLOW_PRIVATE_URLS;
     else process.env.DOCUMENT_TEMPLATE_ALLOW_PRIVATE_URLS = previous;
+  };
+}
+
+function withBitableSidebarAllowlist(): () => void {
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousBaseIds = process.env.BITABLE_SIDEBAR_ALLOWED_BASE_IDS;
+  const previousTableIds = process.env.BITABLE_SIDEBAR_ALLOWED_TABLE_IDS;
+  const previousTenantKeys = process.env.FEISHU_ALLOWED_TENANT_KEYS;
+  process.env.NODE_ENV = 'test';
+  process.env.BITABLE_SIDEBAR_ALLOWED_BASE_IDS = 'base_sidebar';
+  process.env.BITABLE_SIDEBAR_ALLOWED_TABLE_IDS = 'tbl_sidebar';
+  process.env.FEISHU_ALLOWED_TENANT_KEYS = 'tenant_sidebar';
+  return () => {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousBaseIds === undefined) delete process.env.BITABLE_SIDEBAR_ALLOWED_BASE_IDS;
+    else process.env.BITABLE_SIDEBAR_ALLOWED_BASE_IDS = previousBaseIds;
+    if (previousTableIds === undefined) delete process.env.BITABLE_SIDEBAR_ALLOWED_TABLE_IDS;
+    else process.env.BITABLE_SIDEBAR_ALLOWED_TABLE_IDS = previousTableIds;
+    if (previousTenantKeys === undefined) delete process.env.FEISHU_ALLOWED_TENANT_KEYS;
+    else process.env.FEISHU_ALLOWED_TENANT_KEYS = previousTenantKeys;
+  };
+}
+
+function bitableSidebarHeaders(openId: string): Record<string, string> {
+  return {
+    'content-type': 'application/json',
+    'X-Bitable-Open-Id': openId,
+    'X-Bitable-Base-Id': 'base_sidebar',
+    'X-Bitable-Table-Id': 'tbl_sidebar',
+    'X-Bitable-Tenant-Key': 'tenant_sidebar',
   };
 }
 
@@ -302,6 +335,55 @@ test('非管理员只能修改或删除自己创建的模板', async () => {
     assert.equal(adminDelete.status, 200);
   } finally {
     restore();
+    await api.close();
+  }
+});
+
+test('飞书侧边栏身份可在 cookie 失效时创建并管理自己的模板', async () => {
+  const restorePrivateUrls = withPrivateTemplateUrls();
+  const restoreSidebar = withBitableSidebarAllowlist();
+  const api = await startServer({ enforceOwnership: true, useDefaultActor: true });
+  try {
+    const anonymousCreate = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        templateId: 'sidebar_tpl_001',
+        name: '侧边栏身份模板',
+        url: `${api.baseUrl}/template-v1.docx`,
+      }),
+    });
+    assert.equal(anonymousCreate.status, 401);
+
+    const createResponse = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      method: 'POST',
+      headers: bitableSidebarHeaders('ou_sidebar_owner'),
+      body: JSON.stringify({
+        templateId: 'sidebar_tpl_001',
+        name: '侧边栏身份模板',
+        url: `${api.baseUrl}/template-v1.docx`,
+      }),
+    });
+    const created = await createResponse.json() as any;
+    assert.equal(createResponse.status, 200);
+    assert.equal(created.template.createdByOpenId, 'ou_sidebar_owner');
+
+    const otherVersion = await fetch(`${api.baseUrl}/api/v1/document-templates/sidebar_tpl_001/versions`, {
+      method: 'POST',
+      headers: bitableSidebarHeaders('ou_sidebar_other'),
+      body: JSON.stringify({ url: `${api.baseUrl}/template-v2.docx` }),
+    });
+    assert.equal(otherVersion.status, 403);
+
+    const ownerVersion = await fetch(`${api.baseUrl}/api/v1/document-templates/sidebar_tpl_001/versions`, {
+      method: 'POST',
+      headers: bitableSidebarHeaders('ou_sidebar_owner'),
+      body: JSON.stringify({ url: `${api.baseUrl}/template-v2.docx` }),
+    });
+    assert.equal(ownerVersion.status, 200);
+  } finally {
+    restoreSidebar();
+    restorePrivateUrls();
     await api.close();
   }
 });

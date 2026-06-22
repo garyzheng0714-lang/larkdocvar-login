@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { buildOptionalBitableSidebarHeaders } from './cloudDoc/bitableAdapter';
 import type { Template, TemplateThumbnail, TemplateVariable } from './types';
 
 interface ServerIndexItem {
@@ -113,8 +114,10 @@ export function useTemplates(): TemplatesContext {
   }, []);
 
   const deleteTemplate = useCallback(async (templateId: string) => {
+    const sidebarHeaders = await buildOptionalBitableSidebarHeaders();
     const res = await apiFetch(`/api/v1/document-templates/${encodeURIComponent(templateId)}`, {
       method: 'DELETE',
+      headers: sidebarHeaders,
     });
     if (!res.ok) {
       throw new Error(`删除失败: HTTP ${res.status}`);
