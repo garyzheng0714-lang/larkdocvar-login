@@ -10,7 +10,7 @@ import { createDocumentRenderRouter } from './documentRenderApi';
 import { requireDocumentRenderApiKey } from './documentRenderApiKeyGuard';
 import { createDocumentRenderBatchRouter } from './documentRenderBatchApi';
 import { createDocumentRenderJobRouter } from './documentRenderJobApi';
-import { createDocumentTemplateRouter } from './documentTemplateApi';
+import { createDocumentTemplateRouter, type DocumentTemplateApiService } from './documentTemplateApi';
 import { DocumentTemplateService } from './documentTemplateService';
 import { FeishuTemplateService } from './feishu';
 import { getFeishuAppCredentials } from './auth';
@@ -43,10 +43,11 @@ const documentTemplateService = {
   listTemplates: (...args: Parameters<DocumentTemplateService['listTemplates']>) => getDocumentTemplateService().listTemplates(...args),
   createTemplate: (...args: Parameters<DocumentTemplateService['createTemplate']>) => getDocumentTemplateService().createTemplate(...args),
   addVersion: (...args: Parameters<DocumentTemplateService['addVersion']>) => getDocumentTemplateService().addVersion(...args),
+  updateTemplateMetadata: (...args: Parameters<DocumentTemplateService['updateTemplateMetadata']>) => getDocumentTemplateService().updateTemplateMetadata(...args),
   getTemplate: (...args: Parameters<DocumentTemplateService['getTemplate']>) => getDocumentTemplateService().getTemplate(...args),
   loadTemplate: (...args: Parameters<DocumentTemplateService['loadTemplate']>) => getDocumentTemplateService().loadTemplate(...args),
   deleteTemplate: (...args: Parameters<DocumentTemplateService['deleteTemplate']>) => getDocumentTemplateService().deleteTemplate(...args),
-} as DocumentTemplateService;
+} satisfies DocumentTemplateApiService;
 
 const feishuService = hasCredential
   ? new FeishuTemplateService({

@@ -39,6 +39,17 @@ export type DocumentTemplateResolver = {
   loadTemplate(templateId: string, versionId?: string): Promise<LoadedDocumentTemplate>;
 };
 
+export type DocumentTemplateApiService = Pick<
+  DocumentTemplateService,
+  'listTemplates' |
+  'createTemplate' |
+  'addVersion' |
+  'updateTemplateMetadata' |
+  'getTemplate' |
+  'loadTemplate' |
+  'deleteTemplate'
+>;
+
 export type DocumentTemplateActor = {
   openId?: string;
   isAdmin: boolean;
@@ -113,7 +124,7 @@ async function requireTemplateManager(
   request: express.Request,
   response: express.Response,
   requestId: string,
-  service: DocumentTemplateService,
+  service: DocumentTemplateApiService,
   templateId: string,
   options: DocumentTemplateRouterOptions,
   manageOptions: { allowLegacySharedMaintenance?: boolean } = {},
@@ -143,7 +154,7 @@ function sendError(response: express.Response, requestId: string, error: unknown
 }
 
 export function createDocumentTemplateRouter(
-  service = new DocumentTemplateService(),
+  service: DocumentTemplateApiService = new DocumentTemplateService(),
   options: DocumentTemplateRouterOptions = {},
 ): express.Router {
   const router = express.Router();
