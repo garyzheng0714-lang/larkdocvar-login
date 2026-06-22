@@ -157,6 +157,36 @@ test('未指定模板编号时按现有序号递增生成简短模板 ID', async
   }
 });
 
+test('跨服务实例并发自动编号不会复用模板 ID 或覆盖记录', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'document-template-shared-store-'));
+  const firstService = new DocumentTemplateService(new LocalTemplateObjectStore(dir));
+  const secondService = new DocumentTemplateService(new LocalTemplateObjectStore(dir));
+  const firstDocx = await createDocx('客户：{{客户名称}}');
+  const secondDocx = await createDocx('金额：{{金额}}');
+
+  const [first, second] = await Promise.all([
+    firstService.createTemplate({
+      name: '跨实例自动编号模板 A',
+      fileName: '跨实例自动编号模板A.docx',
+      fileBase64: firstDocx.toString('base64'),
+    }),
+    secondService.createTemplate({
+      name: '跨实例自动编号模板 B',
+      fileName: '跨实例自动编号模板B.docx',
+      fileBase64: secondDocx.toString('base64'),
+    }),
+  ]);
+
+  const ids = [first.templateId, second.templateId].sort();
+  assert.deepEqual(ids, ['tpl_001', 'tpl_002']);
+
+  const list = await firstService.listTemplates();
+  assert.equal(list.length, 2);
+  assert.deepEqual(list.map((item) => item.templateId).sort(), ids);
+  assert.deepEqual((await firstService.getTemplate(first.templateId)).versions[0].variables, ['客户名称']);
+  assert.deepEqual((await firstService.getTemplate(second.templateId)).versions[0].variables, ['金额']);
+});
+
 test('模板可直接上传文件内容创建并返回真实变量', async () => {
   const api = await startServer();
   try {

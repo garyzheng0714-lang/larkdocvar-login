@@ -1,15 +1,18 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { DOCX_CONTENT_TYPE, ensureDocxExtension, sanitizeFileName } from './documentRenderFile';
 import { UserFacingError } from './documentRenderStorageErrors';
 import { downloadTemplateDocx, renderDocx } from './documentRenderApi';
 import { isImagePlaceholderName } from './documentRenderImages';
 import { convertCommentAnnotationsToTemplate } from './documentTemplateAnnotations';
-import { TemplateObjectNotFoundError, createConfiguredTemplateObjectStore, type TemplateObjectStore } from './documentTemplateStorage';
+import { TemplateObjectAlreadyExistsError, TemplateObjectNotFoundError, createConfiguredTemplateObjectStore, type TemplateObjectStore } from './documentTemplateStorage';
 
 const TEMPLATE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{2,79}$/;
 const TEMPLATE_METADATA_CONTENT_TYPE = 'application/json; charset=utf-8';
 const TEMPLATE_INDEX_CONTENT_TYPE = 'application/json; charset=utf-8';
+const TEMPLATE_LOCK_CONTENT_TYPE = 'application/json; charset=utf-8';
+const TEMPLATE_LOCK_TTL_MS = 5 * 60 * 1000;
+const TEMPLATE_LOCK_MAX_WAIT_MS = 30 * 1000;
 
 export type DocumentTemplateVersion = {
   versionId: string;
@@ -138,6 +141,10 @@ function cleanOptionalText(value: string | undefined, maxLength: number): string
   return cleaned ? cleaned.slice(0, maxLength) : undefined;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function decodeUploadedTemplate(input: CreateDocumentTemplateInput | UpdateDocumentTemplateInput): Buffer | null {
   const raw = input.fileBase64?.trim();
   if (!raw) return null;
@@ -227,6 +234,69 @@ export class DocumentTemplateService {
     }
   }
 
+  private async withTemplateMutationLock<T>(operation: () => Promise<T>): Promise<T> {
+    return this.withMutationLock(() => this.withStoreLock(operation));
+  }
+
+  private async withStoreLock<T>(operation: () => Promise<T>): Promise<T> {
+    const lockKey = '_locks/document-templates.json';
+    const lockObjectName = this.store.objectName(lockKey);
+    const token = randomUUID();
+    const startedAt = Date.now();
+    while (true) {
+      try {
+        await this.store.putObjectIfAbsent(
+          lockKey,
+          Buffer.from(JSON.stringify({
+            token,
+            createdAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + TEMPLATE_LOCK_TTL_MS).toISOString(),
+          })),
+          TEMPLATE_LOCK_CONTENT_TYPE,
+        );
+        try {
+          return await operation();
+        } finally {
+          await this.releaseStoreLock(lockObjectName, token);
+        }
+      } catch (error) {
+        if (!(error instanceof TemplateObjectAlreadyExistsError)) throw error;
+        await this.deleteExpiredStoreLock(lockObjectName);
+        if (Date.now() - startedAt > TEMPLATE_LOCK_MAX_WAIT_MS) {
+          throw new UserFacingError('模板库正在保存，请稍后重试。');
+        }
+        await sleep(25 + Math.floor(Math.random() * 25));
+      }
+    }
+  }
+
+  private async readStoreLock(lockObjectName: string): Promise<{ token?: string; expiresAt?: string } | null> {
+    try {
+      const buffer = await this.store.getObject(lockObjectName);
+      const parsed = JSON.parse(buffer.toString('utf8')) as { token?: unknown; expiresAt?: unknown };
+      return {
+        token: typeof parsed.token === 'string' ? parsed.token : undefined,
+        expiresAt: typeof parsed.expiresAt === 'string' ? parsed.expiresAt : undefined,
+      };
+    } catch (error) {
+      if (error instanceof TemplateObjectNotFoundError) return null;
+      return null;
+    }
+  }
+
+  private async deleteExpiredStoreLock(lockObjectName: string): Promise<void> {
+    const lock = await this.readStoreLock(lockObjectName);
+    if (!lock?.expiresAt) return;
+    if (Date.parse(lock.expiresAt) > Date.now()) return;
+    await this.store.deleteObject(lockObjectName).catch(() => undefined);
+  }
+
+  private async releaseStoreLock(lockObjectName: string, token: string): Promise<void> {
+    const lock = await this.readStoreLock(lockObjectName);
+    if (lock?.token !== token) return;
+    await this.store.deleteObject(lockObjectName).catch(() => undefined);
+  }
+
   async listTemplates(options: { includeDeleted?: boolean } = {}): Promise<DocumentTemplateIndexItem[]> {
     const index = await this.readIndex();
     return index
@@ -236,7 +306,7 @@ export class DocumentTemplateService {
   }
 
   async createTemplate(input: CreateDocumentTemplateInput): Promise<PublicDocumentTemplateRecord> {
-    return this.withMutationLock(async () => {
+    return this.withTemplateMutationLock(async () => {
       const templateId = input.templateId?.trim() || await this.generateTemplateId();
       assertTemplateId(templateId);
       const existing = await this.getTemplateOrNull(templateId);
@@ -265,7 +335,7 @@ export class DocumentTemplateService {
   }
 
   async addVersion(templateId: string, input: UpdateDocumentTemplateInput): Promise<PublicDocumentTemplateRecord> {
-    return this.withMutationLock(async () => {
+    return this.withTemplateMutationLock(async () => {
       const record = await this.getTemplateInternal(templateId);
       if (record.status === 'deleted') throw new UserFacingError('模板已删除，不能新增版本。');
       const versionNumber = Math.max(...record.versions.map((version) => version.versionNumber), 0) + 1;
@@ -308,7 +378,7 @@ export class DocumentTemplateService {
   }
 
   async deleteTemplate(templateId: string, options: { purge?: boolean } = {}): Promise<PublicDocumentTemplateRecord> {
-    return this.withMutationLock(async () => {
+    return this.withTemplateMutationLock(async () => {
       const record = await this.getTemplateInternal(templateId);
       if (options.purge) {
         await Promise.all(record.versions.map((version) => this.store.deleteObject(version.storagePath).catch(() => undefined)));

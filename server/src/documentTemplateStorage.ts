@@ -18,6 +18,7 @@ const DEFAULT_TEMPLATE_STORAGE_PREFIX = 'document-templates';
 export type TemplateObjectStore = {
   objectName(key: string): string;
   putObject(key: string, body: Buffer, contentType: string): Promise<string>;
+  putObjectIfAbsent(key: string, body: Buffer, contentType: string): Promise<string>;
   getObject(objectName: string): Promise<Buffer>;
   deleteObject(objectName: string): Promise<void>;
 };
@@ -25,6 +26,12 @@ export type TemplateObjectStore = {
 export class TemplateObjectNotFoundError extends Error {
   constructor() {
     super('template object not found');
+  }
+}
+
+export class TemplateObjectAlreadyExistsError extends Error {
+  constructor() {
+    super('template object already exists');
   }
 }
 
@@ -97,6 +104,19 @@ export class LocalTemplateObjectStore implements TemplateObjectStore {
     return objectName;
   }
 
+  async putObjectIfAbsent(key: string, body: Buffer): Promise<string> {
+    const objectName = this.objectName(key);
+    const filePath = this.filePath(objectName);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    try {
+      await writeFile(filePath, body, { flag: 'wx' });
+      return objectName;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new TemplateObjectAlreadyExistsError();
+      throw error;
+    }
+  }
+
   async getObject(objectName: string): Promise<Buffer> {
     try {
       return await readFile(this.filePath(objectName));
@@ -125,6 +145,22 @@ export class TosTemplateObjectStore implements TemplateObjectStore {
       'Cache-Control': 'private, max-age=31536000, immutable',
     });
     return objectName;
+  }
+
+  async putObjectIfAbsent(key: string, body: Buffer, contentType: string): Promise<string> {
+    const objectName = this.objectName(key);
+    try {
+      await putTosObject(this.config, objectName, body, {
+        'Content-Type': contentType,
+        'Cache-Control': 'private, max-age=31536000, immutable',
+        'If-None-Match': '*',
+      });
+      return objectName;
+    } catch (error) {
+      const status = (error as { tos?: { status?: number } }).tos?.status;
+      if (status === 409 || status === 412) throw new TemplateObjectAlreadyExistsError();
+      throw error;
+    }
   }
 
   async getObject(objectName: string): Promise<Buffer> {
