@@ -73,7 +73,14 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
     e.currentTarget.classList.remove('is-drag');
   }
 
-  const canSave = !!file && name.trim().length > 0;
+  const canSave = name.trim().length > 0 && (isEditing || !!file);
+  const saveButtonText = saving
+    ? '保存中...'
+    : isEditing && !file
+      ? '保存更改'
+      : isEditing
+        ? '保存新版本'
+        : '保存模板';
 
   useEffect(() => {
     if (!loginPrompt?.goto) return;
@@ -154,7 +161,7 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
   }
 
   async function saveTemplate() {
-    if (!file || !canSave || saving) return;
+    if (!canSave || saving) return;
     setSaving(true);
     setError(null);
     try {
@@ -162,23 +169,27 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
         setError('请先完成可信登录后再管理模板。当前文件和填写内容已保留。');
         return;
       }
-      const fileBase64 = await readFileAsBase64(file.file);
+      const fileBase64 = file ? await readFileAsBase64(file.file) : undefined;
       const endpoint = template
-        ? `/api/v1/document-templates/${encodeURIComponent(template.id)}/versions`
+        ? `/api/v1/document-templates/${encodeURIComponent(template.id)}${file ? '/versions' : ''}`
         : '/api/v1/document-templates';
+      const method = template && !file ? 'PATCH' : 'POST';
+      const requestBody: Record<string, unknown> = {
+        name: name.trim(),
+        category,
+        visibility: visibility === '个人' ? 'private' : 'shared',
+        description: isEditing ? desc.trim() : desc.trim() || undefined,
+      };
+      if (file) {
+        requestBody.fileName = file.name;
+        requestBody.fileBase64 = fileBase64;
+      }
       const sidebarHeaders = await buildOptionalBitableSidebarHeaders();
       const response = await fetch(endpoint, {
-        method: 'POST',
+        method,
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', ...sidebarHeaders },
-        body: JSON.stringify({
-          name: name.trim(),
-          fileName: file.name,
-          fileBase64,
-          category,
-          visibility: visibility === '个人' ? 'private' : 'shared',
-          description: isEditing ? desc.trim() : desc.trim() || undefined,
-        }),
+        body: JSON.stringify(requestBody),
       });
       const body = await response.json().catch(() => null) as { ok?: boolean; error?: string } | null;
       if (!response.ok || !body?.ok) {
@@ -433,7 +444,7 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
           disabled={!canSave || saving}
           onClick={saveTemplate}
         >
-          {saving ? '保存中...' : isEditing ? '保存新版本' : '保存模板'}
+          {saveButtonText}
         </button>
       </footer>
     </div>

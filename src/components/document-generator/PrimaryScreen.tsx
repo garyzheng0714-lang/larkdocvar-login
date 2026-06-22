@@ -132,7 +132,7 @@ export function PrimaryScreen({
                     </span>
                   </span>
                   <span className="tpl-row-action">
-                    替换 <Icon.ChevronR />
+                    <Icon.ChevronR />
                   </span>
                 </button>
                 <div className="tpl-row-actions">
@@ -141,6 +141,7 @@ export function PrimaryScreen({
                       className="template-action-btn"
                       type="button"
                       onClick={() => onEditTemplate(tpl)}
+                      aria-label={`更新模板：${tpl.name}`}
                       title={`更新模板：${tpl.name}`}
                     >
                       <Icon.Doc />
@@ -151,6 +152,7 @@ export function PrimaryScreen({
                     className="template-copy-btn"
                     type="button"
                     onClick={copyTemplateId}
+                    aria-label={`复制模板 ID：${tpl.id}`}
                     title={`复制模板 ID：${tpl.id}`}
                   >
                     <Icon.Copy />

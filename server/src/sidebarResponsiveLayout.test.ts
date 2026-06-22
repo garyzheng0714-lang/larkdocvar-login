@@ -161,10 +161,14 @@ test('模板库必须支持更新现有模板，而不是只能新建模板', ()
   assert.match(pickerScreenSource, /onEdit/);
   assert.match(pickerScreenSource, /template-card-actions/);
   assert.match(pickerScreenSource, /更新/);
+  assert.match(newTemplateScreenSource, /method = template && !file \? 'PATCH' : 'POST'/);
   assert.match(newTemplateScreenSource, /\/versions/);
+  assert.match(newTemplateScreenSource, /保存更改/);
   assert.match(newTemplateScreenSource, /保存新版本/);
   assert.match(newTemplateScreenSource, /模板 ID 保持不变/);
+  assert.match(css, /\.tpl-row-actions\s*\{[\s\S]*?position:\s*absolute;/);
   assert.match(css, /\.template-card-actions\s*\{/);
+  assert.match(css, /\.template-card-actions\s*\{[\s\S]*?position:\s*absolute;/);
 });
 
 test('保存模板前先检查可信会话，避免文件处理完成后才报登录失败', () => {

@@ -1261,13 +1261,15 @@
   min-width: 0;
 }
 .tpl-row {
+  position: relative;
   width: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto;
+  grid-template-columns: 44px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
-  padding: 10px;
+  min-height: 76px;
+  padding: 10px 84px 10px 10px;
   border: 1px solid var(--bd-2);
   border-radius: 8px;
   background: #fff;
@@ -1328,12 +1330,7 @@
   font-variant-numeric: tabular-nums;
 }
 .tpl-row-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  color: var(--accent);
-  font-size: 12px;
-  white-space: nowrap;
+  display: none;
 }
 .block-head {
   min-width: 0;
@@ -1375,10 +1372,15 @@
 }
 .tpl-row-extra .ghost-link { margin-left: 0; }
 .tpl-row-actions {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  z-index: 2;
+  transform: translateY(-50%);
   display: flex;
   justify-content: flex-end;
   gap: 6px;
-  margin-top: 6px;
+  margin-top: 0;
   min-width: 0;
 }
 .tpl-row-preview-err {
@@ -1421,7 +1423,24 @@
 }
 .tpl-row-actions .template-action-btn,
 .tpl-row-actions .template-copy-btn {
-  flex: 0 0 auto;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-color: transparent;
+  background: var(--bg-soft);
+  box-shadow: none;
+}
+.tpl-row-actions .template-action-btn span,
+.tpl-row-actions .template-copy-btn span,
+.template-card-actions .template-action-btn span,
+.template-card-actions .template-copy-btn span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 .map-table.mapping-table {
   background: #fff;
@@ -1728,12 +1747,21 @@
 }
 .template-card-actions {
   position: absolute;
-  left: 8px;
   right: 8px;
   bottom: 8px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 6px;
+  z-index: 2;
+  display: flex;
+  justify-content: flex-end;
+  gap: 5px;
+}
+.template-card-actions .template-action-btn,
+.template-card-actions .template-copy-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-color: transparent;
+  background: var(--bg-soft);
+  box-shadow: none;
 }
 .picker-ftr {
   display: flex;

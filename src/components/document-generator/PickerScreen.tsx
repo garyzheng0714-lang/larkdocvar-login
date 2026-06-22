@@ -130,6 +130,7 @@ export function PickerScreen({
                     className="template-action-btn"
                     type="button"
                     onClick={() => onEdit(t)}
+                    aria-label={`更新模板：${t.name}`}
                     title={`更新模板：${t.name}`}
                   >
                     <Icon.Doc />
@@ -139,6 +140,7 @@ export function PickerScreen({
                     className="template-copy-btn"
                     type="button"
                     onClick={() => copyTemplateId(t.id)}
+                    aria-label={`复制模板 ID：${t.id}`}
                     title={`复制模板 ID：${t.id}`}
                   >
                     <Icon.Copy />

@@ -280,6 +280,80 @@ test('模板新增版本时允许清空已有说明', async () => {
   }
 });
 
+test('模板信息可不上传新文件直接更新，且不会新增版本', async () => {
+  const restore = withPrivateTemplateUrls();
+  const api = await startServer();
+  try {
+    await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        templateId: 'metadata_tpl_001',
+        name: '旧模板名',
+        category: '旧分类',
+        visibility: 'private',
+        description: '旧说明',
+        url: `${api.baseUrl}/template-v1.docx`,
+      }),
+    });
+
+    const response = await fetch(`${api.baseUrl}/api/v1/document-templates/metadata_tpl_001`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: '更新后的模板名',
+        category: '合同',
+        visibility: 'shared',
+        description: '',
+      }),
+    });
+    const body = await response.json() as any;
+    assert.equal(response.status, 200);
+    assert.equal(body.template.name, '更新后的模板名');
+    assert.equal(body.template.category, '合同');
+    assert.equal(body.template.visibility, 'shared');
+    assert.equal(body.template.description, undefined);
+    assert.equal(body.template.activeVersionId, 'metadata_tpl_001_v001');
+    assert.equal(body.template.versions.length, 1);
+    assert.deepEqual(body.template.versions[0].variables, ['客户名称']);
+    assert.equal(api.hits.v1, 1);
+    assert.equal(api.hits.v2, 0);
+
+    const versionsResponse = await fetch(`${api.baseUrl}/api/v1/document-templates/metadata_tpl_001/versions`);
+    const versions = await versionsResponse.json() as any;
+    assert.deepEqual(
+      versions.versions.map((version: any) => version.versionId),
+      ['metadata_tpl_001_v001'],
+    );
+
+    const renderResponse = await fetch(`${api.baseUrl}/api/v1/document-renders`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        template: { format: 'docx', templateId: 'metadata_tpl_001' },
+        variables: { 客户名称: '上海测试科技有限公司' },
+      }),
+    });
+    const rendered = await renderResponse.json() as any;
+    assert.equal(renderResponse.status, 200);
+    assert.equal(rendered.document.title, '更新后的模板名');
+    assert.equal(rendered.document.previewText, '客户：上海测试科技有限公司');
+
+    const rejectedFileUpdate = await fetch(`${api.baseUrl}/api/v1/document-templates/metadata_tpl_001`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: '错误的文件更新',
+        url: `${api.baseUrl}/template-v2.docx`,
+      }),
+    });
+    assert.equal(rejectedFileUpdate.status, 400);
+  } finally {
+    restore();
+    await api.close();
+  }
+});
+
 test('非管理员只能修改或删除自己创建的模板', async () => {
   const restore = withPrivateTemplateUrls();
   const api = await startServer({ enforceOwnership: true });
@@ -314,6 +388,20 @@ test('非管理员只能修改或删除自己创建的模板', async () => {
       body: JSON.stringify({ url: `${api.baseUrl}/template-v2.docx` }),
     });
     assert.equal(otherVersion.status, 403);
+
+    const otherMetadata = await fetch(`${api.baseUrl}/api/v1/document-templates/owner_tpl_001`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-test-open-id': 'ou_other' },
+      body: JSON.stringify({ visibility: 'shared' }),
+    });
+    assert.equal(otherMetadata.status, 403);
+
+    const ownerMetadata = await fetch(`${api.baseUrl}/api/v1/document-templates/owner_tpl_001`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-test-open-id': 'ou_owner' },
+      body: JSON.stringify({ visibility: 'shared' }),
+    });
+    assert.equal(ownerMetadata.status, 200);
 
     const ownerVersion = await fetch(`${api.baseUrl}/api/v1/document-templates/owner_tpl_001/versions`, {
       method: 'POST',

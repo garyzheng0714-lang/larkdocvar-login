@@ -98,7 +98,7 @@ export type CreateDocumentTemplateInput = {
   updatedByOpenId?: string;
 };
 
-type UpdateDocumentTemplateInput = Omit<CreateDocumentTemplateInput, 'templateId' | 'createdByOpenId'>;
+export type UpdateDocumentTemplateInput = Omit<CreateDocumentTemplateInput, 'templateId' | 'createdByOpenId'>;
 
 const MAX_UPLOADED_TEMPLATE_BYTES = 20 * 1024 * 1024;
 
@@ -342,18 +342,36 @@ export class DocumentTemplateService {
       const version = await this.createVersion(record.templateId, versionNumber, input);
       record.versions.push(version);
       record.activeVersionId = version.versionId;
-      record.name = input.name?.trim() || record.name;
-      record.category = cleanOptionalText(input.category, 64) || record.category;
-      record.visibility = input.visibility || record.visibility;
-      if (Object.prototype.hasOwnProperty.call(input, 'description')) {
-        record.description = cleanOptionalText(input.description, 1000);
-      }
-      record.updatedByOpenId = cleanOptionalText(input.updatedByOpenId, 128) || record.updatedByOpenId;
+      this.applyMetadataUpdate(record, input);
       record.updatedAt = new Date().toISOString();
       await this.writeRecord(record);
       await this.upsertIndex(record);
       return publicTemplate(record);
     });
+  }
+
+  async updateTemplateMetadata(templateId: string, input: UpdateDocumentTemplateInput): Promise<PublicDocumentTemplateRecord> {
+    return this.withTemplateMutationLock(async () => {
+      const record = await this.getTemplateInternal(templateId);
+      if (record.status === 'deleted') throw new UserFacingError('模板已删除，不能修改信息。');
+      this.applyMetadataUpdate(record, input);
+      record.updatedAt = new Date().toISOString();
+      await this.writeRecord(record);
+      await this.upsertIndex(record);
+      return publicTemplate(record);
+    });
+  }
+
+  private applyMetadataUpdate(record: DocumentTemplateRecord, input: UpdateDocumentTemplateInput): void {
+    record.name = input.name?.trim() || record.name;
+    if (Object.prototype.hasOwnProperty.call(input, 'category')) {
+      record.category = cleanOptionalText(input.category, 64);
+    }
+    record.visibility = input.visibility || record.visibility;
+    if (Object.prototype.hasOwnProperty.call(input, 'description')) {
+      record.description = cleanOptionalText(input.description, 1000);
+    }
+    record.updatedByOpenId = cleanOptionalText(input.updatedByOpenId, 128) || record.updatedByOpenId;
   }
 
   async getTemplate(templateId: string): Promise<PublicDocumentTemplateRecord> {

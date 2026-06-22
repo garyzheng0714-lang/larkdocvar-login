@@ -6,6 +6,7 @@
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-06-22 | 契约新增 | 模板信息更新与模板文件新增版本拆分；只修改名称、分类、可见范围或说明时不再要求上传 `.docx`。 | 新增 `PATCH /api/v1/document-templates/{templateId}`；`POST /api/v1/document-templates/{templateId}/versions` 继续只用于上传新模板文件并新增版本。 | 已同步 |
 | 2026-06-22 | 登录修复 | 飞书内优先走客户端免登；免登能力不可用时，主入口恢复飞书 OAuth 一键登录；扫码仅作为备用入口。 | 恢复 `GET /auth/feishu/:appKey/login` 与 `GET /auth/feishu/:appKey/callback`；OAuth state 采用签名自包含校验，回跳 hash 携带嵌入式会话兜底；端内免登成功时同源响应头可返回 `X-Session-Token`，前端后续请求继续带该头；有接管风险的 `/api/auth/feishu/:appKey/start`、`/login-status` 继续返回 `410`。 | 已同步 |
 | 2026-06-22 | 安全收紧 | 撤回把 `X-Bitable-*` 当登录兜底的契约；生产环境 Docx API 必须有 API Key 或可信会话；`private/shared` 可见范围覆盖模板列表、详情、版本、单份生成、同步批量、异步任务和 PDF 预览。 | `X-Bitable-*` 只作为侧边栏上下文线索，不作为认证凭据；`/api/auth/session` 不再向前端返回 bearer 级 session token；可信会话来自客户端免登、一键 OAuth 或扫码备用；旧 handoff 子路径显式返回 `410`。 | 已同步 |
 | 2026-06-22 | 契约调整 | 未指定 `templateId` 时，服务端自动生成简短递增模板编号。 | 自动模板编号从历史日期随机格式调整为 `tpl_001`、`tpl_002` 这类递增编号；手动传入的合法 `templateId` 仍兼容。 | 已同步 |
@@ -61,7 +62,8 @@ Docx 渲染路由和存储实现已拆分：
 
 1. 调用 `POST /api/v1/document-templates` 上传 `.docx` 模板下载链接，保存返回的 `template.templateId`。
 2. 调用 `POST /api/v1/document-renders`，传 `templateId` 和变量，获取 `download.url`。
-3. 模板变更时调用 `POST /api/v1/document-templates/{templateId}/versions` 新增版本，不覆盖旧版本。
+3. 只修改模板名称、分类、可见范围或说明时，调用 `PATCH /api/v1/document-templates/{templateId}`，不会新增版本。
+4. 模板文件变更时调用 `POST /api/v1/document-templates/{templateId}/versions` 新增版本，不覆盖旧版本。
 
 不推荐每次生成时都传原始模板链接。模板链接可能过期，也会让每次生成都重新下载模板。
 
@@ -179,14 +181,15 @@ DOCUMENT_RENDER_TOS_PREFIX=renders
 | `GET` | `/api/v1/document-templates` | 2. 查询模板列表。 |
 | `GET` | `/api/v1/document-templates/{templateId}` | 3. 查询模板详情。 |
 | `GET` | `/api/v1/document-templates/{templateId}/versions` | 4. 查询模板版本。 |
-| `POST` | `/api/v1/document-templates/{templateId}/versions` | 5. 新增模板版本。 |
-| `DELETE` | `/api/v1/document-templates/{templateId}` | 6. 删除模板。 |
-| `POST` | `/api/v1/document-renders` | 7. 生成单份文档。 |
+| `PATCH` | `/api/v1/document-templates/{templateId}` | 5. 更新模板信息，不新增版本。 |
+| `POST` | `/api/v1/document-templates/{templateId}/versions` | 6. 新增模板版本。 |
+| `DELETE` | `/api/v1/document-templates/{templateId}` | 7. 删除模板。 |
+| `POST` | `/api/v1/document-renders` | 8. 生成单份文档。 |
 | `GET` | `/api/v1/document-renders/downloads/{id}` | local 开发存储的临时下载地址；客户端只使用 `download.url`。 |
-| `POST` | `/api/v1/document-renders/batch` | 8. 同步批量生成。 |
-| `POST` | `/api/v1/document-render-jobs` | 9. 提交异步批量任务。 |
-| `GET` | `/api/v1/document-render-jobs/{jobId}` | 10. 查询异步任务进度。 |
-| `GET` | `/api/v1/document-render-jobs/{jobId}/results` | 11. 查询异步任务结果。 |
+| `POST` | `/api/v1/document-renders/batch` | 9. 同步批量生成。 |
+| `POST` | `/api/v1/document-render-jobs` | 10. 提交异步批量任务。 |
+| `GET` | `/api/v1/document-render-jobs/{jobId}` | 11. 查询异步任务进度。 |
+| `GET` | `/api/v1/document-render-jobs/{jobId}/results` | 12. 查询异步任务结果。 |
 
 ## 模板缩略图
 
@@ -504,7 +507,54 @@ curl -s http://localhost:3000/api/v1/document-templates/fbiftemp_20260512_001/ve
 }
 ```
 
-## 5. 新增模板版本
+## 5. 更新模板信息
+
+### 请求
+
+| 项目 | 说明 |
+|---|---|
+| HTTP URL | `/api/v1/document-templates/{templateId}` |
+| HTTP Method | `PATCH` |
+| 适用场景 | 只修改模板名称、分类、可见范围或说明，不上传新 `.docx`，不新增版本。 |
+
+### 请求体
+
+| 名称 | 类型 | 必填 | 描述 |
+|---|---|---|---|
+| `name` | string | 否 | 模板名称，最多 255 字符。空字符串不会覆盖原名称。 |
+| `category` | string | 否 | 模板分类，最多 64 字符；传空字符串会清空分类。 |
+| `visibility` | string | 否 | 模板可见性，值为 `private` 或 `shared`。 |
+| `description` | string | 否 | 模板说明，最多 1000 字符；传空字符串会清空说明。 |
+
+不能传 `url`、`fileBase64` 或 `fileName`。如果要更新模板文件，请调用「新增模板版本」接口。
+
+### 请求示例
+
+```bash
+curl -s -X PATCH http://localhost:3000/api/v1/document-templates/fbiftemp_20260512_001 \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <api-key>' \
+  -d '{
+    "name": "通用合同模板",
+    "category": "合同",
+    "visibility": "shared",
+    "description": ""
+  }'
+```
+
+### 响应体
+
+响应结构同「上传模板」。该接口不会新增 `template.versions[]`，也不会改变 `template.activeVersionId`。
+
+### 常见错误
+
+| HTTP 状态码 | 错误信息 | 排查建议 |
+|---|---|---|
+| `400` | `请求参数不合法。` | 至少传入一个可更新字段，并检查字段类型和长度。 |
+| `400` | `模板不存在。` | 检查 `templateId`。 |
+| `400` | `模板已删除，不能修改信息。` | 恢复或重新上传模板。 |
+
+## 6. 新增模板版本
 
 ### 请求
 
@@ -512,7 +562,7 @@ curl -s http://localhost:3000/api/v1/document-templates/fbiftemp_20260512_001/ve
 |---|---|
 | HTTP URL | `/api/v1/document-templates/{templateId}/versions` |
 | HTTP Method | `POST` |
-| 适用场景 | 模板文件改版后追加版本，并自动设为当前启用版本。 |
+| 适用场景 | 模板文件改版后追加版本，并自动设为当前启用版本。只改元数据时不要调用此接口。 |
 
 ### 请求体
 
@@ -549,7 +599,7 @@ curl -s http://localhost:3000/api/v1/document-templates/fbiftemp_20260512_001/ve
 | `400` | `模板不存在。` | 检查 `templateId`。 |
 | `400` | `模板已删除，不能新增版本。` | 恢复或重新上传模板。 |
 
-## 6. 删除模板
+## 7. 删除模板
 
 ### 请求
 
@@ -590,7 +640,7 @@ curl -s -X DELETE 'http://localhost:3000/api/v1/document-templates/fbiftemp_2026
 
 软删除后模板不能继续生成，但 metadata 和历史版本仍保留。`purge=true` 会清理对象存储，后续列表中也不再出现该模板。
 
-## 7. 生成单份文档
+## 8. 生成单份文档
 
 ### 请求
 
@@ -698,7 +748,7 @@ curl -s http://localhost:3000/api/v1/document-renders \
 | `400` | `有变量没有出现在模板中，请检查变量名。` | 查看 `unusedVariables` 并修正变量名。 |
 | `400` | `模板中仍有未替换的变量占位符，请检查模板。` | 检查模板中是否有无法识别或拆分异常的占位符。 |
 
-## 8. 同步批量生成
+## 9. 同步批量生成
 
 ### 请求
 
@@ -791,7 +841,7 @@ curl -s http://localhost:3000/api/v1/document-renders/batch \
 }
 ```
 
-## 9. 提交异步批量任务
+## 10. 提交异步批量任务
 
 ### 请求
 
@@ -862,7 +912,7 @@ curl -s http://localhost:3000/api/v1/document-render-jobs \
 }
 ```
 
-## 10. 查询异步任务进度
+## 11. 查询异步任务进度
 
 ### 请求
 
@@ -913,7 +963,7 @@ curl -s http://localhost:3000/api/v1/document-render-jobs/job_1778540000000_abcd
 |---|---|---|
 | `404` | `任务不存在。` | 检查 `jobId`，或确认服务是否重启过。 |
 
-## 11. 查询异步任务结果
+## 12. 查询异步任务结果
 
 ### 请求
 

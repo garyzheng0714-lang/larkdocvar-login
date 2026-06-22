@@ -27,6 +27,13 @@ const createTemplateVersionSchema = templateInputSchema.omit({ templateId: true 
   message: '模板链接或模板文件不能为空。',
 });
 
+const updateTemplateMetadataSchema = templateInputSchema
+  .omit({ templateId: true, url: true, fileBase64: true, fileName: true })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0, {
+    message: '模板信息不能为空。',
+  });
+
 export type DocumentTemplateResolver = {
   loadTemplate(templateId: string, versionId?: string): Promise<LoadedDocumentTemplate>;
 };
@@ -194,6 +201,27 @@ export function createDocumentTemplateRouter(
         return;
       }
       response.json({ ok: true, requestId, templateId: template.templateId, activeVersionId: template.activeVersionId, versions: template.versions });
+    } catch (error) {
+      sendError(response, requestId, error);
+    }
+  });
+
+  router.patch('/:templateId', async (request, response) => {
+    const requestId = getRequestId(request);
+    const parsed = updateTemplateMetadataSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
+      return;
+    }
+    try {
+      const templateId = String(request.params.templateId || '');
+      const actor = await requireTemplateManager(request, response, requestId, service, templateId, options);
+      if (!actor) return;
+      response.json({
+        ok: true,
+        requestId,
+        template: await service.updateTemplateMetadata(templateId, { ...parsed.data, updatedByOpenId: actor.openId }),
+      });
     } catch (error) {
       sendError(response, requestId, error);
     }
