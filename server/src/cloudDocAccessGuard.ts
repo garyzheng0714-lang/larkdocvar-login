@@ -61,18 +61,9 @@ export function createCloudDocAccessGuard(): express.RequestHandler {
         return;
       }
     } catch {
-      // No usable session; fall back to Bitable sidebar headers below.
+      // Keep the public error stable; callers do not need storage details.
     }
 
-    const validation = validateBitableSidebarHeaders({
-      baseId: request.header('X-Bitable-Base-Id'),
-      tableId: request.header('X-Bitable-Table-Id'),
-      tenantKey: request.header('X-Bitable-Tenant-Key'),
-    });
-    if (!validation.ok) {
-      response.status(403).json({ ok: false, error: validation.error });
-      return;
-    }
-    next();
+    response.status(401).json({ ok: false, error: '请先完成可信登录后再操作。' });
   };
 }

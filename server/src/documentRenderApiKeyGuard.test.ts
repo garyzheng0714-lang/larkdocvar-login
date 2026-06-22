@@ -21,13 +21,37 @@ async function startServer(): Promise<{ baseUrl: string; close: () => Promise<vo
 
 test('Docx API Key 未配置时不拦截请求', async () => {
   const previous = process.env.DOCUMENT_RENDER_API_KEY;
+  const previousNodeEnv = process.env.NODE_ENV;
   delete process.env.DOCUMENT_RENDER_API_KEY;
+  process.env.NODE_ENV = 'test';
   const api = await startServer();
   try {
     const response = await fetch(`${api.baseUrl}/protected`);
     assert.equal(response.status, 200);
   } finally {
     if (previous !== undefined) process.env.DOCUMENT_RENDER_API_KEY = previous;
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    await api.close();
+  }
+});
+
+test('生产环境 Docx API Key 未配置时不能裸放行', async () => {
+  const previous = process.env.DOCUMENT_RENDER_API_KEY;
+  const previousNodeEnv = process.env.NODE_ENV;
+  delete process.env.DOCUMENT_RENDER_API_KEY;
+  process.env.NODE_ENV = 'production';
+  const api = await startServer();
+  try {
+    const response = await fetch(`${api.baseUrl}/protected`);
+    const body = await response.json() as any;
+    assert.equal(response.status, 401);
+    assert.equal(body.error, 'API Key 无效或缺失。');
+  } finally {
+    if (previous === undefined) delete process.env.DOCUMENT_RENDER_API_KEY;
+    else process.env.DOCUMENT_RENDER_API_KEY = previous;
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
     await api.close();
   }
 });

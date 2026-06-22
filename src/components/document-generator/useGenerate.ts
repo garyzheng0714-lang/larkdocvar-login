@@ -14,6 +14,7 @@ import type {
 import { CUSTOM_MAPPING_VALUE } from './mapping';
 import { stringifyCellValue } from './cloudFieldMapping';
 import { runBatchSlices } from './useBatchRunner';
+import { buildOptionalBitableSidebarHeaders } from './cloudDoc/bitableAdapter';
 
 function computeCounts(items: RecordItem[]): Counts {
   return {
@@ -453,16 +454,18 @@ export function useGenerateReal(): GenerateRunner {
 
       try {
         if (activeRunIdRef.current !== runId || signal.aborted) return;
+        const sidebarHeaders = await buildOptionalBitableSidebarHeaders(tableId);
+        if (activeRunIdRef.current !== runId || signal.aborted) return;
         const res = await fetch('/api/v1/document-renders/batch', {
           method: 'POST',
           credentials: 'include',
           signal,
-          headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              template: { format: 'docx', templateId: options.template.id },
-              missingStrategy: options.onMissing === '留空继续' ? 'blank' : 'fail',
-              records: batchPayload,
-            }),
+          headers: { 'Content-Type': 'application/json', ...sidebarHeaders },
+          body: JSON.stringify({
+            template: { format: 'docx', templateId: options.template.id },
+            missingStrategy: options.onMissing === '留空继续' ? 'blank' : 'fail',
+            records: batchPayload,
+          }),
         });
         if (!res.ok) throw new Error(await readBatchResponseError(res));
         const json = (await res.json()) as {
@@ -636,10 +639,11 @@ export function useGenerateReal(): GenerateRunner {
       for (const v of template.variables ?? []) {
         if (v.kind !== 'image') variables[v.name] = v.name;
       }
+      const sidebarHeaders = await buildOptionalBitableSidebarHeaders();
       const res = await fetch('/api/v1/document-renders', {
         method: 'POST',
         credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...sidebarHeaders },
         body: JSON.stringify({
           template: { format: 'docx', templateId: template.id },
           variables,

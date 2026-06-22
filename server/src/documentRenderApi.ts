@@ -1,6 +1,5 @@
 import express from 'express';
 import axios from 'axios';
-import FormData from 'form-data';
 import dns from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
@@ -12,7 +11,6 @@ import JSZip from 'jszip';
 import { TemplateHandler } from 'easy-template-x';
 import { z } from 'zod';
 import { documentRenderJsonParser } from './documentRenderBodyParser';
-import { DOCX_CONTENT_TYPE, ensureDocxExtension, sanitizeFileName } from './documentRenderFile';
 import { UserFacingError } from './documentRenderStorageErrors';
 import {
   createConfiguredStorage,
@@ -25,6 +23,8 @@ import {
 import { createFixedLookup, isBlockedIpAddress } from './documentRenderUrlSafety';
 import { imageVariableMapSchema, isImagePlaceholderName, normalizeImageVariableName, replaceImagePlaceholdersInDocx, type DocumentRenderImageVariableInput, type RenderedImageVariable } from './documentRenderImages';
 import type { DocumentTemplateResolver } from './documentTemplateApi';
+import { createRequestScopedDocumentTemplateResolver } from './documentTemplateAccess';
+import { convertDocxToPdfPreview } from './documentPdfPreview';
 export { createConfiguredStorage } from './documentRenderStorage';
 export type { DocumentRenderStorageKind, DocumentRenderStorage, SaveGeneratedDocxInput, SavedGeneratedDocx } from './documentRenderStorage';
 
@@ -34,7 +34,6 @@ const DEFAULT_MAX_ZIP_ENTRIES = 1000;
 const MAX_TEMPLATE_REDIRECTS = 3;
 const DEFAULT_DOWNLOAD_TTL_MS = 60 * 60 * 1000;
 const MAX_DOWNLOAD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const DEFAULT_GOTENBERG_TIMEOUT_MS = 30_000;
 
 export type DocumentRenderRouterOptions = { storage?: DocumentRenderStorage; storageDir?: string; templateResolver?: DocumentTemplateResolver };
 
@@ -185,38 +184,6 @@ function getDefaultDownloadTtl(): { ttlMs: number; ttlSeconds: number } {
 }
 const getMaxUnzippedBytes = () => readPositiveIntegerEnv('DOCUMENT_RENDER_MAX_UNZIPPED_BYTES', DEFAULT_MAX_UNZIPPED_BYTES);
 const getMaxZipEntries = () => readPositiveIntegerEnv('DOCUMENT_RENDER_MAX_ZIP_ENTRIES', DEFAULT_MAX_ZIP_ENTRIES);
-const getGotenbergTimeoutMs = () => readPositiveIntegerEnv('GOTENBERG_TIMEOUT_MS', DEFAULT_GOTENBERG_TIMEOUT_MS);
-
-async function convertDocxToPdfPreview(input: { buffer: Buffer; fileName: string }): Promise<{ contentType: 'application/pdf'; size: number; fileBase64: string }> {
-  const baseUrl = (process.env.GOTENBERG_URL || '').trim().replace(/\/+$/, '');
-  if (!baseUrl) {
-    throw new UserFacingError('PDF 预览服务未配置，请联系管理员。');
-  }
-  const form = new FormData();
-  form.append('files', input.buffer, {
-    filename: ensureDocxExtension(sanitizeFileName(input.fileName, '预览.docx')),
-    contentType: DOCX_CONTENT_TYPE,
-  });
-  let response;
-  try {
-    response = await axios.post(`${baseUrl}/forms/libreoffice/convert`, form, {
-      headers: form.getHeaders(),
-      responseType: 'arraybuffer',
-      timeout: getGotenbergTimeoutMs(),
-      maxBodyLength: MAX_TEMPLATE_DOWNLOAD_BYTES,
-      maxContentLength: MAX_TEMPLATE_DOWNLOAD_BYTES,
-      validateStatus: (status) => status >= 200 && status < 300,
-    });
-  } catch {
-    throw new UserFacingError('PDF 预览生成失败，请稍后重试。');
-  }
-  const pdf = Buffer.from(response.data);
-  return {
-    contentType: 'application/pdf',
-    size: pdf.length,
-    fileBase64: pdf.toString('base64'),
-  };
-}
 
 function allowPrivateTemplateUrls(): boolean { return process.env.DOCUMENT_TEMPLATE_ALLOW_PRIVATE_URLS === 'true'; }
 
@@ -859,7 +826,12 @@ export function createDocumentRenderRouter(options: DocumentRenderRouterOptions 
     if (!parsed.success) { response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' }); return; }
 
     try {
-      response.json(await renderDocumentRequest(parsed.data, storage, requestId, templateResolver));
+      response.json(await renderDocumentRequest(
+        parsed.data,
+        storage,
+        requestId,
+        createRequestScopedDocumentTemplateResolver(request, templateResolver),
+      ));
     } catch (error) {
       if (error instanceof MissingVariablesError) {
         response.status(400).json({ ok: false, requestId, error: error.message, missingVariables: error.missingVariables });

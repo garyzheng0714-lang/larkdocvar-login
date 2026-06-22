@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import express from 'express';
+import http from 'node:http';
 import test from 'node:test';
-import { validateBitableSidebarHeaders } from './cloudDocAccessGuard';
+import { createCloudDocAccessGuard, validateBitableSidebarHeaders } from './cloudDocAccessGuard';
 
 const ENV_KEYS = [
   'NODE_ENV',
@@ -77,4 +79,28 @@ test('云文档侧边栏访问校验同时检查 Base、Table 和 Tenant 白名�
       tenantKey: 'tenant_other',
     }).ok, false);
   });
+});
+
+test('云文档路由不能只凭客户端 X-Bitable 头通过访问', async () => {
+  const app = express();
+  app.use(createCloudDocAccessGuard());
+  app.get('/cloud-doc', (_request, response) => response.json({ ok: true }));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert(address && typeof address === 'object');
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/cloud-doc`, {
+      headers: {
+        'X-Bitable-Base-Id': 'base_allowed',
+        'X-Bitable-Table-Id': 'tbl_allowed',
+        'X-Bitable-Tenant-Key': 'tenant_allowed',
+      },
+    });
+    const body = await response.json() as any;
+    assert.equal(response.status, 401);
+    assert.equal(body.error, '请先完成可信登录后再操作。');
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  }
 });

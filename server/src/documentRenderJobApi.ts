@@ -12,6 +12,7 @@ import {
 } from './documentRenderApi';
 import { imageVariableMapSchema } from './documentRenderImages';
 import type { DocumentTemplateResolver } from './documentTemplateApi';
+import { createRequestScopedDocumentTemplateResolver } from './documentTemplateAccess';
 import {
   renderBatchRecords,
   type DocumentRenderBatchRecordInput,
@@ -335,6 +336,20 @@ export function createDocumentRenderJobRouter(options: {
     const jobId = `job_${Date.now()}_${randomUUID().slice(0, 8)}`;
     const ownerKey = await resolveJobOwnerKey(request);
     const expiresAt = new Date(Date.now() + jobTtlMs).toISOString();
+    const templateResolver = createRequestScopedDocumentTemplateResolver(request, options.templateResolver);
+
+    if (parsed.data.template.templateId && templateResolver) {
+      try {
+        await templateResolver.loadTemplate(parsed.data.template.templateId, parsed.data.template.versionId);
+      } catch (error) {
+        if (error instanceof UserFacingError) {
+          response.status(400).json({ ok: false, requestId, error: error.message });
+          return;
+        }
+        sendJobStoreError(response, requestId, error);
+        return;
+      }
+    }
 
     const job: RenderJob = {
       jobId,
@@ -371,7 +386,7 @@ export function createDocumentRenderJobRouter(options: {
       return;
     }
 
-    setImmediate(() => { void runJob(job, storage, jobTtlMs, jobLeaseMs, jobStore, options.templateResolver); });
+    setImmediate(() => { void runJob(job, storage, jobTtlMs, jobLeaseMs, jobStore, templateResolver); });
     response.status(202).json({ ok: true, requestId, job: publicJob(job) });
   });
 

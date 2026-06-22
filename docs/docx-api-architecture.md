@@ -14,7 +14,7 @@
 | 模板对象存储 | `server/src/documentTemplateStorage.ts` | TOS 或本地开发目录读写模板资产。 |
 | 输出对象存储 | `server/src/documentRenderTosStorage.ts` 和 `documentRenderApi.ts` | OSS/TOS/local 保存最终生成文件。 |
 | 侧边栏 UI | `src/components/document-generator/` | 服务器 Docx 模板库管理和多维表格批量生成入口。 |
-| 飞书登录 | `server/src/oauthRoutes.ts`、`server/src/auth.ts`、`src/feishuClientLogin.ts`、`src/authSessionToken.ts` | 飞书客户端内授权、普通浏览器 OAuth 当前页跳转、嵌入式 session token 兜底和真实侧边栏登录态接回。 |
+| 侧边栏身份 | `server/src/auth.ts`、`server/src/routes/authSessionRoutes.ts`、`src/components/document-generator/cloudDoc/bitableAdapter.ts`、`src/components/document-generator/cloudDoc/feishuTrustedLogin.ts` | 当前 Word 模板侧边栏只把 Base JS SDK 的 `X-Bitable-*` 作为宿主上下文线索；模板权限必须来自 API Key 或服务端可信会话；可信会话通过 Feishu client-code 或插件内扫码登录建立，旧 OAuth / handoff 入口返回 410。 |
 | 数据库迁移 | `server/migrations/` + `server/src/migrations.ts` | 管理 PostgreSQL 表结构版本，启动时记录到 `schema_migrations`。 |
 
 ## 数据流
@@ -112,49 +112,30 @@ TOS 同时可用于模板资产和生成文件；生成文件也支持阿里云 
 
 PostgreSQL 表结构通过 `server/migrations/` 管理，服务启动时执行未应用版本并写入 `schema_migrations`。生产部署前应先确认数据库备份可恢复。
 
-## 登录链路
+## 侧边栏身份链路
 
-飞书桌面侧边栏优先走客户端内授权，不应把用户带离当前插件面板。主链路是：
+飞书多维表格 iframe 内的请求先继续携带 cookie。Base JS SDK 提供的 `X-Bitable-*` 只能作为宿主 Base/Table/Tenant 和用户线索，不能单独作为认证凭据：
 
 ```mermaid
 sequenceDiagram
   participant Iframe as "飞书侧边栏 iframe"
-  participant Client as "飞书客户端 JSAPI"
+  participant SDK as "Base JS SDK"
   participant Server as "Docgen 服务端"
-  participant Feishu as "飞书 OpenAPI"
-  Iframe->>Server: "GET /api/auth/feishu/:appKey/client-config"
-  Server-->>Iframe: "app_id"
-  Iframe->>Client: "tt.requestAccess(appID) / tt.requestAuthCode(appId)"
-  Client-->>Iframe: "code"
-  Iframe->>Server: "POST /api/auth/feishu/:appKey/client-code"
-  Server->>Feishu: "app_access_token + code 换 user_access_token"
-  Server->>Feishu: "user_info"
-  Server->>Server: "写 users/auth_sessions"
-  Server-->>Iframe: "session_token"
-  Iframe->>Server: "X-Session-Token /api/auth/session"
+  Iframe->>SDK: "getSelection / getUserId / getBaseUserId / getTenantKey"
+  SDK-->>Iframe: "baseId / tableId / openId 或 baseUserId / tenantKey"
+  Iframe->>Server: "同源请求 + credentials + X-Bitable-*"
+  Server->>Server: "只把 X-Bitable-* 作为上下文线索"
+  Server->>Server: "用 API Key 或可信 session 判定模板权限"
+  Server-->>Iframe: "模板列表/保存/生成响应"
 ```
 
-普通浏览器 OAuth 走 `/auth/feishu/:appKey/login` 当前页跳转，由回调设置 httpOnly cookie。飞书桌面侧边栏内不再自动打开外部授权页；此前 `/api/auth/feishu/:appKey/start` + `/login-status` 的 JSON handoff 会让“知道 state 的发起者”领取授权者 session，已停用并固定返回 410。
-
-```mermaid
-sequenceDiagram
-  participant Browser as "普通浏览器"
-  participant Server as "Docgen 服务端"
-  participant Feishu as "飞书 OAuth"
-  Browser->>Server: "GET /auth/feishu/:appKey/login"
-  Server-->>Browser: "302 authorizeUrl + state cookie"
-  Browser->>Feishu: "用户授权"
-  Feishu->>Server: "GET /auth/feishu/:appKey/callback"
-  Server->>Server: "写 users/auth_sessions"
-  Server-->>Browser: "Set-Cookie + 302 前端"
-```
-
-服务端解析会话时按 cookie、`X-Session-Token`、Bearer 收集候选值；如果旧 cookie 查不到有效 session，会继续尝试后续 token。query token 已移除，避免 token 出现在 URL、日志或分享链路里。
+`/api/auth/session` 保留为兼容诊断接口，未登录时返回稳定 JSON，已登录时也不返回 bearer 级 session token。侧边栏保存模板前会先检查可信会话；没有会话时先尝试 Feishu client-code 端内授权，若 PC 侧边栏不提供 H5 WebApp 授权容器，则在当前模板面板内展示扫码登录并轮询会话，文件和表单内容不丢失。`client-code` 和扫码回调都只写 httpOnly cookie，不把 session token 返回给前端。旧外部 OAuth / handoff 子路径显式返回 410，避免被静态前端页面兜底成假 200 或重新引入 session 接管风险。服务端解析旧会话时仍按 cookie、`X-Session-Token`、Bearer 收集候选值；query token 已移除，避免 token 出现在 URL、日志或分享链路里。
 
 ## 安全边界
 
-- `DOCUMENT_RENDER_API_KEY` 开启后，业务系统必须传 API Key。
-- 已登录侧边栏用户可用 httpOnly 登录会话调用同一组 Docx API。
+- 生产 Docx API 必须使用 API Key 或服务端可信会话；不能匿名放行。
+- `X-Bitable-*` 只作为客户端上下文线索，不绑定模板创建者，不授予 `private` 模板读取权。
+- `private/shared` 可见范围覆盖模板列表、详情、版本、单份生成、同步批量、异步任务和 PDF 预览。
 - 默认禁止模板链接访问本机、内网、云元数据地址。
 - 默认禁止非 HTTPS 模板链接。
 - 错误响应只返回用户可理解原因，不暴露内部堆栈。

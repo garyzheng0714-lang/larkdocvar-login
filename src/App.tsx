@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   DocumentGeneratorApp,
@@ -11,6 +11,12 @@ import {
   MOCK_TEMPLATES,
   MOCK_ROWS,
 } from "./components/document-generator";
+import {
+  fetchTrustedLoginQrGoto,
+  hasTrustedSession,
+  mountTrustedLoginQr,
+  tryFeishuClientTrustedLogin,
+} from "./components/document-generator/cloudDoc/feishuTrustedLogin";
 import type { GeneratorKind, PrimaryState, RecordSpec } from "./components/document-generator";
 
 function useMockMode(): boolean {
@@ -160,9 +166,84 @@ function V2RealRoute({ userMenu }: { userMenu: ReactNode }) {
   );
 }
 
+function AuthGate({ onReady }: { onReady: () => void }) {
+  const [phase, setPhase] = useState<'checking' | 'qr' | 'error'>('checking');
+  const [message, setMessage] = useState('正在确认登录状态...');
+  const [qrGoto, setQrGoto] = useState('');
+  const qrElementId = useMemo(() => `app-login-qr-${Math.random().toString(36).slice(2)}`, []);
+
+  const startLogin = useCallback(async () => {
+    setPhase('checking');
+    setMessage('正在确认登录状态...');
+    setQrGoto('');
+    try {
+      if (await hasTrustedSession()) {
+        onReady();
+        return;
+      }
+      if (await tryFeishuClientTrustedLogin()) {
+        onReady();
+        return;
+      }
+      const goto = await fetchTrustedLoginQrGoto();
+      setQrGoto(goto);
+      setPhase('qr');
+      setMessage('请用飞书扫码登录。登录完成后会自动进入插件。');
+    } catch (error) {
+      setPhase('error');
+      setMessage(error instanceof Error ? error.message : '登录状态确认失败，请稍后重试。');
+    }
+  }, [onReady]);
+
+  useEffect(() => {
+    void startLogin();
+  }, [startLogin]);
+
+  useEffect(() => {
+    if (!qrGoto || phase !== 'qr') return;
+    let cancelled = false;
+    mountTrustedLoginQr(qrElementId, qrGoto).catch((error) => {
+      if (cancelled) return;
+      setPhase('error');
+      setMessage(error instanceof Error ? error.message : '登录二维码加载失败，请稍后重试。');
+    });
+    const timer = window.setInterval(() => {
+      void hasTrustedSession().then((loggedIn) => {
+        if (cancelled || !loggedIn) return;
+        window.clearInterval(timer);
+        onReady();
+      }).catch(() => undefined);
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [onReady, phase, qrElementId, qrGoto]);
+
+  return (
+    <div className="auth-gate">
+      <div className="auth-gate-panel">
+        <div className="auth-gate-title">登录后使用插件</div>
+        <div className="auth-gate-message">{message}</div>
+        {phase === 'qr' && (
+          <div className="auth-gate-qr-wrap">
+            <div id={qrElementId} className="auth-gate-qr" />
+          </div>
+        )}
+        {phase === 'error' && (
+          <button className="auth-gate-retry" type="button" onClick={() => void startLogin()}>
+            重新登录
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const mockMode = useMockMode();
   const standalonePreview = useStandalonePreviewMode();
+  const [authReady, setAuthReady] = useState(false);
 
   if (mockMode) {
     return (
@@ -171,6 +252,10 @@ export default function App() {
         userMenu={null}
       />
     );
+  }
+
+  if (!authReady) {
+    return <AuthGate onReady={() => setAuthReady(true)} />;
   }
 
   return (

@@ -7,7 +7,6 @@ import { DocumentTemplateService } from './documentTemplateService';
 import type { LoadedDocumentTemplate } from './documentTemplateService';
 import { peekSessionForRequest } from './auth';
 import { hasValidDocumentRenderApiKey } from './documentRenderApiKeyGuard';
-import { validateBitableSidebarHeaders } from './cloudDocAccessGuard';
 
 const templateInputSchema = z.object({
   templateId: z.string().trim().optional(),
@@ -51,33 +50,9 @@ function isAdminOpenId(openId: string | undefined): boolean {
     .includes(openId);
 }
 
-function readHeader(request: express.Request, name: string): string {
-  const value = request.headers[name.toLowerCase()];
-  const raw = Array.isArray(value) ? value[0] : value;
-  return typeof raw === 'string' ? raw.trim() : '';
-}
-
-function normalizeBitableOpenId(value: string): string | undefined {
-  const openId = value.trim();
-  return /^[A-Za-z0-9_-]{3,160}$/.test(openId) ? openId : undefined;
-}
-
-function resolveBitableSidebarOpenId(request: express.Request): string | undefined {
-  const openId = normalizeBitableOpenId(
-    readHeader(request, 'X-Bitable-Open-Id') || readHeader(request, 'X-Bitable-Base-User-Id'),
-  );
-  if (!openId) return undefined;
-  const validation = validateBitableSidebarHeaders({
-    baseId: readHeader(request, 'X-Bitable-Base-Id'),
-    tableId: readHeader(request, 'X-Bitable-Table-Id'),
-    tenantKey: readHeader(request, 'X-Bitable-Tenant-Key'),
-  });
-  return validation.ok ? openId : undefined;
-}
-
-async function resolveDefaultActor(request: express.Request): Promise<DocumentTemplateActor> {
+export async function resolveDefaultDocumentTemplateActor(request: express.Request): Promise<DocumentTemplateActor> {
   const session = await peekSessionForRequest(request).catch(() => null);
-  const openId = session?.profile.openId || resolveBitableSidebarOpenId(request);
+  const openId = session?.profile.openId;
   return {
     openId,
     isAdmin: hasValidDocumentRenderApiKey(request) || isAdminOpenId(openId),
@@ -91,7 +66,7 @@ async function requireTemplateActor(
   options: DocumentTemplateRouterOptions,
 ): Promise<DocumentTemplateActor | null> {
   if (!options.enforceOwnership) return { isAdmin: true };
-  const actor = await (options.resolveActor || resolveDefaultActor)(request);
+  const actor = await (options.resolveActor || resolveDefaultDocumentTemplateActor)(request);
   if (actor.isAdmin || actor.openId) return actor;
   response.status(401).json({ ok: false, requestId, error: '登录状态没有接上，当前文件和填写内容已保留。请重新打开飞书侧边栏或登录后再点保存。' });
   return null;
@@ -102,6 +77,21 @@ function canManageTemplate(
   actor: DocumentTemplateActor,
 ): boolean {
   return actor.isAdmin || Boolean(actor.openId && template.createdByOpenId === actor.openId);
+}
+
+export function canReadDocumentTemplate(
+  template: { visibility?: 'private' | 'shared'; createdByOpenId?: string },
+  actor: DocumentTemplateActor,
+): boolean {
+  return actor.isAdmin || template.visibility !== 'private' || Boolean(actor.openId && template.createdByOpenId === actor.openId);
+}
+
+async function resolveTemplateReader(
+  request: express.Request,
+  options: DocumentTemplateRouterOptions,
+): Promise<DocumentTemplateActor> {
+  if (!options.enforceOwnership) return { isAdmin: true };
+  return (options.resolveActor || resolveDefaultDocumentTemplateActor)(request).catch(() => ({ isAdmin: false }));
 }
 
 async function requireTemplateManager(
@@ -147,7 +137,9 @@ export function createDocumentTemplateRouter(
     const requestId = getRequestId(request);
     try {
       const includeDeleted = String(request.query.includeDeleted || '').toLowerCase() === 'true';
-      response.json({ ok: true, requestId, templates: await service.listTemplates({ includeDeleted }) });
+      const actor = await resolveTemplateReader(request, options);
+      const templates = (await service.listTemplates({ includeDeleted })).filter((template) => canReadDocumentTemplate(template, actor));
+      response.json({ ok: true, requestId, templates });
     } catch (error) {
       sendError(response, requestId, error);
     }
@@ -180,7 +172,13 @@ export function createDocumentTemplateRouter(
   router.get('/:templateId', async (request, response) => {
     const requestId = getRequestId(request);
     try {
-      response.json({ ok: true, requestId, template: await service.getTemplate(String(request.params.templateId || '')) });
+      const actor = await resolveTemplateReader(request, options);
+      const template = await service.getTemplate(String(request.params.templateId || ''));
+      if (!canReadDocumentTemplate(template, actor)) {
+        response.status(403).json({ ok: false, requestId, error: '没有权限查看此模板。' });
+        return;
+      }
+      response.json({ ok: true, requestId, template });
     } catch (error) {
       sendError(response, requestId, error);
     }
@@ -189,7 +187,12 @@ export function createDocumentTemplateRouter(
   router.get('/:templateId/versions', async (request, response) => {
     const requestId = getRequestId(request);
     try {
+      const actor = await resolveTemplateReader(request, options);
       const template = await service.getTemplate(String(request.params.templateId || ''));
+      if (!canReadDocumentTemplate(template, actor)) {
+        response.status(403).json({ ok: false, requestId, error: '没有权限查看此模板。' });
+        return;
+      }
       response.json({ ok: true, requestId, templateId: template.templateId, activeVersionId: template.activeVersionId, versions: template.versions });
     } catch (error) {
       sendError(response, requestId, error);

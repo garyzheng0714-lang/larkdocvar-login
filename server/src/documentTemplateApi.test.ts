@@ -339,22 +339,11 @@ test('非管理员只能修改或删除自己创建的模板', async () => {
   }
 });
 
-test('飞书侧边栏身份可在 cookie 失效时创建并管理自己的模板', async () => {
+test('飞书侧边栏身份头不能在缺少可信会话时冒充登录用户', async () => {
   const restorePrivateUrls = withPrivateTemplateUrls();
   const restoreSidebar = withBitableSidebarAllowlist();
   const api = await startServer({ enforceOwnership: true, useDefaultActor: true });
   try {
-    const anonymousCreate = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        templateId: 'sidebar_tpl_001',
-        name: '侧边栏身份模板',
-        url: `${api.baseUrl}/template-v1.docx`,
-      }),
-    });
-    assert.equal(anonymousCreate.status, 401);
-
     const createResponse = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
       method: 'POST',
       headers: bitableSidebarHeaders('ou_sidebar_owner'),
@@ -364,26 +353,70 @@ test('飞书侧边栏身份可在 cookie 失效时创建并管理自己的模板
         url: `${api.baseUrl}/template-v1.docx`,
       }),
     });
-    const created = await createResponse.json() as any;
-    assert.equal(createResponse.status, 200);
-    assert.equal(created.template.createdByOpenId, 'ou_sidebar_owner');
-
-    const otherVersion = await fetch(`${api.baseUrl}/api/v1/document-templates/sidebar_tpl_001/versions`, {
-      method: 'POST',
-      headers: bitableSidebarHeaders('ou_sidebar_other'),
-      body: JSON.stringify({ url: `${api.baseUrl}/template-v2.docx` }),
-    });
-    assert.equal(otherVersion.status, 403);
-
-    const ownerVersion = await fetch(`${api.baseUrl}/api/v1/document-templates/sidebar_tpl_001/versions`, {
-      method: 'POST',
-      headers: bitableSidebarHeaders('ou_sidebar_owner'),
-      body: JSON.stringify({ url: `${api.baseUrl}/template-v2.docx` }),
-    });
-    assert.equal(ownerVersion.status, 200);
+    const body = await createResponse.json() as any;
+    assert.equal(createResponse.status, 401);
+    assert.match(body.error, /登录状态没有接上/);
   } finally {
     restoreSidebar();
     restorePrivateUrls();
+    await api.close();
+  }
+});
+
+test('模板列表和详情按 private/shared 可见范围过滤', async () => {
+  const restore = withPrivateTemplateUrls();
+  const api = await startServer({ enforceOwnership: true });
+  try {
+    const create = async (templateId: string, openId: string, visibility: 'private' | 'shared') => {
+      const response = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-test-open-id': openId },
+        body: JSON.stringify({
+          templateId,
+          name: templateId,
+          visibility,
+          url: `${api.baseUrl}/template-v1.docx`,
+        }),
+      });
+      assert.equal(response.status, 200);
+    };
+
+    await create('private_owner_tpl', 'ou_owner', 'private');
+    await create('shared_other_tpl', 'ou_other', 'shared');
+    await create('private_other_tpl', 'ou_other', 'private');
+
+    const anonymousList = await (await fetch(`${api.baseUrl}/api/v1/document-templates`)).json() as any;
+    assert.deepEqual(anonymousList.templates.map((item: any) => item.templateId), ['shared_other_tpl']);
+
+    const ownerListResponse = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      headers: { 'x-test-open-id': 'ou_owner' },
+    });
+    const ownerList = await ownerListResponse.json() as any;
+    assert.equal(ownerListResponse.status, 200);
+    assert.deepEqual(
+      ownerList.templates.map((item: any) => item.templateId).sort(),
+      ['private_owner_tpl', 'shared_other_tpl'],
+    );
+
+    const otherList = await (await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      headers: { 'x-test-open-id': 'ou_other' },
+    })).json() as any;
+    assert.deepEqual(
+      otherList.templates.map((item: any) => item.templateId).sort(),
+      ['private_other_tpl', 'shared_other_tpl'],
+    );
+
+    const blockedDetail = await fetch(`${api.baseUrl}/api/v1/document-templates/private_owner_tpl`, {
+      headers: { 'x-test-open-id': 'ou_other' },
+    });
+    assert.equal(blockedDetail.status, 403);
+
+    const ownerDetail = await fetch(`${api.baseUrl}/api/v1/document-templates/private_owner_tpl`, {
+      headers: { 'x-test-open-id': 'ou_owner' },
+    });
+    assert.equal(ownerDetail.status, 200);
+  } finally {
+    restore();
     await api.close();
   }
 });

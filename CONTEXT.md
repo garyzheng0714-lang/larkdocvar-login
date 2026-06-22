@@ -1,6 +1,6 @@
 # Project Context
 
-更新时间：2026-06-02
+更新时间：2026-06-22
 
 ## 产品边界
 
@@ -19,9 +19,10 @@
 | `versionId` | 模板版本编号，格式为 `${templateId}_v001`、`${templateId}_v002`。不传时使用模板当前激活版本。 |
 | 模板资产 | 原始 Docx 模板文件及其 metadata/index，存放在 TOS 或本地开发目录。生产环境必须配置 TOS 模板存储。 |
 | 生成文件 | 变量替换后的最终 Docx，存放在 OSS/TOS；本地开发无对象存储时可降级 local。 |
-| OAuth 回调错误 | 飞书按钮登录或扫码登录失败后，后端带 `auth_error` 重定向回前端登录页，前端展示可读错误并清理 URL 参数。 |
-| 飞书客户端内登录 | 支持 H5 WebApp 容器时，前端通过 H5 JSAPI `tt.requestAuthCode` / `tt.requestAccess` 获取授权 code，再由后端 `/client-code` 换取用户 OAuth token 并创建本项目会话。真实 PC Lark 多维表格侧边栏 UA 为 `Lark/7.68.5` 且不含 `WebApp`，不是 H5 WebApp 授权容器；前端直接留在插件内切到扫码登录，不伪造 UA、不等待 native auth，也绝不自动拉起外部 OAuth。 |
-| 浏览器 OAuth 登录 | 普通浏览器通过 `/auth/feishu/:appKey/login` 在当前页跳转 OAuth；`/api/auth/feishu/:appKey/start` 和 `/login-status` 的 JSON handoff 已停用，避免用已知 state 领取他人 session。 |
+| 可信会话 | 服务端通过 httpOnly cookie、`X-Session-Token` 或 Bearer 解析出的本项目会话。`X-Bitable-*` 只作宿主上下文线索，不等同可信会话。 |
+| 可信登录入口 | `/api/auth/feishu/:appKey/client-config`、`/api/auth/feishu/:appKey/client-code` 和 `/auth/feishu/:appKey/qr-*` 可建立服务端可信会话；响应只写 httpOnly cookie，不向前端返回 session token。 |
+| 退役 OAuth 入口 | 外部浏览器 OAuth、handoff 轮询和未知 Feishu auth 子路径返回 410，避免旧登录入口被 SPA 兜底成假 200 或重新引入 session 接管风险。 |
+| API Key | 生产 Docx API 必须使用 `DOCUMENT_RENDER_API_KEY` 或可信会话；业务系统用 `Authorization: Bearer` 或 `x-api-key`。 |
 | 批量生成 | `POST /api/v1/document-renders/batch`，单次最多 100 条记录，每条独立成功/失败。 |
 | 异步任务 | `POST /api/v1/document-render-jobs`，单任务最多 500 条记录，提交后查询进度和结果；配置 `DATABASE_URL` 时任务状态写入 PostgreSQL，并按提交身份绑定查询权限。 |
 
@@ -29,15 +30,13 @@
 
 | 路由 | 作用 |
 |---|---|
-| `GET /api/auth/feishu/:appKey/client-config` | 返回当前登录入口的飞书 `app_id`，供客户端内 JSAPI 授权使用。 |
-| `POST /api/auth/feishu/:appKey/client-code` | 接收飞书客户端内授权 code，换取用户 OAuth token 并返回嵌入式会话 `session_token`。 |
-| `GET /api/auth/feishu/:appKey/start` | 已停用的外部 OAuth JSON handoff，固定返回 410。 |
-| `GET /api/auth/feishu/:appKey/login-status` | 已停用的外部 OAuth JSON handoff 轮询，固定返回 410。 |
-| `GET /auth/feishu/:appKey/login` | 浏览器 OAuth 登录跳转，当前页跳转到飞书授权页。 |
-| `GET /auth/feishu/:appKey/callback` | OAuth 登录回调，飞书授权后重定向回前端。 |
-| `GET /auth/feishu/:appKey/qr-config` | 扫码登录配置，返回扫码登录所需的 app_id 和重定向 URI。 |
-| `GET /auth/feishu/:appKey/qr-callback` | 扫码登录回调，飞书扫码授权后重定向回前端。 |
-| `POST /api/auth/feishu/:appKey/client-diagnostics` | 客户端诊断，接收飞书客户端授权环境信息用于排查。 |
+| `GET /api/auth/session` | 兼容诊断接口，返回登录状态；不会返回 session token。 |
+| `POST /api/auth/logout` | 清理兼容会话 cookie / token；无会话也返回成功。 |
+| `GET /api/auth/feishu/:appKey/client-config` | 返回飞书端内授权所需 app_id；不返回 app_secret 或 session token。 |
+| `POST /api/auth/feishu/:appKey/client-code` | 使用飞书客户端授权 code 换取真实用户 OAuth token，写入服务端可信会话 cookie。 |
+| `GET /auth/feishu/:appKey/qr-config` | 返回插件内扫码登录二维码 goto；不返回 session token。 |
+| `GET /auth/feishu/:appKey/qr-callback` | 扫码授权回调，校验 state 后写入服务端可信会话 cookie。 |
+| 其它 `/auth/feishu/*`、`/api/auth/feishu/*` | 旧 OAuth / handoff 入口返回 410。 |
 | `POST /api/v1/document-templates` | 上传并保存 Docx 模板资产，返回 `templateId`。 |
 | `GET /api/v1/document-templates` | 列出模板资产；`includeDeleted=true` 可包含软删除模板。 |
 | `GET /api/v1/document-templates/:templateId` | 查询单个模板详情。 |
@@ -50,6 +49,13 @@
 | `POST /api/v1/document-render-jobs` | 提交异步批量任务，最多 500 条。 |
 | `GET /api/v1/document-render-jobs/:jobId` | 查询异步任务进度。 |
 | `GET /api/v1/document-render-jobs/:jobId/results` | 查询异步任务最终结果。 |
+
+## 鉴权与模板可见范围
+
+- 生产环境 Docx API 不匿名放行；必须有 API Key 或可信会话。
+- `X-Bitable-*` 来自客户端，只能作为宿主上下文线索，不绑定模板创建者，不授予 `private` 模板读取权。
+- `private` 模板只允许创建者、管理员或 API Key 调用方读取；这个规则覆盖模板列表、详情、版本、单份生成、同步批量、异步任务和 PDF 预览。
+- `shared` 模板对已通过 API Key/可信会话访问的调用方可见；本地开发未启用鉴权时可匿名读取。
 
 ## 数据模型
 

@@ -16,6 +16,7 @@ import { FeishuTemplateService } from './feishu';
 import { getFeishuAppCredentials } from './auth';
 import { initDatabase } from './storage';
 import { registerCloudDocRoutes } from './routes/cloudDocRoutes';
+import { registerAuthSessionRoutes } from './routes/authSessionRoutes';
 import { registerHealthRoutes } from './routes/healthRoutes';
 import { registerSavedConfigRoutes } from './routes/savedConfigRoutes';
 
@@ -108,6 +109,7 @@ if (feishuService) {
 }
 
 app.use(cors(corsOptions));
+registerAuthSessionRoutes(app);
 app.use('/api/v1/document-templates', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentTemplateRouter(documentTemplateService, { enforceOwnership: true }));
 app.use('/api/v1/document-render-jobs', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentRenderJobRouter({ templateResolver: documentTemplateService }));
 app.use('/api/v1/document-renders', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentRenderBatchRouter({ templateResolver: documentTemplateService }));

@@ -1,8 +1,14 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Icon } from './icons';
 import { Dropdown } from './Dropdown';
 import { copyTextToClipboard } from './clipboard';
 import { buildOptionalBitableSidebarHeaders } from './cloudDoc/bitableAdapter';
+import {
+  fetchTrustedLoginQrGoto,
+  hasTrustedSession,
+  mountTrustedLoginQr,
+  tryFeishuClientTrustedLogin,
+} from './cloudDoc/feishuTrustedLogin';
 import type { Template } from './types';
 
 interface SelectedFile {
@@ -29,7 +35,14 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
   const [desc, setDesc] = useState(template?.description || '');
   const [tipOpen, setTipOpen] = useState(false);
   const [copyNotice, setCopyNotice] = useState<'ok' | 'error' | null>(null);
+  const [loginPrompt, setLoginPrompt] = useState<{
+    phase: 'loading' | 'ready' | 'error' | 'done';
+    message: string;
+    goto?: string;
+  } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const qrElementIdRef = useRef(`nt-login-qr-${Math.random().toString(36).slice(2)}`);
+  const retrySaveAfterLoginRef = useRef(false);
 
   function handleFiles(fileList: FileList | null) {
     const f = fileList?.[0];
@@ -62,11 +75,85 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
 
   const canSave = !!file && name.trim().length > 0;
 
+  useEffect(() => {
+    if (!loginPrompt?.goto) return;
+    let cancelled = false;
+    mountTrustedLoginQr(qrElementIdRef.current, loginPrompt.goto).catch((err) => {
+      if (cancelled) return;
+      setLoginPrompt({
+        phase: 'error',
+        message: err instanceof Error ? err.message : '登录二维码加载失败，请稍后重试。',
+      });
+    });
+
+    const deadline = Date.now() + 90_000;
+    const timer = window.setInterval(() => {
+      if (Date.now() > deadline) {
+        window.clearInterval(timer);
+        if (!cancelled) {
+          retrySaveAfterLoginRef.current = false;
+          setLoginPrompt({
+            phase: 'error',
+            message: '扫码登录超时，当前文件和填写内容已保留，请重新点击保存。',
+          });
+        }
+        return;
+      }
+      void hasTrustedSession().then((loggedIn) => {
+        if (!loggedIn || cancelled) return;
+        window.clearInterval(timer);
+        setLoginPrompt({ phase: 'done', message: '登录已完成，正在继续保存...' });
+        if (retrySaveAfterLoginRef.current) {
+          retrySaveAfterLoginRef.current = false;
+          void saveTemplate();
+        }
+      }).catch(() => undefined);
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [loginPrompt?.goto]);
+
+  async function ensureTrustedSessionForTemplateSave(): Promise<boolean> {
+    if (await hasTrustedSession()) {
+      setLoginPrompt(null);
+      return true;
+    }
+    if (await tryFeishuClientTrustedLogin()) {
+      setLoginPrompt(null);
+      return true;
+    }
+
+    retrySaveAfterLoginRef.current = true;
+    setLoginPrompt({ phase: 'loading', message: '正在准备可信登录...' });
+    try {
+      const goto = await fetchTrustedLoginQrGoto();
+      setLoginPrompt({
+        phase: 'ready',
+        message: '请用飞书扫码完成登录。当前文件和填写内容会保留，登录后会继续保存。',
+        goto,
+      });
+    } catch (err) {
+      retrySaveAfterLoginRef.current = false;
+      setLoginPrompt({
+        phase: 'error',
+        message: err instanceof Error ? err.message : '请先完成可信登录后再管理模板。当前文件和填写内容已保留。',
+      });
+    }
+    return false;
+  }
+
   async function saveTemplate() {
     if (!file || !canSave || saving) return;
     setSaving(true);
     setError(null);
     try {
+      if (!await ensureTrustedSessionForTemplateSave()) {
+        setError('请先完成可信登录后再管理模板。当前文件和填写内容已保留。');
+        return;
+      }
       const fileBase64 = await readFileAsBase64(file.file);
       const endpoint = template
         ? `/api/v1/document-templates/${encodeURIComponent(template.id)}/versions`
@@ -280,6 +367,30 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
         )}
 
         {error && <div className="nt-error">{error}</div>}
+
+        {loginPrompt && (
+          <div className={`nt-login-card nt-login-${loginPrompt.phase}`}>
+            <div className="nt-login-title">可信登录</div>
+            <div className="nt-login-message">{loginPrompt.message}</div>
+            {loginPrompt.goto && loginPrompt.phase === 'ready' && (
+              <div className="nt-login-qr-wrap">
+                <div id={qrElementIdRef.current} className="nt-login-qr" />
+              </div>
+            )}
+            {loginPrompt.phase === 'error' && (
+              <button
+                type="button"
+                className="nt-login-retry"
+                onClick={() => {
+                  setLoginPrompt(null);
+                  void saveTemplate();
+                }}
+              >
+                重新登录
+              </button>
+            )}
+          </div>
+        )}
 
         <div style={{ height: 8 }} />
       </div>

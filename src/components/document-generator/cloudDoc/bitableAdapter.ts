@@ -9,6 +9,8 @@ const CLOUD_DOC_OUTPUT_RAW_TYPES = new Set<number>([
   FieldType.Url,
   FieldType.Object,
 ]);
+const SIDEBAR_REQUIRED_TIMEOUT_MS = 3000;
+const SIDEBAR_OPTIONAL_REQUEST_TIMEOUT_MS = 2000;
 
 function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -26,6 +28,14 @@ function withTimeout<T>(task: Promise<T>, timeoutMs: number): Promise<T> {
   });
 }
 
+async function optionalWithTimeout<T>(task: Promise<T>, fallback: T, timeoutMs: number): Promise<T> {
+  try {
+    return await withTimeout(task, timeoutMs);
+  } catch {
+    return fallback;
+  }
+}
+
 export async function resolveCloudTable(activeTableId?: string | null): Promise<ITable> {
   if (activeTableId) {
     return bitable.base.getTableById(activeTableId);
@@ -37,12 +47,12 @@ export async function resolveCloudTable(activeTableId?: string | null): Promise<
   return bitable.base.getActiveTable();
 }
 
-export async function buildBitableSidebarHeaders(activeTableId?: string | null): Promise<Record<string, string>> {
+export async function buildBitableSidebarHeaders(activeTableId?: string | null, timeoutMs = SIDEBAR_REQUIRED_TIMEOUT_MS): Promise<Record<string, string>> {
   const [selection, openId, baseUserId, tenantKey] = await Promise.all([
-    bitable.base.getSelection().catch(() => null),
-    bitable.bridge.getUserId().catch(() => ''),
-    bitable.bridge.getBaseUserId().catch(() => ''),
-    bitable.bridge.getTenantKey().catch(() => ''),
+    withTimeout(bitable.base.getSelection().catch(() => null), timeoutMs),
+    optionalWithTimeout(bitable.bridge.getUserId().catch(() => ''), '', timeoutMs),
+    optionalWithTimeout(bitable.bridge.getBaseUserId().catch(() => ''), '', timeoutMs),
+    optionalWithTimeout(bitable.bridge.getTenantKey().catch(() => ''), '', timeoutMs),
   ]);
   const baseId = selection?.baseId || '';
   const tableId = activeTableId || selection?.tableId || '';
@@ -59,9 +69,9 @@ export async function buildBitableSidebarHeaders(activeTableId?: string | null):
   };
 }
 
-export async function buildOptionalBitableSidebarHeaders(activeTableId?: string | null, timeoutMs = 1200): Promise<Record<string, string>> {
+export async function buildOptionalBitableSidebarHeaders(activeTableId?: string | null, timeoutMs = SIDEBAR_OPTIONAL_REQUEST_TIMEOUT_MS): Promise<Record<string, string>> {
   try {
-    return await withTimeout(buildBitableSidebarHeaders(activeTableId), timeoutMs);
+    return await buildBitableSidebarHeaders(activeTableId, timeoutMs);
   } catch {
     return {};
   }

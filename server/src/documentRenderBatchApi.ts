@@ -10,6 +10,7 @@ import {
 } from './documentRenderApi';
 import { imageVariableMapSchema } from './documentRenderImages';
 import type { DocumentTemplateResolver } from './documentTemplateApi';
+import { createRequestScopedDocumentTemplateResolver } from './documentTemplateAccess';
 import { UserFacingError } from './documentRenderStorageErrors';
 
 const variableMapSchema = z.custom<Record<string, string | number | boolean | null>>((value) => {
@@ -180,7 +181,10 @@ export function createDocumentRenderBatchRouter(options: {
       return;
     }
     try {
-      const records = await renderBatchRecords(parsed.data, { storage, templateResolver: options.templateResolver });
+      const records = await renderBatchRecords(parsed.data, {
+        storage,
+        templateResolver: createRequestScopedDocumentTemplateResolver(request, options.templateResolver),
+      });
       const succeeded = records.filter((record) => record.ok).length;
       response.json({
         ok: true,

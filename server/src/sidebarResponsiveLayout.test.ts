@@ -62,6 +62,14 @@ const newTemplateScreenSource = readFileSync(
   new URL('../../src/components/document-generator/NewTemplateScreen.tsx', import.meta.url),
   'utf8',
 );
+const useGenerateSource = readFileSync(
+  new URL('../../src/components/document-generator/useGenerate.ts', import.meta.url),
+  'utf8',
+);
+const appSource = readFileSync(
+  new URL('../../src/App.tsx', import.meta.url),
+  'utf8',
+);
 
 test('真实飞书侧边栏宽度跟随 iframe 容器，不写死面板宽度', () => {
   assert.match(css, /\.sidebar\s*\{[\s\S]*?width:\s*100%;[\s\S]*?min-width:\s*0;/);
@@ -155,6 +163,23 @@ test('模板库必须支持更新现有模板，而不是只能新建模板', ()
   assert.match(css, /\.template-card-actions\s*\{/);
 });
 
+test('保存模板前先检查可信会话，避免文件处理完成后才报登录失败', () => {
+  assert.match(newTemplateScreenSource, /ensureTrustedSessionForTemplateSave/);
+  assert.match(newTemplateScreenSource, /tryFeishuClientTrustedLogin/);
+  assert.match(newTemplateScreenSource, /fetchTrustedLoginQrGoto/);
+  assert.match(newTemplateScreenSource, /请先完成可信登录后再管理模板。当前文件和填写内容已保留。/);
+  assert.ok(newTemplateScreenSource.indexOf('ensureTrustedSessionForTemplateSave') < newTemplateScreenSource.indexOf('readFileAsBase64'));
+});
+
+test('真实插件入口必须先接上可信会话，不能进主界面后才在保存时报登录失败', () => {
+  assert.match(appSource, /AuthGate/);
+  assert.match(appSource, /hasTrustedSession/);
+  assert.match(appSource, /tryFeishuClientTrustedLogin/);
+  assert.match(appSource, /fetchTrustedLoginQrGoto/);
+  assert.match(appSource, /if \(!authReady\)/);
+  assert.ok(appSource.indexOf('if (!authReady)') < appSource.indexOf('<V2RealRoute'));
+});
+
 test('新建模板表单在窄侧边栏内使用纵向表单布局，不退回浏览器默认控件', () => {
   assert.match(newTemplateScreenSource, /className="nt-field"/);
   assert.match(newTemplateScreenSource, /className="nt-input"/);
@@ -169,4 +194,12 @@ test('FBIF 品牌图使用原图比例显示，不能被压成方形占位图', 
   assert.match(css, /\.hdr-logo\s*\{[\s\S]*?width:\s*46px;[\s\S]*?height:\s*28px;/);
   assert.match(css, /\.hdr-logo\s*\{[\s\S]*?object-fit:\s*contain;/);
   assert.match(css, /\.hdr-logo\s*\{[\s\S]*?background:\s*transparent;/);
+});
+
+test('Word 批量生成和 PDF 预览请求会携带侧边栏上下文头', () => {
+  assert.match(useGenerateSource, /buildOptionalBitableSidebarHeaders/);
+  assert.match(useGenerateSource, /const sidebarHeaders = await buildOptionalBitableSidebarHeaders\(tableId\)/);
+  assert.match(useGenerateSource, /fetch\('\/api\/v1\/document-renders\/batch'[\s\S]*?headers:\s*\{\s*'Content-Type':\s*'application\/json',\s*\.\.\.sidebarHeaders\s*\}/);
+  assert.match(useGenerateSource, /const sidebarHeaders = await buildOptionalBitableSidebarHeaders\(\)/);
+  assert.match(useGenerateSource, /fetch\('\/api\/v1\/document-renders'[\s\S]*?headers:\s*\{\s*'Content-Type':\s*'application\/json',\s*\.\.\.sidebarHeaders\s*\}/);
 });

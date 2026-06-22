@@ -29,10 +29,6 @@ export function requireDocumentRenderApiKey(request: Request, response: Response
     return;
   }
   const expected = (process.env.DOCUMENT_RENDER_API_KEY || '').trim();
-  if (!expected) {
-    next();
-    return;
-  }
   if (hasValidDocumentRenderApiKey(request)) {
     next();
     return;
@@ -46,6 +42,10 @@ export function requireDocumentRenderApiKey(request: Request, response: Response
       }
     } catch {
       // Keep the public error stable; callers do not need storage details.
+    }
+    if (!expected && process.env.NODE_ENV !== 'production') {
+      next();
+      return;
     }
     response.status(401).json({ ok: false, error: 'API Key 无效或缺失。' });
   })();

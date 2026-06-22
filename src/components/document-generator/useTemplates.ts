@@ -84,7 +84,8 @@ export function useTemplates(): TemplatesContext {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch('/api/v1/document-templates', { cache: 'no-store' });
+      const sidebarHeaders = await buildOptionalBitableSidebarHeaders();
+      const res = await apiFetch('/api/v1/document-templates', { cache: 'no-store', headers: sidebarHeaders });
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -103,7 +104,8 @@ export function useTemplates(): TemplatesContext {
 
   const getFullTemplate = useCallback(async (templateId: string): Promise<Template | null> => {
     try {
-      const res = await apiFetch(`/api/v1/document-templates/${encodeURIComponent(templateId)}`);
+      const sidebarHeaders = await buildOptionalBitableSidebarHeaders();
+      const res = await apiFetch(`/api/v1/document-templates/${encodeURIComponent(templateId)}`, { headers: sidebarHeaders });
       if (!res.ok) return null;
       const json = (await res.json()) as { ok?: boolean; template?: ServerIndexItem };
       if (!json.ok || !json.template) return null;
