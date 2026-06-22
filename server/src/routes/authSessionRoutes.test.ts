@@ -3,7 +3,7 @@ import express from 'express';
 import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-import { registerAuthSessionRoutes } from './authSessionRoutes';
+import { registerAuthSessionRoutes, sendAuthenticatedSessionResponse } from './authSessionRoutes';
 
 async function startServer(): Promise<{ baseUrl: string; close: () => Promise<void> }> {
   const app = express();
@@ -33,6 +33,46 @@ test('/api/auth/session 未登录时返回稳定 JSON，不退化成 404 或静�
   } finally {
     await api.close();
   }
+});
+
+test('/api/auth/session 已登录时用响应头续传 iframe 会话兜底，但响应体不返回 session token', () => {
+  const headers = new Map<string, string>();
+  const cookies: Array<{ name: string; value: string; options: unknown }> = [];
+  let body: any = null;
+  const response = {
+    cookie(name: string, value: string, options: unknown) {
+      cookies.push({ name, value, options });
+      return response;
+    },
+    set(name: string, value: string) {
+      headers.set(name.toLowerCase(), value);
+      return response;
+    },
+    json(payload: unknown) {
+      body = payload;
+      return response;
+    },
+  };
+
+  sendAuthenticatedSessionResponse(response as never, {
+    sessionToken: 'session-token-for-iframe',
+    profile: {
+      openId: 'ou_user',
+      name: '测试用户',
+      enName: null,
+      email: null,
+      avatarUrl: null,
+    },
+  });
+
+  assert.equal(headers.get('x-session-token'), 'session-token-for-iframe');
+  assert.equal(cookies[0]?.name, 'larkdocvar_session');
+  assert.equal(cookies[0]?.value, 'session-token-for-iframe');
+  assert.equal(body.ok, true);
+  assert.equal(body.loggedIn, true);
+  assert.equal(body.profile.openId, 'ou_user');
+  assert.equal(body.sessionToken, undefined);
+  assert.equal(body.session_token, undefined);
 });
 
 function withEnv(values: Record<string, string | undefined>, run: () => Promise<void>): Promise<void> {

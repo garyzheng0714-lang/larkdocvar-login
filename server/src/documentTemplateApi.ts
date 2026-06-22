@@ -6,6 +6,7 @@ import { UserFacingError } from './documentRenderStorageErrors';
 import { DocumentTemplateService } from './documentTemplateService';
 import type { LoadedDocumentTemplate } from './documentTemplateService';
 import { peekSessionForRequest } from './auth';
+import type { AuthProfile } from './auth';
 import { hasValidDocumentRenderApiKey } from './documentRenderApiKeyGuard';
 
 const templateInputSchema = z.object({
@@ -45,6 +46,7 @@ export type DocumentTemplateActor = {
 
 export type DocumentTemplateRouterOptions = {
   enforceOwnership?: boolean;
+  resolveSession?: (request: express.Request) => Promise<{ profile: AuthProfile; sessionToken: string } | null>;
   resolveActor?: (request: express.Request) => Promise<DocumentTemplateActor>;
 };
 
@@ -57,8 +59,11 @@ function isAdminOpenId(openId: string | undefined): boolean {
     .includes(openId);
 }
 
-export async function resolveDefaultDocumentTemplateActor(request: express.Request): Promise<DocumentTemplateActor> {
-  const session = await peekSessionForRequest(request).catch(() => null);
+export async function resolveDefaultDocumentTemplateActor(
+  request: express.Request,
+  resolveSession: DocumentTemplateRouterOptions['resolveSession'] = peekSessionForRequest,
+): Promise<DocumentTemplateActor> {
+  const session = await resolveSession(request).catch(() => null);
   const openId = session?.profile.openId;
   return {
     openId,
@@ -73,17 +78,20 @@ async function requireTemplateActor(
   options: DocumentTemplateRouterOptions,
 ): Promise<DocumentTemplateActor | null> {
   if (!options.enforceOwnership) return { isAdmin: true };
-  const actor = await (options.resolveActor || resolveDefaultDocumentTemplateActor)(request);
+  const actor = await (options.resolveActor || ((currentRequest) => resolveDefaultDocumentTemplateActor(currentRequest, options.resolveSession)))(request);
   if (actor.isAdmin || actor.openId) return actor;
   response.status(401).json({ ok: false, requestId, error: '登录状态没有接上，当前文件和填写内容已保留。请重新打开飞书侧边栏或登录后再点保存。' });
   return null;
 }
 
 function canManageTemplate(
-  template: { createdByOpenId?: string },
+  template: { visibility?: 'private' | 'shared'; createdByOpenId?: string },
   actor: DocumentTemplateActor,
+  options: { allowLegacySharedMaintenance?: boolean } = {},
 ): boolean {
-  return actor.isAdmin || Boolean(actor.openId && template.createdByOpenId === actor.openId);
+  return actor.isAdmin ||
+    Boolean(actor.openId && template.createdByOpenId === actor.openId) ||
+    Boolean(options.allowLegacySharedMaintenance && actor.openId && !template.createdByOpenId && template.visibility !== 'private');
 }
 
 export function canReadDocumentTemplate(
@@ -98,7 +106,7 @@ async function resolveTemplateReader(
   options: DocumentTemplateRouterOptions,
 ): Promise<DocumentTemplateActor> {
   if (!options.enforceOwnership) return { isAdmin: true };
-  return (options.resolveActor || resolveDefaultDocumentTemplateActor)(request).catch(() => ({ isAdmin: false }));
+  return (options.resolveActor || ((currentRequest) => resolveDefaultDocumentTemplateActor(currentRequest, options.resolveSession)))(request).catch(() => ({ isAdmin: false }));
 }
 
 async function requireTemplateManager(
@@ -108,11 +116,12 @@ async function requireTemplateManager(
   service: DocumentTemplateService,
   templateId: string,
   options: DocumentTemplateRouterOptions,
+  manageOptions: { allowLegacySharedMaintenance?: boolean } = {},
 ): Promise<DocumentTemplateActor | null> {
   const actor = await requireTemplateActor(request, response, requestId, options);
   if (!actor) return null;
   const template = await service.getTemplate(templateId);
-  if (canManageTemplate(template, actor)) return actor;
+  if (canManageTemplate(template, actor, manageOptions)) return actor;
   response.status(403).json({ ok: false, requestId, error: '只有管理员或模板创建者可以修改此模板。' });
   return null;
 }
@@ -215,7 +224,15 @@ export function createDocumentTemplateRouter(
     }
     try {
       const templateId = String(request.params.templateId || '');
-      const actor = await requireTemplateManager(request, response, requestId, service, templateId, options);
+      const actor = await requireTemplateManager(
+        request,
+        response,
+        requestId,
+        service,
+        templateId,
+        options,
+        { allowLegacySharedMaintenance: parsed.data.visibility !== 'private' },
+      );
       if (!actor) return;
       response.json({
         ok: true,
@@ -236,7 +253,15 @@ export function createDocumentTemplateRouter(
     }
     try {
       const templateId = String(request.params.templateId || '');
-      const actor = await requireTemplateManager(request, response, requestId, service, templateId, options);
+      const actor = await requireTemplateManager(
+        request,
+        response,
+        requestId,
+        service,
+        templateId,
+        options,
+        { allowLegacySharedMaintenance: parsed.data.visibility !== 'private' },
+      );
       if (!actor) return;
       response.json({
         ok: true,

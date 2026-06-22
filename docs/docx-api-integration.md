@@ -6,6 +6,7 @@
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-06-22 | 权限修复 | 兼容历史无创建者的团队共享模板，避免用户能看到模板但无法保存更新，同时避免团队模板被第一位编辑者私有化。 | `PATCH /api/v1/document-templates/{templateId}` 与 `POST /api/v1/document-templates/{templateId}/versions` 允许已登录用户维护 `createdByOpenId` 为空的 `shared` 模板，但不会自动写入创建者；普通用户不能把这类模板改成 `private`，删除和历史无主 `private` 模板仍要求管理员或已记录创建者。 | 已同步 |
 | 2026-06-22 | 契约新增 | 模板信息更新与模板文件新增版本拆分；只修改名称、分类、可见范围或说明时不再要求上传 `.docx`。 | 新增 `PATCH /api/v1/document-templates/{templateId}`；`POST /api/v1/document-templates/{templateId}/versions` 继续只用于上传新模板文件并新增版本。 | 已同步 |
 | 2026-06-22 | 登录修复 | 飞书内优先走客户端免登；免登能力不可用时，主入口恢复飞书 OAuth 一键登录；扫码仅作为备用入口。 | 恢复 `GET /auth/feishu/:appKey/login` 与 `GET /auth/feishu/:appKey/callback`；OAuth state 采用签名自包含校验，回跳 hash 携带嵌入式会话兜底；端内免登成功时同源响应头可返回 `X-Session-Token`，前端后续请求继续带该头；有接管风险的 `/api/auth/feishu/:appKey/start`、`/login-status` 继续返回 `410`。 | 已同步 |
 | 2026-06-22 | 安全收紧 | 撤回把 `X-Bitable-*` 当登录兜底的契约；生产环境 Docx API 必须有 API Key 或可信会话；`private/shared` 可见范围覆盖模板列表、详情、版本、单份生成、同步批量、异步任务和 PDF 预览。 | `X-Bitable-*` 只作为侧边栏上下文线索，不作为认证凭据；`/api/auth/session` 不再向前端返回 bearer 级 session token；可信会话来自客户端免登、一键 OAuth 或扫码备用；旧 handoff 子路径显式返回 `410`。 | 已同步 |
@@ -146,7 +147,7 @@ DOCUMENT_RENDER_TOS_PREFIX=renders
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/api/auth/session` | 返回 `{ ok: true, loggedIn: false }` 或当前会话资料；不会因未登录返回 401；不会返回 session token。 |
+| `GET` | `/api/auth/session` | 返回 `{ ok: true, loggedIn: false }` 或当前会话资料；不会因未登录返回 401；响应体不会返回 session token；已登录时同源响应头会返回 `X-Session-Token`，供 iframe cookie 被拦截时继续保存。 |
 | `POST` | `/api/auth/logout` | 清理兼容会话 cookie / token；无会话时也返回 `{ ok: true }`。 |
 | `GET` | `/api/auth/feishu/:appKey/client-config` | 返回飞书端内授权所需 `app_id`；不会返回 `app_secret` 或 session token。 |
 | `POST` | `/api/auth/feishu/:appKey/client-code` | 仅接受飞书客户端授权 code；服务端用应用凭证换取用户 OAuth token，并通过 httpOnly cookie 建立可信会话。响应体不返回 session token；同源响应头可返回 `X-Session-Token` 作为 iframe cookie 被拦截时的会话兜底。 |
@@ -162,6 +163,15 @@ DOCUMENT_RENDER_TOS_PREFIX=renders
 |---|---|
 | `shared` | API Key 调用方、已登录侧边栏用户可见；本地开发未启用鉴权时可匿名读取。 |
 | `private` | 仅模板创建者、管理员和 API Key 调用方可见；匿名或其他用户不能通过列表、详情、版本、单份生成、同步批量、异步任务或 PDF 预览读取。 |
+
+模板管理权限：
+
+| 场景 | 规则 |
+|---|---|
+| 已记录 `createdByOpenId` 的模板 | 仅模板创建者、管理员或 API Key 调用方可更新信息、新增版本或删除。 |
+| 历史 `createdByOpenId` 为空且 `visibility=shared` 的模板 | 已登录侧边栏用户可更新信息或新增版本；服务端只记录 `updatedByOpenId`，不自动写入创建者，避免团队模板被第一位编辑者私有化。普通用户不能把这类模板改成 `private`。 |
+| 历史 `createdByOpenId` 为空且 `visibility=private` 的模板 | 普通登录用户不能认领；仅管理员或 API Key 调用方可处理。 |
+| 删除模板 | 不触发历史模板认领；仍要求管理员、API Key 调用方或已记录创建者。 |
 
 ### 通用错误响应
 
@@ -553,6 +563,7 @@ curl -s -X PATCH http://localhost:3000/api/v1/document-templates/fbiftemp_202605
 | `400` | `请求参数不合法。` | 至少传入一个可更新字段，并检查字段类型和长度。 |
 | `400` | `模板不存在。` | 检查 `templateId`。 |
 | `400` | `模板已删除，不能修改信息。` | 恢复或重新上传模板。 |
+| `403` | `只有管理员或模板创建者可以修改此模板。` | 确认当前登录用户是否为模板创建者；历史无主 `shared` 模板可继续维护但不能由普通用户改成 `private`，历史无主 `private` 模板需管理员处理。 |
 
 ## 6. 新增模板版本
 
@@ -598,6 +609,7 @@ curl -s http://localhost:3000/api/v1/document-templates/fbiftemp_20260512_001/ve
 |---|---|---|
 | `400` | `模板不存在。` | 检查 `templateId`。 |
 | `400` | `模板已删除，不能新增版本。` | 恢复或重新上传模板。 |
+| `403` | `只有管理员或模板创建者可以修改此模板。` | 确认当前登录用户是否为模板创建者；历史无主 `shared` 模板可新增版本但不能由普通用户改成 `private`，历史无主 `private` 模板需管理员处理。 |
 
 ## 7. 删除模板
 

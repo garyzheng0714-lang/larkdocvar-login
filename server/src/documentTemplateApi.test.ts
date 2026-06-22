@@ -10,6 +10,7 @@ import { createDocumentRenderRouter } from './documentRenderApi';
 import { createDocumentTemplateRouter } from './documentTemplateApi';
 import { DocumentTemplateService } from './documentTemplateService';
 import { LocalTemplateObjectStore } from './documentTemplateStorage';
+import { sendAuthenticatedSessionResponse } from './routes/authSessionRoutes';
 
 async function createDocx(text: string): Promise<Buffer> {
   const zip = new JSZip();
@@ -25,7 +26,12 @@ async function createDocx(text: string): Promise<Buffer> {
   return zip.generateAsync({ type: 'nodebuffer' });
 }
 
-async function startServer(options: { enforceOwnership?: boolean; useDefaultActor?: boolean } = {}): Promise<{ baseUrl: string; close: () => Promise<void>; hits: Record<string, number> }> {
+async function startServer(options: {
+  enforceOwnership?: boolean;
+  useDefaultActor?: boolean;
+  sessionToken?: string;
+  sessionOpenId?: string;
+} = {}): Promise<{ baseUrl: string; close: () => Promise<void>; hits: Record<string, number> }> {
   const dir = await mkdtemp(join(tmpdir(), 'document-template-api-'));
   const service = new DocumentTemplateService(new LocalTemplateObjectStore(dir));
   const app = express();
@@ -40,9 +46,47 @@ async function startServer(options: { enforceOwnership?: boolean; useDefaultActo
     hits.v2 += 1;
     response.type('application/vnd.openxmlformats-officedocument.wordprocessingml.document').send(v2);
   });
+  const sessionToken = options.sessionToken;
+  const sessionOpenId = options.sessionOpenId;
+  if (sessionToken && sessionOpenId) {
+    app.get('/api/auth/session', (request, response) => {
+      const token = String(request.headers['x-session-token'] || '');
+      if (token !== sessionToken) {
+        response.json({ ok: true, loggedIn: false });
+        return;
+      }
+      sendAuthenticatedSessionResponse(response, {
+        sessionToken,
+        profile: {
+          openId: sessionOpenId,
+          name: '测试用户',
+          enName: null,
+          email: null,
+          avatarUrl: null,
+        },
+      });
+    });
+  }
   app.use('/api/v1/document-templates', createDocumentTemplateRouter(service, options.enforceOwnership ? {
     enforceOwnership: true,
-    ...(options.useDefaultActor ? {} : {
+    ...(options.useDefaultActor ? {
+      ...(options.sessionToken && options.sessionOpenId ? {
+        resolveSession: async (request) => {
+          const token = String(request.headers['x-session-token'] || '');
+          if (token !== options.sessionToken) return null;
+          return {
+            sessionToken: options.sessionToken as string,
+            profile: {
+              openId: options.sessionOpenId as string,
+              name: '测试用户',
+              enName: null,
+              email: null,
+              avatarUrl: null,
+            },
+          };
+        },
+      } : {}),
+    } : {
       resolveActor: async (request) => ({
         openId: typeof request.headers['x-test-open-id'] === 'string' ? request.headers['x-test-open-id'] : undefined,
         isAdmin: request.headers['x-test-admin'] === 'true',
@@ -423,6 +467,189 @@ test('非管理员只能修改或删除自己创建的模板', async () => {
     assert.equal(adminDelete.status, 200);
   } finally {
     restore();
+    await api.close();
+  }
+});
+
+test('历史团队共享模板没有创建者时，登录用户可以继续维护但不能私有化或误删', async () => {
+  const restore = withPrivateTemplateUrls();
+  const api = await startServer({ enforceOwnership: true });
+  try {
+    const createLegacyShared = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-admin': 'true' },
+      body: JSON.stringify({
+        templateId: 'legacy_shared_tpl',
+        name: '历史共享模板',
+        visibility: 'shared',
+        url: `${api.baseUrl}/template-v1.docx`,
+      }),
+    });
+    const legacyShared = await createLegacyShared.json() as any;
+    assert.equal(createLegacyShared.status, 200);
+    assert.equal(legacyShared.template.createdByOpenId, undefined);
+
+    const editorMetadata = await fetch(`${api.baseUrl}/api/v1/document-templates/legacy_shared_tpl`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-test-open-id': 'ou_legacy_editor' },
+      body: JSON.stringify({
+        visibility: 'shared',
+        description: '更新可见范围',
+      }),
+    });
+    const updated = await editorMetadata.json() as any;
+    assert.equal(editorMetadata.status, 200);
+    assert.equal(updated.template.createdByOpenId, undefined);
+    assert.equal(updated.template.updatedByOpenId, 'ou_legacy_editor');
+    assert.equal(updated.template.visibility, 'shared');
+
+    const otherMetadata = await fetch(`${api.baseUrl}/api/v1/document-templates/legacy_shared_tpl`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-test-open-id': 'ou_other' },
+      body: JSON.stringify({ description: '其他团队成员继续维护' }),
+    });
+    const otherUpdated = await otherMetadata.json() as any;
+    assert.equal(otherMetadata.status, 200);
+    assert.equal(otherUpdated.template.createdByOpenId, undefined);
+    assert.equal(otherUpdated.template.updatedByOpenId, 'ou_other');
+
+    const privateMetadata = await fetch(`${api.baseUrl}/api/v1/document-templates/legacy_shared_tpl`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-test-open-id': 'ou_legacy_editor' },
+      body: JSON.stringify({ visibility: 'private' }),
+    });
+    assert.equal(privateMetadata.status, 403);
+
+    const createLegacyForVersion = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-admin': 'true' },
+      body: JSON.stringify({
+        templateId: 'legacy_version_tpl',
+        name: '历史版本模板',
+        visibility: 'shared',
+        url: `${api.baseUrl}/template-v1.docx`,
+      }),
+    });
+    assert.equal(createLegacyForVersion.status, 200);
+
+    const deleteBeforeClaim = await fetch(`${api.baseUrl}/api/v1/document-templates/legacy_version_tpl`, {
+      method: 'DELETE',
+      headers: { 'x-test-open-id': 'ou_version_editor' },
+    });
+    assert.equal(deleteBeforeClaim.status, 403);
+
+    const ownerVersion = await fetch(`${api.baseUrl}/api/v1/document-templates/legacy_version_tpl/versions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-open-id': 'ou_version_editor' },
+      body: JSON.stringify({ url: `${api.baseUrl}/template-v2.docx` }),
+    });
+    const versioned = await ownerVersion.json() as any;
+    assert.equal(ownerVersion.status, 200);
+    assert.equal(versioned.template.createdByOpenId, undefined);
+    assert.equal(versioned.template.updatedByOpenId, 'ou_version_editor');
+    assert.equal(versioned.template.versions.length, 2);
+
+    const privateVersion = await fetch(`${api.baseUrl}/api/v1/document-templates/legacy_version_tpl/versions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-open-id': 'ou_version_editor' },
+      body: JSON.stringify({
+        visibility: 'private',
+        url: `${api.baseUrl}/template-v2.docx`,
+      }),
+    });
+    assert.equal(privateVersion.status, 403);
+
+    const createLegacyPrivate = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-test-admin': 'true' },
+      body: JSON.stringify({
+        templateId: 'legacy_private_tpl',
+        name: '历史私有模板',
+        visibility: 'private',
+        url: `${api.baseUrl}/template-v1.docx`,
+      }),
+    });
+    assert.equal(createLegacyPrivate.status, 200);
+
+    const privateClaim = await fetch(`${api.baseUrl}/api/v1/document-templates/legacy_private_tpl`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', 'x-test-open-id': 'ou_legacy_editor' },
+      body: JSON.stringify({ visibility: 'shared' }),
+    });
+    assert.equal(privateClaim.status, 403);
+  } finally {
+    restore();
+    await api.close();
+  }
+});
+
+test('iframe 会话兜底头可以通过默认登录 actor 保存历史共享模板', async () => {
+  const restorePrivateUrls = withPrivateTemplateUrls();
+  const previousApiKey = process.env.DOCUMENT_RENDER_API_KEY;
+  process.env.DOCUMENT_RENDER_API_KEY = 'document-render-test-key';
+  const api = await startServer({
+    enforceOwnership: true,
+    useDefaultActor: true,
+    sessionToken: 'iframe-session-token',
+    sessionOpenId: 'ou_iframe_user',
+  });
+  try {
+    const createLegacyShared = await fetch(`${api.baseUrl}/api/v1/document-templates`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer document-render-test-key',
+      },
+      body: JSON.stringify({
+        templateId: 'iframe_session_legacy_tpl',
+        name: 'iframe 登录态模板',
+        visibility: 'shared',
+        url: `${api.baseUrl}/template-v1.docx`,
+      }),
+    });
+    const legacyShared = await createLegacyShared.json() as any;
+    assert.equal(createLegacyShared.status, 200);
+    assert.equal(legacyShared.template.createdByOpenId, undefined);
+
+    const sessionResponse = await fetch(`${api.baseUrl}/api/auth/session`, {
+      headers: { 'X-Session-Token': 'iframe-session-token' },
+    });
+    const sessionBody = await sessionResponse.json() as any;
+    const continuedToken = sessionResponse.headers.get('x-session-token') || '';
+    assert.equal(sessionResponse.status, 200);
+    assert.equal(continuedToken, 'iframe-session-token');
+    assert.equal(sessionBody.ok, true);
+    assert.equal(sessionBody.loggedIn, true);
+    assert.equal(sessionBody.profile.openId, 'ou_iframe_user');
+    assert.equal(sessionBody.sessionToken, undefined);
+    assert.equal(sessionBody.session_token, undefined);
+
+    const update = await fetch(`${api.baseUrl}/api/v1/document-templates/iframe_session_legacy_tpl`, {
+      method: 'PATCH',
+      headers: {
+        'content-type': 'application/json',
+        'X-Session-Token': continuedToken,
+      },
+      body: JSON.stringify({
+        visibility: 'shared',
+        description: '通过 iframe 会话兜底保存',
+      }),
+    });
+    const updated = await update.json() as any;
+    assert.equal(update.status, 200);
+    assert.equal(updated.template.createdByOpenId, undefined);
+    assert.equal(updated.template.updatedByOpenId, 'ou_iframe_user');
+    assert.equal(updated.template.description, '通过 iframe 会话兜底保存');
+
+    const deleteBeforeOwner = await fetch(`${api.baseUrl}/api/v1/document-templates/iframe_session_legacy_tpl`, {
+      method: 'DELETE',
+      headers: { 'X-Session-Token': continuedToken },
+    });
+    assert.equal(deleteBeforeOwner.status, 403);
+  } finally {
+    if (previousApiKey === undefined) delete process.env.DOCUMENT_RENDER_API_KEY;
+    else process.env.DOCUMENT_RENDER_API_KEY = previousApiKey;
+    restorePrivateUrls();
     await api.close();
   }
 });

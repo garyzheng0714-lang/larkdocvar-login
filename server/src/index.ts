@@ -83,6 +83,7 @@ function buildAllowedCorsOrigins(): Set<string> {
 const corsAllowedOrigins = buildAllowedCorsOrigins();
 const corsOptions: CorsOptions = {
   credentials: true,
+  exposedHeaders: ['X-Session-Token'],
   origin(origin, callback) {
     if (!origin || corsAllowedOrigins.has(origin)) {
       callback(null, true);

@@ -369,6 +369,19 @@ function sendAuthEntryDisabled(_request: express.Request, response: express.Resp
   response.status(410).json({ ok: false, error: AUTH_DISABLED_MESSAGE });
 }
 
+export function sendAuthenticatedSessionResponse(
+  response: express.Response,
+  session: NonNullable<Awaited<ReturnType<typeof peekSessionForRequest>>>,
+): void {
+  response.cookie(SESSION_COOKIE_NAME, session.sessionToken, getSessionCookieOptions());
+  response.set('X-Session-Token', session.sessionToken);
+  response.json({
+    ok: true,
+    loggedIn: true,
+    profile: session.profile,
+  });
+}
+
 export function registerAuthSessionRoutes(app: express.Express): void {
   app.get('/api/auth/session', async (request, response) => {
     response.setHeader('Cache-Control', 'no-store');
@@ -378,11 +391,7 @@ export function registerAuthSessionRoutes(app: express.Express): void {
         response.json({ ok: true, loggedIn: false });
         return;
       }
-      response.json({
-        ok: true,
-        loggedIn: true,
-        profile: session.profile,
-      });
+      sendAuthenticatedSessionResponse(response, session);
     } catch {
       response.json({ ok: true, loggedIn: false });
     }
