@@ -53,6 +53,7 @@ function toTemplate(item: ServerIndexItem): Template {
     varCount: variables.length,
     updatedAt: formatUpdatedAt(item.updatedAt),
     category: item.category || '全部',
+    description: item.description,
     visibility: item.visibility || 'shared',
     kind: 'doc',
     variables,

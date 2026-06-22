@@ -1,6 +1,8 @@
 import { useRef, useState } from 'react';
 import { Icon } from './icons';
 import { Dropdown } from './Dropdown';
+import { copyTextToClipboard } from './clipboard';
+import type { Template } from './types';
 
 interface SelectedFile {
   name: string;
@@ -10,19 +12,22 @@ interface SelectedFile {
 
 interface NewTemplateScreenProps {
   accent: string;
+  template?: Template | null;
   onCancel: () => void;
   onSave: () => void | Promise<void>;
 }
 
-export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScreenProps) {
+export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTemplateScreenProps) {
+  const isEditing = Boolean(template);
   const [file, setFile] = useState<SelectedFile | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [name, setName] = useState('');
-  const [category, setCategory] = useState('合同');
-  const [visibility, setVisibility] = useState<'公用' | '个人'>('个人');
-  const [desc, setDesc] = useState('');
+  const [name, setName] = useState(template?.name || '');
+  const [category, setCategory] = useState(template?.category && template.category !== '全部' ? template.category : '合同类');
+  const [visibility, setVisibility] = useState<'公用' | '个人'>(template?.visibility === 'shared' ? '公用' : '个人');
+  const [desc, setDesc] = useState(template?.description || '');
   const [tipOpen, setTipOpen] = useState(false);
+  const [copyNotice, setCopyNotice] = useState<'ok' | 'error' | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   function handleFiles(fileList: FileList | null) {
@@ -62,7 +67,10 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
     setError(null);
     try {
       const fileBase64 = await readFileAsBase64(file.file);
-      const response = await fetch('/api/v1/document-templates', {
+      const endpoint = template
+        ? `/api/v1/document-templates/${encodeURIComponent(template.id)}/versions`
+        : '/api/v1/document-templates';
+      const response = await fetch(endpoint, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -72,7 +80,7 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
           fileBase64,
           category,
           visibility: visibility === '个人' ? 'private' : 'shared',
-          description: desc.trim() || undefined,
+          description: isEditing ? desc.trim() : desc.trim() || undefined,
         }),
       });
       const body = await response.json().catch(() => null) as { ok?: boolean; error?: string } | null;
@@ -87,15 +95,44 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
     }
   }
 
+  async function copyTemplateId() {
+    if (!template) return;
+    try {
+      await copyTextToClipboard(template.id);
+      setCopyNotice('ok');
+    } catch {
+      setCopyNotice('error');
+    }
+    window.setTimeout(() => setCopyNotice(null), 1400);
+  }
+
   return (
     <div className="screen nt-screen">
       <header className="hdr hdr-with-back">
         <button className="hdr-icon" type="button" onClick={onCancel}><Icon.Back /></button>
-        <div className="hdr-title">新建模板</div>
+        <div className="hdr-title">{isEditing ? '更新模板' : '新建模板'}</div>
         <span style={{ width: 28 }} />
       </header>
 
       <div className="scroll nt-scroll">
+        {template && (
+          <div className="nt-id-card">
+            <div className="nt-id-main">
+              <span className="nt-id-label">模板 ID</span>
+              <code>{template.id}</code>
+            </div>
+            <button
+              className="nt-id-copy"
+              type="button"
+              onClick={copyTemplateId}
+              title={`复制模板 ID：${template.id}`}
+            >
+              <Icon.Copy />
+              <span>{copyNotice === 'ok' ? '已复制' : copyNotice === 'error' ? '复制失败' : '复制'}</span>
+            </button>
+          </div>
+        )}
+
         {!file ? (
           <div className="block nt-block-top">
             <div
@@ -106,7 +143,9 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
               onClick={() => inputRef.current?.click()}
             >
               <div className="nt-drop-glyph"><DocxGlyph /></div>
-              <div className="nt-drop-title">拖入或点击选择 .docx 文件</div>
+              <div className="nt-drop-title">
+                {isEditing ? '拖入或点击选择新的 .docx 文件' : '拖入或点击选择 .docx 文件'}
+              </div>
               <div className="nt-drop-hint">单文件 ≤ 20MB</div>
               <input
                 ref={inputRef}
@@ -230,7 +269,11 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
               <span className="block-title">识别到的变量</span>
               <span className="block-count">保存后更新</span>
             </div>
-            <div className="nt-vars-hint">系统会在保存模板时读取 Word 占位符，保存完成后可绑定字段。</div>
+            <div className="nt-vars-hint">
+              {isEditing
+                ? '系统会保存为这个模板的新版本，模板 ID 保持不变。'
+                : '系统会在保存模板时读取 Word 占位符，保存完成后可绑定字段。'}
+            </div>
           </div>
         )}
 
@@ -248,7 +291,7 @@ export function NewTemplateScreen({ accent, onCancel, onSave }: NewTemplateScree
           disabled={!canSave || saving}
           onClick={saveTemplate}
         >
-          {saving ? '保存中...' : '保存模板'}
+          {saving ? '保存中...' : isEditing ? '保存新版本' : '保存模板'}
         </button>
       </footer>
     </div>
@@ -267,7 +310,7 @@ function readFileAsBase64(file: File): Promise<string> {
 function CategorySelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLButtonElement | null>(null);
-  const options = ['合同', '通知', '证书', '报告', '发票', '其他'];
+  const options = ['合同类', '通知类', '证书类', '报表类', '发票类', '其他'];
   return (
     <div className="nt-select">
       <button

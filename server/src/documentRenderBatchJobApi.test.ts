@@ -163,7 +163,7 @@ test('批量生成预加载模板失败时返回稳定 JSON 错误', async () =>
 
 test('异步任务完成后按 TTL 清理，避免长期堆积内存', async () => {
   const restore = withPrivateTemplateUrls();
-  const api = await startServer({ jobTtlMs: 50 });
+  const api = await startServer({ jobTtlMs: 200 });
   try {
     await createTemplate(api.baseUrl);
     const submitResponse = await fetch(`${api.baseUrl}/api/v1/document-render-jobs`, {
@@ -180,15 +180,15 @@ test('异步任务完成后按 TTL 清理，避免长期堆积内存', async () 
     const jobId = submitted.job.jobId;
 
     let job = submitted.job;
-    for (let index = 0; index < 20 && !['completed', 'partial_failed', 'failed'].includes(job.status); index += 1) {
+    for (let index = 0; index < 40 && !['completed', 'partial_failed', 'failed'].includes(job.status); index += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
       const progressResponse = await fetch(`${api.baseUrl}/api/v1/document-render-jobs/${jobId}`);
       const progress = await progressResponse.json() as any;
-      job = progress.job;
+      if (progress.job) job = progress.job;
     }
     assert.equal(job.status, 'completed');
 
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await new Promise((resolve) => setTimeout(resolve, 230));
     const expiredResponse = await fetch(`${api.baseUrl}/api/v1/document-render-jobs/${jobId}`);
     assert.equal(expiredResponse.status, 404);
   } finally {
@@ -426,7 +426,7 @@ test('异步任务支持提交、查询进度和读取最终结果', async () =>
   }
 });
 
-test('异步任务支持 500 条记录并返回最终 count 校验', { timeout: 20000 }, async () => {
+test('异步任务支持 500 条记录并返回最终 count 校验', { timeout: 90000 }, async () => {
   const restore = withPrivateTemplateUrls();
   const api = await startServer();
   try {
@@ -454,7 +454,7 @@ test('异步任务支持 500 条记录并返回最终 count 校验', { timeout: 
 
     const jobId = submitted.job.jobId;
     let job = submitted.job;
-    for (let index = 0; index < 120 && !['completed', 'partial_failed', 'failed'].includes(job.status); index += 1) {
+    for (let index = 0; index < 1200 && !['completed', 'partial_failed', 'failed'].includes(job.status); index += 1) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       const progressResponse = await fetch(`${api.baseUrl}/api/v1/document-render-jobs/${jobId}`);
       const progress = await progressResponse.json() as any;

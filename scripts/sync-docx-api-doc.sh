@@ -41,7 +41,7 @@ case "$MODE" in
     echo "用 $REL_MD 覆盖线上飞书云文档正文：$DOC_URL"
     exec lark-cli docs +update --api-version v2 \
       --doc "$DOC_URL" --command overwrite --doc-format markdown \
-      --content @"$REL_MD" --yes
+      --content @"$REL_MD"
     ;;
   *)
     echo "这是覆盖线上飞书云文档的写操作。" >&2

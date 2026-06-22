@@ -1,11 +1,12 @@
 # Docx API 参考文档
 
-最后更新：2026-05-31
+最后更新：2026-06-22
 
 ## 更新日志
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-06-22 | 契约调整 | 未指定 `templateId` 时，服务端自动生成简短递增模板编号。 | 自动模板编号从历史日期随机格式调整为 `tpl_001`、`tpl_002` 这类递增编号；手动传入的合法 `templateId` 仍兼容。 | 已同步 |
 | 2026-06-02 | 维护性 | 拆分 Docx 生成存储边界到 `documentRenderStorage.ts`；`documentRenderApi.ts` 回到 900 行以内；侧边栏主屏拆分组件并清理旧 CSS；批量开始生成和重试路径共用 `runBatchSlices`。 | 路由和请求响应字段不变；`createConfiguredStorage`、`DocumentRenderStorage` 等兼容导出保留。 | 已同步 |
 | 2026-06-02 | 契约新增 | 新增 `missingStrategy=blank` 留空继续契约；新增 `output.includePdfPreview` Gotenberg PDF 预览。 | 文本变量缺失可按空字符串生成，响应仍返回 `variables.missing`；请求 PDF 预览时需配置 `GOTENBERG_URL`。 | 已同步 |
 | 2026-05-31 | 修复澄清 | 修复图片变量请求键前缀兼容、同步批量模板预加载错误 JSON 响应、异步任务 PostgreSQL 持久化、租约和任务读取身份绑定说明。 | 图片变量请求键兼容 `logo`、`image:logo`、`图片:logo`；异步任务配置 `DATABASE_URL` 时写入 `render_jobs`，并按提交时的登录用户或 API Key 绑定查询权限；未完成任务仅在执行租约过期后标记失败。 | 已同步 |
@@ -214,7 +215,7 @@ DOCUMENT_RENDER_TOS_PREFIX=renders
 
 | 名称 | 类型 | 必填 | 描述 |
 |---|---|---|---|
-| `templateId` | string | 否 | 自定义模板编号。只能包含字母、数字、下划线和中划线，长度 3 到 80。不传时服务端自动生成。 |
+| `templateId` | string | 否 | 自定义模板编号。只能包含字母、数字、下划线和中划线，长度 3 到 80。不传时服务端自动生成 `tpl_001`、`tpl_002` 这类递增编号。 |
 | `name` | string | 否 | 模板名称，最多 255 字符。未传时从文件名或模板编号推断。 |
 | `url` | string | 二选一 | Docx 模板下载链接。生产环境默认要求 HTTPS，且不能指向内网、本机或云元数据地址。 |
 | `fileBase64` | string | 二选一 | Docx 文件 Base64 内容，可带 `data:` 前缀。适合侧边栏直接上传本地文件。 |

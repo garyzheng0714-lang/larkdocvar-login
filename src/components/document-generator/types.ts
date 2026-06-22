@@ -40,6 +40,7 @@ export interface Template {
   varCount: number;
   updatedAt: string;
   category: string;
+  description?: string;
   visibility?: 'private' | 'shared';
   kind: 'doc' | 'sheet';
   variables?: TemplateVariable[];

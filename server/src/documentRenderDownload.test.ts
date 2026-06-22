@@ -64,9 +64,11 @@ async function startApi(): Promise<{ baseUrl: string; close: () => Promise<void>
 }
 
 function assertExpiresIn(expiresAt: string, startedAt: number, seconds: number): void {
-  const deltaMs = Date.parse(expiresAt) - startedAt;
-  assert.ok(deltaMs >= seconds * 1000 - 3000, `expiresAt 太早：${deltaMs}`);
-  assert.ok(deltaMs <= seconds * 1000 + 3000, `expiresAt 太晚：${deltaMs}`);
+  const expiresAtMs = Date.parse(expiresAt);
+  const lowerDeltaMs = expiresAtMs - startedAt;
+  const upperDeltaMs = expiresAtMs - Date.now();
+  assert.ok(lowerDeltaMs >= seconds * 1000 - 3000, `expiresAt 太早：${lowerDeltaMs}`);
+  assert.ok(upperDeltaMs <= seconds * 1000 + 3000, `expiresAt 太晚：${upperDeltaMs}`);
 }
 
 test('本地下载响应包含安全下载头并清洗文件名', async () => {

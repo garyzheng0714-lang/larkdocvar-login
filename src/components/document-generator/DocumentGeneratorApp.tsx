@@ -29,7 +29,7 @@ const ACCENTS: Record<AccentKey, Accent> = {
   amber: { primary: '#b9621a', soft: '#fbeedf' },
 };
 
-const CATEGORIES = ['全部', '合同类', '通知类', '报表类', '证明类'];
+const DEFAULT_CATEGORIES = ['合同类', '通知类', '报表类', '证明类', '证书类', '发票类', '其他'];
 
 function sortedEntries(value: Record<string, string>): Array<[string, string]> {
   return Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
@@ -77,6 +77,13 @@ export function DocumentGeneratorApp({
 }: DocumentGeneratorAppProps) {
   const accent = ACCENTS[accentKey] || ACCENTS.blue;
   const initialTemplate = templates[0] ?? null;
+  const categories = useMemo(() => {
+    const values = new Set(DEFAULT_CATEGORIES);
+    for (const template of templates) {
+      if (template.category && template.category !== '全部') values.add(template.category);
+    }
+    return ['全部', ...values];
+  }, [templates]);
 
   const [state, setState] = useState<PrimaryState>(() => ({
     template: initialTemplate,
@@ -94,6 +101,7 @@ export function DocumentGeneratorApp({
   }));
   const [picker, setPicker] = useState(false);
   const [newTpl, setNewTpl] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
   const [progress, setProgress] = useState(false);
   const activeRunSignatureRef = useRef<string | null>(null);
   const fieldSignature = useMemo(
@@ -146,6 +154,27 @@ export function DocumentGeneratorApp({
   }, [templates, fields, state.template, mode]);
 
   useEffect(() => {
+    if (templates.length === 0) return;
+    setState((s) => {
+      if (!s.template) return s;
+      const latest = templates.find((tpl) => tpl.id === s.template?.id);
+      if (!latest || latest === s.template) return s;
+      const validNames = new Set((latest.variables || []).map((variable) => variable.name));
+      const nextCustomText = Object.fromEntries(
+        Object.entries(s.customText).filter(([name]) => validNames.has(name)),
+      );
+      return {
+        ...s,
+        template: latest,
+        mapping: mode === 'standalone'
+          ? buildStandaloneMapping(latest)
+          : reconcileMapping(latest, fields, s.mapping, { allowCustom: true }),
+        customText: nextCustomText,
+      };
+    });
+  }, [templates, fields, mode]);
+
+  useEffect(() => {
     if (mode === 'standalone') return;
     setState((s) => {
       if (!s.template) return s;
@@ -165,6 +194,14 @@ export function DocumentGeneratorApp({
   }, [activeTableId, fieldSignature, fields, mode]);
 
   const generationBusy = runner.phase === 'running' || runner.phase === 'paused';
+  const openNewTemplate = () => {
+    setEditingTemplate(null);
+    setNewTpl(true);
+  };
+  const openEditTemplate = (tpl: Template) => {
+    setEditingTemplate(tpl);
+    setNewTpl(true);
+  };
 
   useEffect(() => {
     if (!generationBusy) {
@@ -223,6 +260,7 @@ export function DocumentGeneratorApp({
           generatorKind={generatorKind}
           onGeneratorKindChange={onGeneratorKindChange}
           onPreview={runner.preview}
+          onEditTemplate={openEditTemplate}
         />
         {(bitableError || templatesError) && (
           <div
@@ -251,7 +289,7 @@ export function DocumentGeneratorApp({
           <div className="overlay overlay-slide" data-screen-label="02 Sidebar — 选择模板">
             <PickerScreen
               templates={templates}
-              categories={CATEGORIES}
+              categories={categories}
               initialSelectedId={state.template?.id}
               accent={accent.primary}
               onCancel={() => setPicker(false)}
@@ -269,7 +307,8 @@ export function DocumentGeneratorApp({
                 }));
                 setPicker(false);
               }}
-              onNew={() => setNewTpl(true)}
+              onNew={openNewTemplate}
+              onEdit={openEditTemplate}
             />
           </div>
         )}
@@ -277,10 +316,15 @@ export function DocumentGeneratorApp({
           <div className="overlay overlay-slide" data-screen-label="03 Sidebar — 新建模板">
             <NewTemplateScreen
               accent={accent.primary}
-              onCancel={() => setNewTpl(false)}
+              template={editingTemplate}
+              onCancel={() => {
+                setNewTpl(false);
+                setEditingTemplate(null);
+              }}
               onSave={async () => {
                 await refreshTemplates?.();
                 setNewTpl(false);
+                setEditingTemplate(null);
               }}
             />
           </div>

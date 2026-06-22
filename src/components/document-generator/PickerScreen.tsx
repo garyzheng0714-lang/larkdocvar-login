@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from './icons';
+import { copyTextToClipboard } from './clipboard';
 import type { Template, TemplateThumbnail } from './types';
 
 interface PickerScreenProps {
@@ -10,6 +11,7 @@ interface PickerScreenProps {
   onCancel: () => void;
   onConfirm: (tpl: Template) => void;
   onNew: () => void;
+  onEdit: (tpl: Template) => void;
 }
 
 export function PickerScreen({
@@ -20,11 +22,13 @@ export function PickerScreen({
   onCancel,
   onConfirm,
   onNew,
+  onEdit,
 }: PickerScreenProps) {
   const [tab, setTab] = useState<'公用' | '个人'>('公用');
   const [category, setCategory] = useState('全部');
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | undefined>(initialSelectedId);
+  const [copyNotice, setCopyNotice] = useState<{ id: string; ok: boolean } | null>(null);
 
   const list = useMemo(() => {
     return templates.filter(
@@ -40,6 +44,18 @@ export function PickerScreen({
       setSelectedId(undefined);
     }
   }, [list, selectedId]);
+
+  async function copyTemplateId(templateId: string) {
+    try {
+      await copyTextToClipboard(templateId);
+      setCopyNotice({ id: templateId, ok: true });
+    } catch {
+      setCopyNotice({ id: templateId, ok: false });
+    }
+    window.setTimeout(() => {
+      setCopyNotice((current) => (current?.id === templateId ? null : current));
+    }, 1400);
+  }
 
   return (
     <div className="screen picker-screen">
@@ -106,6 +122,33 @@ export function PickerScreen({
                   accent={accent}
                   onClick={() => setSelectedId(t.id)}
                 />
+                <div
+                  className="template-card-actions"
+                  aria-label={`${t.name} 模板操作`}
+                >
+                  <button
+                    className="template-action-btn"
+                    type="button"
+                    onClick={() => onEdit(t)}
+                    title={`更新模板：${t.name}`}
+                  >
+                    <Icon.Doc />
+                    <span>更新</span>
+                  </button>
+                  <button
+                    className="template-copy-btn"
+                    type="button"
+                    onClick={() => copyTemplateId(t.id)}
+                    title={`复制模板 ID：${t.id}`}
+                  >
+                    <Icon.Copy />
+                    <span>
+                      {copyNotice?.id === t.id
+                        ? (copyNotice.ok ? '已复制' : '复制失败')
+                        : '复制ID'}
+                    </span>
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -164,6 +207,10 @@ function TemplateCard({ t, selected, accent, onClick }: TemplateCardProps) {
         <span>{t.varCount} 变量</span>
         <span className="dot-sep" />
         <span>{t.updatedAt}</span>
+      </div>
+      <div className="tcard-id">
+        <span>ID</span>
+        <code>{t.id}</code>
       </div>
     </button>
   );

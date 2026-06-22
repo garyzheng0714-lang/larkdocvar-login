@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { DOCX_CONTENT_TYPE, ensureDocxExtension, sanitizeFileName } from './documentRenderFile';
 import { UserFacingError } from './documentRenderStorageErrors';
@@ -101,14 +101,6 @@ const MAX_UPLOADED_TEMPLATE_BYTES = 20 * 1024 * 1024;
 
 function sha256(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex');
-}
-
-function todayCompact(): string {
-  return new Date().toISOString().slice(0, 10).replace(/-/g, '');
-}
-
-function generateTemplateId(): string {
-  return `tpl_${todayCompact()}_${randomBytes(4).toString('hex')}`;
 }
 
 function assertTemplateId(templateId: string): void {
@@ -245,7 +237,7 @@ export class DocumentTemplateService {
 
   async createTemplate(input: CreateDocumentTemplateInput): Promise<PublicDocumentTemplateRecord> {
     return this.withMutationLock(async () => {
-      const templateId = input.templateId?.trim() || generateTemplateId();
+      const templateId = input.templateId?.trim() || await this.generateTemplateId();
       assertTemplateId(templateId);
       const existing = await this.getTemplateOrNull(templateId);
       if (existing) throw new UserFacingError('模板编号已存在，请换一个编号或新增版本。');
@@ -283,7 +275,9 @@ export class DocumentTemplateService {
       record.name = input.name?.trim() || record.name;
       record.category = cleanOptionalText(input.category, 64) || record.category;
       record.visibility = input.visibility || record.visibility;
-      record.description = cleanOptionalText(input.description, 1000) ?? record.description;
+      if (Object.prototype.hasOwnProperty.call(input, 'description')) {
+        record.description = cleanOptionalText(input.description, 1000);
+      }
       record.updatedByOpenId = cleanOptionalText(input.updatedByOpenId, 128) || record.updatedByOpenId;
       record.updatedAt = new Date().toISOString();
       await this.writeRecord(record);
@@ -340,6 +334,26 @@ export class DocumentTemplateService {
       if (error instanceof TemplateObjectNotFoundError) return null;
       throw error;
     }
+  }
+
+  private async generateTemplateId(): Promise<string> {
+    const index = await this.readIndex();
+    const used = new Set(index.map((item) => item.templateId));
+    let maxSerial = 0;
+    for (const item of index) {
+      const match = item.templateId.match(/^tpl_(\d+)$/);
+      if (!match) continue;
+      maxSerial = Math.max(maxSerial, Number(match[1]));
+    }
+
+    for (let serial = maxSerial + 1; serial < 1_000_000; serial += 1) {
+      const templateId = `tpl_${String(serial).padStart(3, '0')}`;
+      if (used.has(templateId)) continue;
+      if (await this.getTemplateOrNull(templateId)) continue;
+      return templateId;
+    }
+
+    throw new UserFacingError('模板编号已用尽，请手动指定模板编号。');
   }
 
   private async createVersion(templateId: string, versionNumber: number, input: CreateDocumentTemplateInput | UpdateDocumentTemplateInput): Promise<DocumentTemplateVersion> {

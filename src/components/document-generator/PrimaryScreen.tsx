@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Icon } from './icons';
+import { copyTextToClipboard } from './clipboard';
 import { GeneratorHeader } from './GeneratorHeader';
 import { CUSTOM_MAPPING_VALUE, reconcileMapping } from './mapping';
 import { DocThumb, FileNameEditor, MapRow, OptionRow, WriteBackPicker } from './PrimaryScreenParts';
@@ -27,6 +28,7 @@ interface PrimaryScreenProps {
   generatorKind: GeneratorKind;
   onGeneratorKindChange: (value: GeneratorKind) => void;
   onPreview?: (template: Template) => Promise<PreviewOutcome>;
+  onEditTemplate?: (template: Template) => void;
 }
 
 export function PrimaryScreen({
@@ -43,6 +45,7 @@ export function PrimaryScreen({
   generatorKind,
   onGeneratorKindChange,
   onPreview,
+  onEditTemplate,
 }: PrimaryScreenProps) {
   const tpl = state.template;
   const mapping = state.mapping;
@@ -50,6 +53,7 @@ export function PrimaryScreen({
   const [optsOpen, setOptsOpen] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [copyNotice, setCopyNotice] = useState<'ok' | 'error' | null>(null);
 
   async function handlePreview() {
     if (!tpl || !onPreview || previewing) return;
@@ -73,6 +77,17 @@ export function PrimaryScreen({
     } finally {
       setPreviewing(false);
     }
+  }
+
+  async function copyTemplateId() {
+    if (!tpl) return;
+    try {
+      await copyTextToClipboard(tpl.id);
+      setCopyNotice('ok');
+    } catch {
+      setCopyNotice('error');
+    }
+    window.setTimeout(() => setCopyNotice(null), 1400);
   }
 
   function setMapping(varName: string, fieldId: string) {
@@ -112,12 +127,38 @@ export function PrimaryScreen({
                     </span>
                     <span className="tpl-row-meta">
                       <span>{tpl.updatedAt}更新</span>
+                      <span className="dot-sep" />
+                      <span className="tpl-row-id">ID {tpl.id}</span>
                     </span>
                   </span>
                   <span className="tpl-row-action">
                     替换 <Icon.ChevronR />
                   </span>
                 </button>
+                <div className="tpl-row-actions">
+                  {onEditTemplate && (
+                    <button
+                      className="template-action-btn"
+                      type="button"
+                      onClick={() => onEditTemplate(tpl)}
+                      title={`更新模板：${tpl.name}`}
+                    >
+                      <Icon.Doc />
+                      <span>更新模板</span>
+                    </button>
+                  )}
+                  <button
+                    className="template-copy-btn"
+                    type="button"
+                    onClick={copyTemplateId}
+                    title={`复制模板 ID：${tpl.id}`}
+                  >
+                    <Icon.Copy />
+                    <span>
+                      {copyNotice === 'ok' ? '已复制' : copyNotice === 'error' ? '复制失败' : '复制ID'}
+                    </span>
+                  </button>
+                </div>
               </div>
               {onPreview && (
                 <div className="tpl-row-extra">
