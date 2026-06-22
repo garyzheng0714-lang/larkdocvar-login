@@ -1088,6 +1088,25 @@
   border-color: #f1c7c1;
   background: #fff4f2;
 }
+.nt-login-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.nt-login-primary {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.nt-login-actions .nt-login-retry {
+  margin-top: 0;
+}
 .nt-login-retry {
   margin-top: 10px;
   height: 32px;
@@ -1135,6 +1154,40 @@
   color: var(--txt-2);
   font-size: 13px;
   line-height: 1.5;
+}
+.auth-gate-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+.auth-gate-primary,
+.auth-gate-secondary {
+  width: 100%;
+  height: 38px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.auth-gate-primary {
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.auth-gate-primary:hover {
+  filter: brightness(0.96);
+}
+.auth-gate-secondary {
+  border: 1px solid var(--bd-2);
+  background: #fff;
+  color: var(--txt-2);
+}
+.auth-gate-secondary:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.auth-gate-secondary-inline {
+  margin-top: 12px;
 }
 .auth-gate-qr-wrap {
   display: flex;

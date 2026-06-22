@@ -1,6 +1,6 @@
 # Docx API 架构说明
 
-更新时间：2026-05-15
+更新时间：2026-06-22
 
 ## 模块划分
 
@@ -14,7 +14,7 @@
 | 模板对象存储 | `server/src/documentTemplateStorage.ts` | TOS 或本地开发目录读写模板资产。 |
 | 输出对象存储 | `server/src/documentRenderTosStorage.ts` 和 `documentRenderApi.ts` | OSS/TOS/local 保存最终生成文件。 |
 | 侧边栏 UI | `src/components/document-generator/` | 服务器 Docx 模板库管理和多维表格批量生成入口。 |
-| 侧边栏身份 | `server/src/auth.ts`、`server/src/routes/authSessionRoutes.ts`、`src/components/document-generator/cloudDoc/bitableAdapter.ts`、`src/components/document-generator/cloudDoc/feishuTrustedLogin.ts` | 当前 Word 模板侧边栏只把 Base JS SDK 的 `X-Bitable-*` 作为宿主上下文线索；模板权限必须来自 API Key 或服务端可信会话；可信会话通过 Feishu client-code 或插件内扫码登录建立，旧 OAuth / handoff 入口返回 410。 |
+| 侧边栏身份 | `server/src/auth.ts`、`server/src/routes/authSessionRoutes.ts`、`src/authSessionToken.ts`、`src/components/document-generator/cloudDoc/bitableAdapter.ts`、`src/components/document-generator/cloudDoc/feishuTrustedLogin.ts` | 当前 Word 模板侧边栏只把 Base JS SDK 的 `X-Bitable-*` 作为宿主上下文线索；模板权限必须来自 API Key 或服务端可信会话；可信会话优先通过 Feishu client-code 免登建立，能力不可用时走一键 OAuth，扫码仅作备用；旧 handoff 入口返回 410。 |
 | 数据库迁移 | `server/migrations/` + `server/src/migrations.ts` | 管理 PostgreSQL 表结构版本，启动时记录到 `schema_migrations`。 |
 
 ## 数据流
@@ -129,7 +129,7 @@ sequenceDiagram
   Server-->>Iframe: "模板列表/保存/生成响应"
 ```
 
-`/api/auth/session` 保留为兼容诊断接口，未登录时返回稳定 JSON，已登录时也不返回 bearer 级 session token。侧边栏保存模板前会先检查可信会话；没有会话时先尝试 Feishu client-code 端内授权，若 PC 侧边栏不提供 H5 WebApp 授权容器，则在当前模板面板内展示扫码登录并轮询会话，文件和表单内容不丢失。`client-code` 和扫码回调都只写 httpOnly cookie，不把 session token 返回给前端。旧外部 OAuth / handoff 子路径显式返回 410，避免被静态前端页面兜底成假 200 或重新引入 session 接管风险。服务端解析旧会话时仍按 cookie、`X-Session-Token`、Bearer 收集候选值；query token 已移除，避免 token 出现在 URL、日志或分享链路里。
+`/api/auth/session` 保留为兼容诊断接口，未登录时返回稳定 JSON，已登录时也不返回飞书 `access_token`。侧边栏入口会先检查可信会话，再尝试 Feishu client-code 端内免登；当前宿主不支持 H5 WebApp 授权时，界面展示“使用 FBIF 飞书登录”按钮，走 `/auth/feishu/:appKey/login` 当前页 OAuth。OAuth state 是签名自包含数据，回调即使没有 state cookie 也能校验；登录成功后同时写 httpOnly cookie，并通过 URL hash 给嵌入式侧边栏传递会话兜底。端内免登的 JSON 响应体不返回会话 token，但同源响应头可返回 `X-Session-Token`，前端会立即存储并在后续同源请求里继续带该头。扫码登录只作为用户主动选择的备用入口。旧 `/api/auth/feishu/:appKey/start`、`/login-status` handoff 子路径继续返回 410，避免重新引入 session 接管风险；query token 已移除，避免 token 出现在 URL、日志或分享链路里。
 
 ## 安全边界
 

@@ -9,6 +9,7 @@ import {
 import {
   consumeOAuthStateCookie,
   exchangeCodeV1,
+  extractOAuthTokenData,
   getAppAccessToken,
   getFeishuAppCredentials,
   isAllowedTenant,
@@ -21,11 +22,14 @@ import {
 import type { FeishuOAuthAppKey, OAuthV1TokenResult } from '../auth';
 
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'larkdocvar_session';
-const AUTH_DISABLED_MESSAGE = '当前侧边栏不再使用 OAuth 登录入口，请直接在飞书多维表格侧边栏内操作。';
+const AUTH_DISABLED_MESSAGE = '这个登录接力入口已停用，请使用页面上的飞书登录按钮。';
 const CONFIG_LOGIN_ERROR = '登录服务配置不完整，请联系管理员。';
 const GENERIC_LOGIN_ERROR = '飞书登录失败，请重新点击登录。';
 const QR_STATE_COOKIE_PREFIX = 'feishu_qr_state';
+const OAUTH_STATE_COOKIE_PREFIX = 'feishu_state';
 const QR_STATE_TTL_SECONDS = 10 * 60;
+const OAUTH_AUTHORIZE_URL = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
+const OAUTH_TOKEN_V2_URL = 'https://open.feishu.cn/open-apis/authen/v2/oauth/token';
 const PUBLIC_CALLBACK_PATH = '/auth/feishu';
 
 type FeishuUserInfoPayload = {
@@ -40,7 +44,7 @@ type FeishuUserInfoPayload = {
 type OAuthStatePayload = {
   v: 1;
   appKey: FeishuOAuthAppKey;
-  kind: 'qr';
+  kind: 'oauth' | 'qr';
   nonce: string;
   exp: number;
 };
@@ -91,6 +95,21 @@ function buildQrRedirectUri(appKey: FeishuOAuthAppKey): string {
   return '';
 }
 
+function buildOAuthRedirectUri(appKey: FeishuOAuthAppKey): string {
+  const prefix = appEnvPrefix(appKey);
+  const direct = process.env[`${prefix}_OAUTH_REDIRECT_URI`] || process.env[`${prefix}_REDIRECT_URI`];
+  if (direct?.trim()) return direct.trim();
+
+  const publicBase = inferPublicCallbackBaseUrl();
+  if (publicBase) return `${publicBase}${PUBLIC_CALLBACK_PATH}/${appKey}/callback`;
+
+  const legacyRedirectUri = process.env.FEISHU_OAUTH_REDIRECT_URI || '';
+  if (appKey === 'fbif' && legacyRedirectUri) {
+    return legacyRedirectUri.replace(/\/qr-callback$/, '/callback');
+  }
+  return '';
+}
+
 function getSessionCookieOptions(): express.CookieOptions {
   const secure = (process.env.SESSION_COOKIE_SECURE || 'false').toLowerCase() === 'true';
   const rawSameSite = (process.env.SESSION_COOKIE_SAMESITE || (secure ? 'none' : 'lax')).toLowerCase();
@@ -108,11 +127,16 @@ function signStateBody(body: string, secret: string): string {
   return crypto.createHmac('sha256', secret).update(body).digest('base64url');
 }
 
-function createSignedQrState(appKey: FeishuOAuthAppKey, appSecret: string, appId: string): string {
+function createSignedState(
+  appKey: FeishuOAuthAppKey,
+  kind: OAuthStatePayload['kind'],
+  appSecret: string,
+  appId: string,
+): string {
   const payload: OAuthStatePayload = {
     v: 1,
     appKey,
-    kind: 'qr',
+    kind,
     nonce: crypto.randomBytes(24).toString('base64url'),
     exp: Math.floor(Date.now() / 1000) + QR_STATE_TTL_SECONDS,
   };
@@ -120,9 +144,10 @@ function createSignedQrState(appKey: FeishuOAuthAppKey, appSecret: string, appId
   return `${body}.${signStateBody(body, process.env.OAUTH_STATE_SIGNING_SECRET || appSecret || appId)}`;
 }
 
-function verifySignedQrState(
+function verifySignedState(
   state: string,
   appKey: FeishuOAuthAppKey,
+  kind: OAuthStatePayload['kind'],
   appSecret: string,
   appId: string,
 ): boolean {
@@ -141,13 +166,67 @@ function verifySignedQrState(
     return (
       payload.v === 1 &&
       payload.appKey === appKey &&
-      payload.kind === 'qr' &&
+      payload.kind === kind &&
       typeof payload.exp === 'number' &&
       payload.exp >= Math.floor(Date.now() / 1000)
     );
   } catch {
     return false;
   }
+}
+
+function appendHashSessionToken(target: string, sessionToken: string): string {
+  const hash = new URLSearchParams({ session_token: sessionToken }).toString();
+  if (!target || target === '/') return `/#${hash}`;
+  try {
+    if (target.startsWith('http://') || target.startsWith('https://')) {
+      const url = new URL(target);
+      url.hash = hash;
+      return url.toString();
+    }
+  } catch {
+    // Fall through to relative handling.
+  }
+  if (target.startsWith('/') && !target.startsWith('//')) {
+    const [path] = target.split('#');
+    return `${path || '/'}#${hash}`;
+  }
+  return `/#${hash}`;
+}
+
+async function exchangeCodeV2(
+  code: string,
+  appId: string,
+  appSecret: string,
+  redirectUri: string,
+): Promise<OAuthV1TokenResult> {
+  const response = await axios.post(
+    OAUTH_TOKEN_V2_URL,
+    {
+      grant_type: 'authorization_code',
+      client_id: appId,
+      client_secret: appSecret,
+      code,
+      redirect_uri: redirectUri,
+    },
+    { headers: { 'Content-Type': 'application/json' }, timeout: 20000 },
+  );
+  const body = response.data as Record<string, unknown>;
+  if (typeof body.code === 'number' && body.code !== 0) {
+    throw new Error(`v2 oauth token 接口失败：[code=${body.code}] ${body.msg || ''}`);
+  }
+  const data = extractOAuthTokenData(body);
+  const accessToken = data.access_token as string | undefined;
+  if (!accessToken) {
+    throw new Error('v2 oauth token 接口未返回 access_token。');
+  }
+  return {
+    accessToken,
+    refreshToken: (data.refresh_token as string | undefined) ?? '',
+    expiresIn: Number(data.expires_in) || 0,
+    refreshExpiresIn: Number(data.refresh_expires_in ?? data.refresh_token_expires_in) || 0,
+    tokenType: (data.token_type as string | undefined) ?? 'Bearer',
+  };
 }
 
 function resolveRouteAppKey(request: express.Request, response: express.Response): FeishuOAuthAppKey | null {
@@ -260,7 +339,9 @@ async function finalizeTrustedLogin(
   response.cookie(SESSION_COOKIE_NAME, sessionToken, getSessionCookieOptions());
 
   if (responseMode === 'json') {
-    response.set('Cache-Control', 'no-store').json({
+    response.set('Cache-Control', 'no-store');
+    response.set('X-Session-Token', sessionToken);
+    response.json({
       ok: true,
       loggedIn: true,
       profile: {
@@ -274,7 +355,7 @@ async function finalizeTrustedLogin(
     return;
   }
 
-  response.redirect(process.env.FRONTEND_POST_LOGIN_URL || '/');
+  response.redirect(appendHashSessionToken(process.env.FRONTEND_POST_LOGIN_URL || '/', sessionToken));
 }
 
 function clearSessionCookie(response: express.Response): void {
@@ -384,6 +465,67 @@ export function registerAuthSessionRoutes(app: express.Express): void {
     }
   });
 
+  app.get('/auth/feishu/:appKey/login', (request, response) => {
+    const appKey = resolveRouteAppKey(request, response);
+    if (!appKey) return;
+
+    const config = getFeishuAppCredentials(appKey);
+    const redirectUri = buildOAuthRedirectUri(appKey);
+    if (!config.appId || !config.appSecret || !redirectUri) {
+      sendMissingAuthConfig(
+        response,
+        appKey,
+        !config.appId
+          ? `${appEnvPrefix(appKey)}_APP_ID`
+          : !config.appSecret
+            ? `${appEnvPrefix(appKey)}_APP_SECRET`
+            : 'OAuth callback URL',
+      );
+      return;
+    }
+
+    const state = createSignedState(appKey, 'oauth', config.appSecret, config.appId);
+    setOAuthStateCookie(response, `${OAUTH_STATE_COOKIE_PREFIX}_${appKey}_oauth`, state);
+    const params = new URLSearchParams({
+      client_id: config.appId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      state,
+    });
+    response.set('Cache-Control', 'no-store');
+    response.redirect(`${OAUTH_AUTHORIZE_URL}?${params.toString()}`);
+  });
+
+  app.get('/auth/feishu/:appKey/callback', async (request, response) => {
+    const appKey = resolveRouteAppKey(request, response);
+    if (!appKey) return;
+
+    const config = getFeishuAppCredentials(appKey);
+    const redirectUri = buildOAuthRedirectUri(appKey);
+    const code = typeof request.query.code === 'string' ? request.query.code.trim() : '';
+    const state = typeof request.query.state === 'string' ? request.query.state : '';
+    if (!code || !config.appId || !config.appSecret || !redirectUri) {
+      redirectToFrontendWithAuthError(response, GENERIC_LOGIN_ERROR);
+      return;
+    }
+
+    const stateCookieName = `${OAUTH_STATE_COOKIE_PREFIX}_${appKey}_oauth`;
+    const cookieOk = consumeOAuthStateCookie(request, response, stateCookieName, state);
+    if (!cookieOk && !verifySignedState(state, appKey, 'oauth', config.appSecret, config.appId)) {
+      redirectToFrontendWithAuthError(response, '登录状态已失效，请重新点击飞书登录。');
+      return;
+    }
+
+    try {
+      const tokens = await exchangeCodeV2(code, config.appId, config.appSecret, redirectUri);
+      await finalizeTrustedLogin(response, tokens, appKey, 'redirect');
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('Feishu OAuth login error:', safeAuthErrorMessage(error));
+      redirectToFrontendWithAuthError(response, GENERIC_LOGIN_ERROR);
+    }
+  });
+
   app.get('/auth/feishu/:appKey/qr-config', (request, response) => {
     const appKey = resolveRouteAppKey(request, response);
     if (!appKey) return;
@@ -403,7 +545,7 @@ export function registerAuthSessionRoutes(app: express.Express): void {
       return;
     }
 
-    const state = createSignedQrState(appKey, config.appSecret, config.appId);
+    const state = createSignedState(appKey, 'qr', config.appSecret, config.appId);
     setOAuthStateCookie(response, `${QR_STATE_COOKIE_PREFIX}_${appKey}`, state);
     const params = new URLSearchParams({
       client_id: config.appId,
@@ -431,7 +573,7 @@ export function registerAuthSessionRoutes(app: express.Express): void {
       return;
     }
     const cookieOk = consumeOAuthStateCookie(request, response, `${QR_STATE_COOKIE_PREFIX}_${appKey}`, state);
-    if (!cookieOk && !verifySignedQrState(state, appKey, config.appSecret, config.appId)) {
+    if (!cookieOk && !verifySignedState(state, appKey, 'qr', config.appSecret, config.appId)) {
       redirectToFrontendWithAuthError(response, '登录状态已失效，请重新扫码。');
       return;
     }

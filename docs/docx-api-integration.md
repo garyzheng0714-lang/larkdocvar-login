@@ -6,7 +6,8 @@
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
-| 2026-06-22 | 安全收紧 | 撤回把 `X-Bitable-*` 当登录兜底的契约；生产环境 Docx API 必须有 API Key 或可信会话；`private/shared` 可见范围覆盖模板列表、详情、版本、单份生成、同步批量、异步任务和 PDF 预览。 | `X-Bitable-*` 只作为侧边栏上下文线索，不作为认证凭据；`/api/auth/session` 不再向前端返回 bearer 级 session token；仅保留服务端可验证的 `client-code` 与插件内扫码登录入口，旧 OAuth/handoff 子路径显式返回 `410`。 | 已同步 |
+| 2026-06-22 | 登录修复 | 飞书内优先走客户端免登；免登能力不可用时，主入口恢复飞书 OAuth 一键登录；扫码仅作为备用入口。 | 恢复 `GET /auth/feishu/:appKey/login` 与 `GET /auth/feishu/:appKey/callback`；OAuth state 采用签名自包含校验，回跳 hash 携带嵌入式会话兜底；端内免登成功时同源响应头可返回 `X-Session-Token`，前端后续请求继续带该头；有接管风险的 `/api/auth/feishu/:appKey/start`、`/login-status` 继续返回 `410`。 | 已同步 |
+| 2026-06-22 | 安全收紧 | 撤回把 `X-Bitable-*` 当登录兜底的契约；生产环境 Docx API 必须有 API Key 或可信会话；`private/shared` 可见范围覆盖模板列表、详情、版本、单份生成、同步批量、异步任务和 PDF 预览。 | `X-Bitable-*` 只作为侧边栏上下文线索，不作为认证凭据；`/api/auth/session` 不再向前端返回 bearer 级 session token；可信会话来自客户端免登、一键 OAuth 或扫码备用；旧 handoff 子路径显式返回 `410`。 | 已同步 |
 | 2026-06-22 | 契约调整 | 未指定 `templateId` 时，服务端自动生成简短递增模板编号。 | 自动模板编号从历史日期随机格式调整为 `tpl_001`、`tpl_002` 这类递增编号；手动传入的合法 `templateId` 仍兼容。 | 已同步 |
 | 2026-06-02 | 维护性 | 拆分 Docx 生成存储边界到 `documentRenderStorage.ts`；`documentRenderApi.ts` 回到 900 行以内；侧边栏主屏拆分组件并清理旧 CSS；批量开始生成和重试路径共用 `runBatchSlices`。 | 路由和请求响应字段不变；`createConfiguredStorage`、`DocumentRenderStorage` 等兼容导出保留。 | 已同步 |
 | 2026-06-02 | 契约新增 | 新增 `missingStrategy=blank` 留空继续契约；新增 `output.includePdfPreview` Gotenberg PDF 预览。 | 文本变量缺失可按空字符串生成，响应仍返回 `variables.missing`；请求 PDF 预览时需配置 `GOTENBERG_URL`。 | 已同步 |
@@ -146,10 +147,12 @@ DOCUMENT_RENDER_TOS_PREFIX=renders
 | `GET` | `/api/auth/session` | 返回 `{ ok: true, loggedIn: false }` 或当前会话资料；不会因未登录返回 401；不会返回 session token。 |
 | `POST` | `/api/auth/logout` | 清理兼容会话 cookie / token；无会话时也返回 `{ ok: true }`。 |
 | `GET` | `/api/auth/feishu/:appKey/client-config` | 返回飞书端内授权所需 `app_id`；不会返回 `app_secret` 或 session token。 |
-| `POST` | `/api/auth/feishu/:appKey/client-code` | 仅接受飞书客户端授权 code；服务端用应用凭证换取用户 OAuth token，并通过 httpOnly cookie 建立可信会话。响应不返回 session token。 |
+| `POST` | `/api/auth/feishu/:appKey/client-code` | 仅接受飞书客户端授权 code；服务端用应用凭证换取用户 OAuth token，并通过 httpOnly cookie 建立可信会话。响应体不返回 session token；同源响应头可返回 `X-Session-Token` 作为 iframe cookie 被拦截时的会话兜底。 |
+| `GET` | `/auth/feishu/:appKey/login` | 飞书一键登录主入口；跳转飞书 OAuth，写入签名 state cookie。 |
+| `GET` | `/auth/feishu/:appKey/callback` | 飞书一键登录回调；优先校验签名 state，cookie 只作为兼容增强；成功后写 httpOnly cookie，并通过 URL hash 给嵌入式侧边栏传递会话兜底。 |
 | `GET` | `/auth/feishu/:appKey/qr-config` | 返回插件内扫码登录二维码 `goto`；不返回 session token。 |
 | `GET` | `/auth/feishu/:appKey/qr-callback` | 扫码授权回调；校验 state 后写入可信会话 cookie。 |
-| `GET/POST` | 其它 `/auth/feishu/*`、`/api/auth/feishu/*` | 旧外部 OAuth / handoff 登录入口已退役，显式返回 `410`，避免被静态前端页面兜底成假 200。 |
+| `GET/POST` | 其它 `/auth/feishu/*`、`/api/auth/feishu/*` | 旧 handoff / 未知登录子路径显式返回 `410`，避免被静态前端页面兜底成假 200。 |
 
 模板可见范围：
 

@@ -166,8 +166,8 @@ docker exec -i fbif-sidebar-docgen-postgres pg_restore -U postgres -d larkdocvar
 - 生产 Docx API 必须配置 `DOCUMENT_RENDER_API_KEY` 或使用服务端可信会话；不能依赖 `X-Bitable-*` 作为登录凭据。
 - 飞书多维表格侧边栏请求可以通过 Base JS SDK 附带 `X-Bitable-Open-Id` / `X-Bitable-Base-User-Id`、`X-Bitable-Base-Id`、`X-Bitable-Table-Id`、`X-Bitable-Tenant-Key` 作为宿主上下文线索，但这些头不授予模板创建、管理或 `private` 模板读取权限。
 - `/api/auth/session` 只作为兼容诊断接口，未登录时返回稳定 JSON；`/api/auth/logout` 可清理旧会话。
-- 当前可信登录入口是 Feishu client-code 和插件内扫码：`/api/auth/feishu/:appKey/client-config`、`/api/auth/feishu/:appKey/client-code`、`/auth/feishu/:appKey/qr-config`、`/auth/feishu/:appKey/qr-callback`。这些入口只写 httpOnly cookie，不返回 session token。
-- 旧外部 OAuth / handoff 入口当前显式返回 410，避免被静态前端页面兜底成假 200。若未来恢复这类入口，必须重新做真实飞书侧边栏登录验收和 session 接管安全评审。
+- 当前可信登录入口优先级是：Feishu client-code 端内免登、一键 OAuth、扫码备用。相关路由包括 `/api/auth/feishu/:appKey/client-config`、`/api/auth/feishu/:appKey/client-code`、`/auth/feishu/:appKey/login`、`/auth/feishu/:appKey/callback`、`/auth/feishu/:appKey/qr-config`、`/auth/feishu/:appKey/qr-callback`。
+- OAuth / 扫码回调会写 httpOnly cookie；一键 OAuth 还会通过 URL hash 给嵌入式侧边栏传递会话兜底。端内免登的 JSON 响应体不返回会话 token，但同源响应头可返回 `X-Session-Token`。前端立即清理 hash、保存响应头会话，并在同源请求里继续带 `X-Session-Token`。旧 `/api/auth/feishu/:appKey/start`、`/login-status` handoff 入口继续显式返回 410，避免 session 接管风险。
 - `index.html` 响应头应为 `Cache-Control: no-cache`；带 hash 的静态资源可长期缓存。
 - API 错误响应不应包含堆栈、AccessKey、bucket 名称或内部路径。
 - `.env.local`、部署密钥和真实 AccessKey 不允许提交到仓库。
@@ -181,9 +181,9 @@ docker exec -i fbif-sidebar-docgen-postgres pg_restore -U postgres -d larkdocvar
 | 生成失败，返回 `missingVariables` | 请求变量缺少模板中存在的字段，补齐后重试。 |
 | 生成失败，返回 `unusedVariables` | 请求变量名和模板变量不一致，检查大小写、空格和中文名。 |
 | 生产环境返回对象存储配置错误 | 检查 OSS/TOS 四件套：AccessKey、Secret、Bucket、Region。 |
-| 侧边栏上传/更新模板提示登录状态没有接上 | 先检查 `/api/auth/session` 是否 `loggedIn:true`；若为 false，确认保存面板是否能展示插件内扫码登录，并检查 `/api/auth/feishu/fbif/client-config`、`/auth/feishu/fbif/qr-config`、`/auth/feishu/fbif/qr-callback`。`X-Bitable-*` 只能说明宿主上下文，不能替代登录。 |
+| 侧边栏上传/更新模板提示登录状态没有接上 | 先检查 `/api/auth/session` 是否 `loggedIn:true`；若为 false，检查入口是否先尝试端内免登并显示“使用 FBIF 飞书登录”按钮，再检查 `/api/auth/feishu/fbif/client-config`、`/api/auth/feishu/fbif/client-code`、`/auth/feishu/fbif/login`、`/auth/feishu/fbif/callback`。扫码只作为备用入口。`X-Bitable-*` 只能说明宿主上下文，不能替代登录。 |
 | 模板列表看不到“仅自己”模板 | 确认当前调用方是模板创建者的可信会话、管理员或 API Key；后端会在列表、详情、版本、生成和预览路径都过滤 `private` 模板。 |
-| 访问 `/auth/feishu/fbif/login` 返回 410 | 当前预期行为。旧外部 OAuth 登录入口已退役；侧边栏可信登录应走 client-code 或插件内扫码。 |
+| 访问 `/auth/feishu/fbif/login` 返回 410 | 这不是当前预期；说明线上代码或反代仍是旧版本。先查线上 bundle、后端部署版本和 `/api/auth/feishu/fbif/start` 是否仍为 410。 |
 | `/api/auth/session` 返回 `loggedIn:false` | 当前请求没有服务端可信会话；这会阻塞需要用户身份的模板创建、更新和 `private` 模板读取。 |
 | 异步任务查询 404 | 先确认是否使用了提交任务时同一登录用户或 API Key，再确认任务是否已过期，最后查 `DATABASE_URL` 和 `render_jobs` 表。未配置数据库的本地开发/测试环境会使用进程内存，服务重启后不会保留历史任务。 |
 | 部署后登录状态或配置都像丢了 | 先检查 `.env` 里的 `POSTGRES_DATA_DIR` 是否是稳定目录，再检查 PostgreSQL 容器挂载路径。 |
@@ -197,4 +197,4 @@ docker exec -i fbif-sidebar-docgen-postgres pg_restore -U postgres -d larkdocvar
 3. 用真实浏览器或 Playwright 打开页面。
 4. 检查桌面和移动宽度下的模板库、字段映射、按钮、空状态、错误状态。
 
-登录相关 UI 改动还必须在飞书桌面真实侧边栏验证：点击“使用 FBIF 飞书登录”后，必须停留在当前插件面板；若当前宿主支持 H5 WebApp 授权则进入主界面，若真实 PC Lark no-WebApp 则直接显示插件内扫码登录。只验证普通页面或 Chrome 已登录不算通过。
+登录相关 UI 改动还必须在飞书桌面真实侧边栏验证：进入插件后应先尝试端内免登；免登不可用时显示“使用 FBIF 飞书登录”，二维码不得作为默认主界面。点击一键登录完成回调后，侧边栏应通过 cookie 或 `X-Session-Token` 进入主界面；扫码只作为用户主动选择的备用入口。只验证普通页面或 Chrome 已登录不算通过。

@@ -17,7 +17,13 @@ import {
   mountTrustedLoginQr,
   tryFeishuClientTrustedLogin,
 } from "./components/document-generator/cloudDoc/feishuTrustedLogin";
+import {
+  consumeEmbeddedAuthTokenFromHash,
+  installEmbeddedAuthFetchFallback,
+} from "./authSessionToken";
 import type { GeneratorKind, PrimaryState, RecordSpec } from "./components/document-generator";
+
+installEmbeddedAuthFetchFallback();
 
 function useMockMode(): boolean {
   return useMemo(() => {
@@ -167,16 +173,17 @@ function V2RealRoute({ userMenu }: { userMenu: ReactNode }) {
 }
 
 function AuthGate({ onReady }: { onReady: () => void }) {
-  const [phase, setPhase] = useState<'checking' | 'qr' | 'error'>('checking');
-  const [message, setMessage] = useState('正在确认登录状态...');
+  const [phase, setPhase] = useState<'checking' | 'choice' | 'qr' | 'error'>('checking');
+  const [message, setMessage] = useState('正在接入飞书登录态...');
   const [qrGoto, setQrGoto] = useState('');
   const qrElementId = useMemo(() => `app-login-qr-${Math.random().toString(36).slice(2)}`, []);
 
   const startLogin = useCallback(async () => {
     setPhase('checking');
-    setMessage('正在确认登录状态...');
+    setMessage('正在接入飞书登录态...');
     setQrGoto('');
     try {
+      consumeEmbeddedAuthTokenFromHash();
       if (await hasTrustedSession()) {
         onReady();
         return;
@@ -185,10 +192,9 @@ function AuthGate({ onReady }: { onReady: () => void }) {
         onReady();
         return;
       }
-      const goto = await fetchTrustedLoginQrGoto();
-      setQrGoto(goto);
-      setPhase('qr');
-      setMessage('请用飞书扫码登录。登录完成后会自动进入插件。');
+      const authError = new URLSearchParams(window.location.search).get('auth_error');
+      setPhase(authError ? 'error' : 'choice');
+      setMessage(authError || '请使用飞书一键登录，登录完成后会自动回到插件。');
     } catch (error) {
       setPhase('error');
       setMessage(error instanceof Error ? error.message : '登录状态确认失败，请稍后重试。');
@@ -220,20 +226,59 @@ function AuthGate({ onReady }: { onReady: () => void }) {
     };
   }, [onReady, phase, qrElementId, qrGoto]);
 
+  const startOAuthLogin = useCallback(() => {
+    window.location.assign('/auth/feishu/fbif/login');
+  }, []);
+
+  const startQrLogin = useCallback(async () => {
+    setPhase('checking');
+    setMessage('正在准备扫码备用登录...');
+    setQrGoto('');
+    try {
+      const goto = await fetchTrustedLoginQrGoto();
+      setQrGoto(goto);
+      setPhase('qr');
+      setMessage('请用飞书扫码登录。登录完成后会自动进入插件。');
+    } catch (error) {
+      setPhase('error');
+      setMessage(error instanceof Error ? error.message : '登录二维码准备失败，请稍后重试。');
+    }
+  }, []);
+
   return (
     <div className="auth-gate">
       <div className="auth-gate-panel">
-        <div className="auth-gate-title">登录后使用插件</div>
+        <div className="auth-gate-title">使用飞书登录</div>
         <div className="auth-gate-message">{message}</div>
-        {phase === 'qr' && (
-          <div className="auth-gate-qr-wrap">
-            <div id={qrElementId} className="auth-gate-qr" />
+        {phase === 'choice' && (
+          <div className="auth-gate-actions">
+            <button className="auth-gate-primary" type="button" onClick={startOAuthLogin}>
+              使用 FBIF 飞书登录
+            </button>
+            <button className="auth-gate-secondary" type="button" onClick={() => void startQrLogin()}>
+              扫码登录
+            </button>
           </div>
         )}
+        {phase === 'qr' && (
+          <>
+            <div className="auth-gate-qr-wrap">
+              <div id={qrElementId} className="auth-gate-qr" />
+            </div>
+            <button className="auth-gate-secondary auth-gate-secondary-inline" type="button" onClick={startOAuthLogin}>
+              改用一键登录
+            </button>
+          </>
+        )}
         {phase === 'error' && (
-          <button className="auth-gate-retry" type="button" onClick={() => void startLogin()}>
-            重新登录
-          </button>
+          <div className="auth-gate-actions">
+            <button className="auth-gate-primary" type="button" onClick={startOAuthLogin}>
+              重新飞书登录
+            </button>
+            <button className="auth-gate-secondary" type="button" onClick={() => void startLogin()}>
+              重新检查
+            </button>
+          </div>
         )}
       </div>
     </div>

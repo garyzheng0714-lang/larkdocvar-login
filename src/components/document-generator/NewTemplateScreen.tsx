@@ -36,7 +36,7 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
   const [tipOpen, setTipOpen] = useState(false);
   const [copyNotice, setCopyNotice] = useState<'ok' | 'error' | null>(null);
   const [loginPrompt, setLoginPrompt] = useState<{
-    phase: 'loading' | 'ready' | 'error' | 'done';
+    phase: 'loading' | 'choice' | 'ready' | 'error' | 'done';
     message: string;
     goto?: string;
   } | null>(null);
@@ -127,7 +127,16 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
     }
 
     retrySaveAfterLoginRef.current = true;
-    setLoginPrompt({ phase: 'loading', message: '正在准备可信登录...' });
+    setLoginPrompt({
+      phase: 'choice',
+      message: '登录态没有接上。请先重新尝试飞书免登；扫码只作为备用方式，当前文件和填写内容会保留。',
+    });
+    return false;
+  }
+
+  async function startFallbackQrLogin() {
+    retrySaveAfterLoginRef.current = true;
+    setLoginPrompt({ phase: 'loading', message: '正在准备扫码备用登录...' });
     try {
       const goto = await fetchTrustedLoginQrGoto();
       setLoginPrompt({
@@ -142,7 +151,6 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
         message: err instanceof Error ? err.message : '请先完成可信登录后再管理模板。当前文件和填写内容已保留。',
       });
     }
-    return false;
   }
 
   async function saveTemplate() {
@@ -375,6 +383,27 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
             {loginPrompt.goto && loginPrompt.phase === 'ready' && (
               <div className="nt-login-qr-wrap">
                 <div id={qrElementIdRef.current} className="nt-login-qr" />
+              </div>
+            )}
+            {loginPrompt.phase === 'choice' && (
+              <div className="nt-login-actions">
+                <button
+                  type="button"
+                  className="nt-login-primary"
+                  onClick={() => {
+                    setLoginPrompt(null);
+                    void saveTemplate();
+                  }}
+                >
+                  重新尝试飞书免登
+                </button>
+                <button
+                  type="button"
+                  className="nt-login-retry"
+                  onClick={() => void startFallbackQrLogin()}
+                >
+                  扫码备用登录
+                </button>
               </div>
             )}
             {loginPrompt.phase === 'error' && (

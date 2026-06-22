@@ -1,19 +1,30 @@
 # Handoff
 
-更新时间：2026-05-15
+更新时间：2026-06-22
+
+## 2026-06-22 飞书侧边栏登录根因修复
+
+当前结论：
+
+- 不能把 Base SDK 的 `getUserId/getTenantKey` 当登录替代品；它只能证明宿主线索，不能给后端提供读取飞书云文档所需的用户 OAuth token。
+- 入口顺序应为：已有可信会话 → Feishu H5 client-code 端内免登 → `/auth/feishu/:appKey/login` 一键 OAuth → 用户主动选择扫码备用。
+- `/api/auth/feishu/:appKey/start` 和 `/api/auth/feishu/:appKey/login-status` 继续返回 410；这两个旧 handoff 入口有 session 接管风险，不能恢复。
+- `/auth/feishu/:appKey/login` 与 `/callback` 是当前主路径，不应返回 410。OAuth state 使用签名自包含校验，cookie state 只作为兼容增强。
+- OAuth 成功后写 httpOnly cookie，并在回跳 URL hash 中传递嵌入式会话兜底；前端立即消费 `#session_token`、清理地址栏，并给同源请求加 `X-Session-Token`。
+- 扫码不是默认主界面，只是用户主动点击的备用方式。
 
 ## 2026-05-15 飞书登录 handoff 安全整改
 
 已完成：
 
 - 停用 `/api/auth/feishu/:appKey/start` 和 `/api/auth/feishu/:appKey/login-status` 的 JSON handoff，两个接口固定返回 410，避免攻击者用自己创建的 state 诱导他人授权后领取他人 session。
-- 前端普通浏览器回退路径改为当前页跳转 `/auth/feishu/:appKey/login`，不再 `window.open`，飞书侧边栏内仍只走端内授权或显示可读错误。
+- 前端普通浏览器回退路径改为当前页跳转 `/auth/feishu/:appKey/login`，不再 `window.open`。2026-06-22 起，飞书侧边栏在端内授权不可用时也显示一键 OAuth 登录按钮，扫码仅为备用。
 - 服务端会话解析移除 query `session_token` 兜底，只保留 cookie、`X-Session-Token` 和 Bearer 候选。
 - 登录检查增加请求序号和强制检查，避免旧的未登录响应清掉刚写入的端内登录 token。
 - `tt.requestAccess` / `tt.requestAuthCode` 增加超时保护，避免按钮一直停在授权中。
 - 登录配置缺失 API 返回统一用户文案，内部环境变量名只写服务器日志。
 - 新增端内授权失败诊断日志：记录 `h5sdk`、`tt.requestAccess`、`tt.requestAuthCode` 是否存在和失败阶段，用于定位飞书宿主能力差异。
-- 2026-05-15 线上复验诊断：真实 PC Lark 多维表格侧边栏 UA 为 `Lark/7.68.5` 且不含 `WebApp`，不是 H5 WebApp 授权容器。点击“使用 FBIF 飞书登录”后不拉起外部浏览器，直接留在插件内显示扫码登录；生产日志记录 `stage=pc_lark_not_webapp_container`。
+- 2026-05-15 线上复验诊断：真实 PC Lark 多维表格侧边栏 UA 为 `Lark/7.68.5` 且不含 `WebApp`，不是 H5 WebApp 授权容器。当时切到扫码主路径；2026-06-22 已修正为一键 OAuth 主路径、扫码备用。
 
 ## 2026-05-15 飞书客户端内登录修复
 
@@ -22,8 +33,8 @@
 - 确认更深一层根因：前端按钮把 `/api/auth/feishu/:appKey/start` 返回的授权地址直接 `window.open("_blank")`，所以用户必须离开插件面板完成授权。
 - 明确不能只用 Base SDK 的 `getUserId/getTenantKey` 替代 OAuth，因为飞书云文档模板读取仍需要后端持有真实用户 OAuth token。
 - 新增客户端内授权主路径：`src/feishuClientLogin.ts` 加载飞书 H5 SDK，调用 `tt.requestAccess` 获取 code；若宿主只暴露旧接口或 `requestAccess` 返回 103，则兼容 `tt.requestAuthCode`。随后提交到 `/api/auth/feishu/:appKey/client-code`。
-- 新增 `/api/auth/feishu/:appKey/client-config` 和 `/api/auth/feishu/:appKey/client-code`，后端换取用户 OAuth token、创建 `users/auth_sessions` 并返回嵌入式会话 `session_token`。
-- 外部 OAuth JSON handoff 后续已因安全问题停用；普通浏览器使用当前页 OAuth 跳转，飞书侧边栏内不再自动打开外部授权页。
+- 新增 `/api/auth/feishu/:appKey/client-config` 和 `/api/auth/feishu/:appKey/client-code`，后端换取用户 OAuth token、创建 `users/auth_sessions`。
+- 外部 OAuth JSON handoff 后续已因安全问题停用；普通浏览器和飞书侧边栏都使用当前页 OAuth 跳转，回调 hash/header 负责嵌入式会话兜底。
 
 验证：
 
@@ -31,7 +42,7 @@
 - `npm test`：189 个测试通过。
 - `npm run build`：通过。
 - `git diff --check`：通过。
-- 真实飞书桌面侧边栏先退出登录，再点击“使用 FBIF 飞书登录”，停留在当前插件面板，不再拉起外部浏览器，并立即显示插件内扫码登录。生产诊断为 `pc_lark_not_webapp_container`；这是当前 PC Lark 多维表格侧边栏的预期路径，不再把它当作 OAuth 配置错误。
+- 2026-05-15 验证曾把 PC Lark no-WebApp 判定为扫码预期；2026-06-22 已废弃这个产品判断，当前预期是显示一键 OAuth 登录按钮，扫码备用。
 - 线上 `/api/auth/feishu/fbif/client-config` 返回当前 FBIF `app_id`。
 - 线上 bundle 包含 `requestAccess`、`requestAuthCode`、`client-config`、`client-code`。
 - Playwright 打开 `https://fbif-sidebar-docgen.fbif.com/?mock=1`，页面标题正确，控制台 0 error / 0 warning。
