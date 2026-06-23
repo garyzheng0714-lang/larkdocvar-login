@@ -174,7 +174,7 @@ function V2RealRoute({ userMenu }: { userMenu: ReactNode }) {
 
 function AuthGate({ onReady }: { onReady: () => void }) {
   const [phase, setPhase] = useState<'checking' | 'choice' | 'qr' | 'error'>('checking');
-  const [message, setMessage] = useState('正在接入飞书登录态...');
+  const [message, setMessage] = useState('正在尝试飞书免登…');
   const [qrGoto, setQrGoto] = useState('');
   const qrElementId = useMemo(() => `app-login-qr-${Math.random().toString(36).slice(2)}`, []);
 
