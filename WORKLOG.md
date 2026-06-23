@@ -39,9 +39,12 @@
 - [x] [中] 渲染落库审计 ✅ **已完成**：migration 004 + `documentRenderAudit.ts` + `storage.insertRenderAudit` + 接入单次渲染；fire-and-forget；codex 审查通过；13 测试全过。
 - [x] [中] 前端 `_components.css` 拆分 ✅ **已完成**：1863 行拆 4 文件（全 <900），diff 逐字节验证零变化，vite build 通过；真机验证并入部署后。
 - [x] [低] 响应示例文档 ✅ **本地完成**：集成提示 + 有效期说明 + 更新日志；飞书同步在 task4。
-- [ ] [task4] 文档同步飞书 + runbook 加 `DOCUMENT_RENDER_STRICT_CONFIG`/`render_audit`
-- [ ] [task5] commit & push（注意甄别并发 agent 的登录重构改动）
-- [ ] [task6] 部署生产 + 真机验证（含前端视觉）
+- [x] [task4] 文档同步飞书 ✅：集成提示段插入飞书 + runbook STRICT_CONFIG + CLAUDE.md 表清单补 render_jobs/render_audit
+- [x] [task5] commit & push ✅：2 次提交（功能 + 测试回归修复 fb30cf4）已 push main
+- [x] [task6] 部署生产 + 真机验证 ✅：GitHub Actions 部署成功；`[config-self-check] ✅ 配置自检通过（production）`；render_audit 端到端落库（requestId/模板/status/变量计数/storage/caller 全对）；前端生产 CSS 字节级相同 + 登录页真机渲染正常
+
+## 最终交付（2026-06-23 全部完成）
+6 项全绿：配置自检 + 渲染审计 + 前端 CSS 拆分 + 文档（已同步飞书）+ commit/push + 部署/真机验证。CI 一次失败（2 测试回归）已修复二次部署通过。
 
 ## 时间线
 - 2026-06-23：修 401 → 同步文档 → 评估生成质量 → 立项优化工程（砍数据防错）→ 开始真实审查
