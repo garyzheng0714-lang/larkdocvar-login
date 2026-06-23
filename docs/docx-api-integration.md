@@ -6,6 +6,7 @@
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-06-24 | 契约新增 | 新增 `unusedStrategy=ignore`：模板正文里没有的多余变量从报错改为忽略（默认仍 `error` 报错以保护变量名拼写检查）。便于多维表格工作流用同一套变量喂不同模板。 | 单份/批量/异步 Docx 渲染请求新增可选字段 `unusedStrategy`（默认 `error` / `ignore`）；传 `ignore` 时多余变量不阻断生成，响应 `variables.unused` 仍会列出。 | 已同步 |
 | 2026-06-23 | 文档完善 | 新增「业务系统 / 多维表格工作流集成提示」：响应体只取接口 JSON 本体（不含 HTTP `headers`/`status_code` 壳）；补充 `download.url` 有效期说明与 `output.expiresInSeconds` 用法。 | 不改路由与字段；纯文档与集成指引。 | 已同步 |
 | 2026-06-23 | 文档补全 | 补充 API Key 的获取与配置说明，新增 401「API Key 无效或缺失」排查表；修复线上生产环境未配置 `DOCUMENT_RENDER_API_KEY` 导致服务端调用（多维表格工作流等）一律返回 401 的问题。 | 不新增、不改变路由与字段；澄清认证契约：真实 key 由部署方在服务端环境变量 `DOCUMENT_RENDER_API_KEY` 配置，文档与仓库只用 `<api-key>` 占位符，不保存明文。 | 已同步 |
 | 2026-06-22 | 权限修复 | 兼容历史无创建者的团队共享模板，避免用户能看到模板但无法保存更新，同时避免团队模板被第一位编辑者私有化。 | `PATCH /api/v1/document-templates/{templateId}` 与 `POST /api/v1/document-templates/{templateId}/versions` 允许已登录用户维护 `createdByOpenId` 为空的 `shared` 模板，但不会自动写入创建者；普通用户不能把这类模板改成 `private`，删除和历史无主 `private` 模板仍要求管理员或已记录创建者。 | 已同步 |
@@ -697,6 +698,7 @@ curl -s -X DELETE 'http://localhost:3000/api/v1/document-templates/fbiftemp_2026
 | `variables` | object | 否 | 文本变量。值支持字符串、数字、布尔值和 `null`；`null` 会按空字符串处理。 |
 | `imageVariables` | object | 否 | 图片变量，见「图片变量」。 |
 | `missingStrategy` | string | 否 | 缺失文本变量处理策略。默认 `fail`；传 `blank` 时缺失文本变量按空字符串生成，图片变量仍必须提供。 |
+| `unusedStrategy` | string | 否 | 多余变量（模板正文里没有的变量名）处理策略。默认 `error`：返回 400 并在 `unusedVariables` 列出，用于发现变量名拼写错误。传 `ignore`：忽略多余变量、不阻断生成，响应 `variables.unused` 仍会列出。批量给不同模板喂同一套变量时用 `ignore`。 |
 | `output.fileName` | string | 否 | 下载文件名。服务端会自动补 `.docx`。 |
 | `output.expiresInSeconds` | number | 否 | 下载链接有效期，最大 7 天。 |
 | `output.includeFileBase64` | boolean | 否 | 是否在 `download.fileBase64` 返回文件内容。只建议侧边栏附件写回使用。 |

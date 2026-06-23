@@ -55,6 +55,7 @@ const documentRenderSchema = z.object({
   }).default({}),
   imageVariables: imageVariableMapSchema,
   missingStrategy: z.enum(['fail', 'blank']).optional(),
+  unusedStrategy: z.enum(['error', 'ignore']).optional(),
   output: z.object({
     fileName: z.string().trim().max(255).optional(),
     expiresInSeconds: z.number().int().positive().max(7 * 24 * 60 * 60).optional(),
@@ -697,7 +698,7 @@ function buildDocResponse(input: DocumentRenderRequest, requestId: string) {
   const missing = found.filter((name) => !Object.prototype.hasOwnProperty.call(variables, name));
   throwIfMissingVariables(getBlockingMissingVariables(missing, input.missingStrategy));
   const unused = getUnusedVariables(found, variables);
-  if (unused.length > 0) throw new UnusedVariablesError(unused);
+  if (unused.length > 0 && input.unusedStrategy !== 'ignore') throw new UnusedVariablesError(unused);
   const renderVariables = input.missingStrategy === 'blank' ? withBlankMissingVariables(variables, missing) : variables;
   const previewText = renderText(content, renderVariables);
   if (textHasResidualPlaceholder(previewText)) throw new UserFacingError('模板中仍有未替换的变量占位符，请检查模板。');
@@ -753,7 +754,7 @@ async function buildDocxResponse(
   throwIfMissingVariables(getBlockingMissingVariables(rendered.missing, input.missingStrategy));
   const unusedImageVariables = Object.keys(imageVariables).filter((name) => !rendered.images.found.includes(name)).map((name) => `image:${name}`);
   const unused = [...getUnusedVariables(rendered.found, variables), ...unusedImageVariables];
-  if (unused.length > 0) throw new UnusedVariablesError(unused);
+  if (unused.length > 0 && input.unusedStrategy !== 'ignore') throw new UnusedVariablesError(unused);
   if (rendered.hasResidualPlaceholders) throw new UserFacingError('模板中仍有未替换的变量占位符，请检查模板。');
   const outputFileName = input.output?.fileName
     || input.template.fileName

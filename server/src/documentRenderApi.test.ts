@@ -442,6 +442,38 @@ test('公开 API 遇到未使用变量时返回可读错误并列出变量名', 
   }
 });
 
+test('传 unusedStrategy=ignore 时忽略多余变量，正常生成并仍在 unused 中列出', async () => {
+  const api = await startApiServer();
+  try {
+    const response = await fetch(`${api.baseUrl}/api/v1/document-renders`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        template: {
+          format: 'doc',
+          title: '合同模板',
+          content: '客户：{{客户名称}}',
+        },
+        variables: {
+          客户名称: '上海测试科技有限公司',
+          金额: '12800 元',
+        },
+        unusedStrategy: 'ignore',
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json() as any;
+    assert.equal(body.ok, true);
+    // 验证意图：传 ignore 后多余变量不再阻断生成（批量喂同一套变量给不同模板的核心诉求），
+    // 但仍要透明列在 unused 里，方便排查是不是真写错了变量名。
+    assert.deepEqual(body.variables.unused, ['金额']);
+    assert.equal(body.document.previewText, '客户：上海测试科技有限公司');
+  } finally {
+    await api.close();
+  }
+});
+
 test('公开 API 有 OSS 存储时上传 Docx 并返回 OSS 临时下载链接', async () => {
   const restorePrivateUrls = enablePrivateTemplateUrlsForTest();
   const templateDocx = await createMinimalDocxBuffer('客户：{{客户名称}}');
