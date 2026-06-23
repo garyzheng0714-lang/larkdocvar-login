@@ -1,13 +1,27 @@
-export async function copyTextToClipboard(text: string): Promise<void> {
-  const strategies = isEmbeddedPage()
-    ? [copyWithSelectionFallback, copyWithNavigatorClipboard]
-    : [copyWithNavigatorClipboard, copyWithSelectionFallback];
+export type ClipboardCopyResult = 'copied' | 'selected';
+
+interface CopyTextOptions {
+  target?: HTMLElement | null;
+}
+
+export async function copyTextToClipboard(text: string, options: CopyTextOptions = {}): Promise<ClipboardCopyResult> {
+  const target = options.target ?? null;
+  const embedded = isEmbeddedPage();
+  const strategies = embedded
+    ? [
+        ...(target ? [() => copyWithVisibleSelectionTarget(text, target, embedded)] : []),
+        () => copyWithNavigatorClipboard(text),
+      ]
+    : [
+        () => copyWithNavigatorClipboard(text),
+        () => copyWithSelectionFallback(text),
+        ...(target ? [() => copyWithVisibleSelectionTarget(text, target, embedded)] : []),
+      ];
 
   let lastError: unknown = null;
   for (const strategy of strategies) {
     try {
-      await strategy(text);
-      return;
+      return await strategy();
     } catch (error) {
       lastError = error;
     }
@@ -25,14 +39,15 @@ function isEmbeddedPage(): boolean {
   }
 }
 
-async function copyWithNavigatorClipboard(text: string): Promise<void> {
+async function copyWithNavigatorClipboard(text: string): Promise<ClipboardCopyResult> {
   if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
     throw new Error('clipboard_api_unavailable');
   }
   await navigator.clipboard.writeText(text);
+  return 'copied';
 }
 
-function copyWithSelectionFallback(text: string): Promise<void> {
+function copyWithSelectionFallback(text: string): Promise<ClipboardCopyResult> {
   if (typeof document === 'undefined' || !document.body) {
     throw new Error('document_unavailable');
   }
@@ -76,5 +91,56 @@ function copyWithSelectionFallback(text: string): Promise<void> {
     activeElement?.focus({ preventScroll: true });
   }
 
-  return Promise.resolve();
+  return Promise.resolve('copied');
+}
+
+function copyWithVisibleSelectionTarget(
+  text: string,
+  target: HTMLElement,
+  embedded: boolean,
+): Promise<ClipboardCopyResult> {
+  if (typeof document === 'undefined') {
+    throw new Error('document_unavailable');
+  }
+
+  selectVisibleTarget(target, text);
+
+  const copied = typeof document.execCommand === 'function' && document.execCommand('copy');
+  if (!copied && !targetHasText(target, text)) {
+    throw new Error('copy_command_failed');
+  }
+
+  return Promise.resolve(embedded ? 'selected' : copied ? 'copied' : 'selected');
+}
+
+function selectVisibleTarget(target: HTMLElement, text: string): void {
+  if (isTextInput(target)) {
+    target.focus({ preventScroll: true });
+    target.select();
+    target.setSelectionRange(0, target.value.length);
+    return;
+  }
+
+  const selection = document.getSelection();
+  if (!selection) throw new Error('selection_unavailable');
+  const range = document.createRange();
+  range.selectNodeContents(target);
+  selection.removeAllRanges();
+  selection.addRange(range);
+
+  if (!targetHasText(target, text)) {
+    throw new Error('target_text_mismatch');
+  }
+}
+
+function isTextInput(target: HTMLElement): target is HTMLInputElement | HTMLTextAreaElement {
+  return (
+    (typeof HTMLInputElement !== 'undefined' && target instanceof HTMLInputElement) ||
+    (typeof HTMLTextAreaElement !== 'undefined' && target instanceof HTMLTextAreaElement)
+  );
+}
+
+function targetHasText(target: HTMLElement, text: string): boolean {
+  const value = isTextInput(target) ? target.value : target.textContent || '';
+  return value.trim() === text;
 }

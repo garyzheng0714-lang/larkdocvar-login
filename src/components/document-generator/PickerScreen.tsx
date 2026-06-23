@@ -28,7 +28,7 @@ export function PickerScreen({
   const [category, setCategory] = useState('全部');
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | undefined>(initialSelectedId);
-  const [copyNotice, setCopyNotice] = useState<{ id: string; ok: boolean } | null>(null);
+  const [copyNotice, setCopyNotice] = useState<{ id: string; status: 'copied' | 'selected' | 'error' } | null>(null);
 
   const list = useMemo(() => {
     return templates.filter(
@@ -45,16 +45,25 @@ export function PickerScreen({
     }
   }, [list, selectedId]);
 
-  async function copyTemplateId(templateId: string) {
+  async function copyTemplateId(templateId: string, target: HTMLElement | null) {
     try {
-      await copyTextToClipboard(templateId);
-      setCopyNotice({ id: templateId, ok: true });
+      const status = await copyTextToClipboard(templateId, { target });
+      setCopyNotice({ id: templateId, status });
     } catch {
-      setCopyNotice({ id: templateId, ok: false });
+      setCopyNotice({ id: templateId, status: 'error' });
     }
     window.setTimeout(() => {
       setCopyNotice((current) => (current?.id === templateId ? null : current));
     }, 1400);
+  }
+
+  function getCopyNoticeText(templateId: string): string | null {
+    if (copyNotice?.id !== templateId) return null;
+    return copyNotice.status === 'copied'
+      ? '已复制'
+      : copyNotice.status === 'selected'
+        ? '已选中'
+        : '请手动复制';
   }
 
   return (
@@ -114,45 +123,51 @@ export function PickerScreen({
           </div>
         ) : (
           <div className="picker-grid">
-            {list.map((t) => (
-              <div className="tcard-shell" key={t.id}>
-                <TemplateCard
-                  t={t}
-                  selected={t.id === selectedId}
-                  accent={accent}
-                  onClick={() => setSelectedId(t.id)}
-                />
-                <div
-                  className="template-card-actions"
-                  aria-label={`${t.name} 模板操作`}
-                >
-                  <button
-                    className="template-action-btn"
-                    type="button"
-                    onClick={() => onEdit(t)}
-                    aria-label={`更新模板：${t.name}`}
-                    title={`更新模板：${t.name}`}
+            {list.map((t) => {
+              const copyNoticeText = getCopyNoticeText(t.id);
+              return (
+                <div className="tcard-shell" key={t.id}>
+                  <TemplateCard
+                    t={t}
+                    selected={t.id === selectedId}
+                    accent={accent}
+                    onClick={() => setSelectedId(t.id)}
+                  />
+                  <div
+                    className="template-card-actions"
+                    aria-label={`${t.name} 模板操作`}
                   >
-                    <Icon.Doc />
-                    <span>更新</span>
-                  </button>
-                  <button
-                    className="template-copy-btn"
-                    type="button"
-                    onClick={() => copyTemplateId(t.id)}
-                    aria-label={`复制模板 ID：${t.id}`}
-                    title={`复制模板 ID：${t.id}`}
-                  >
-                    <Icon.Copy />
-                    <span>
-                      {copyNotice?.id === t.id
-                        ? (copyNotice.ok ? '已复制' : '复制失败')
-                        : '复制ID'}
-                    </span>
-                  </button>
+                    <button
+                      className="template-action-btn"
+                      type="button"
+                      onClick={() => onEdit(t)}
+                      aria-label={`更新模板：${t.name}`}
+                      title={`更新模板：${t.name}`}
+                    >
+                      <Icon.Doc />
+                      <span>更新</span>
+                    </button>
+                    <button
+                      className={'template-copy-btn' + (copyNoticeText ? ' is-copy-feedback' : '')}
+                      type="button"
+                      onClick={(event) => {
+                        const target = event.currentTarget
+                          .closest('.tcard-shell')
+                          ?.querySelector<HTMLElement>('.tcard-id code') ?? null;
+                        void copyTemplateId(t.id, target);
+                      }}
+                      aria-label={copyNoticeText ? `${copyNoticeText}：${t.id}` : `复制模板 ID：${t.id}`}
+                      aria-live="polite"
+                      title={`复制模板 ID：${t.id}`}
+                      data-feedback={copyNoticeText || undefined}
+                    >
+                      <Icon.Copy />
+                      <span>{copyNoticeText || '复制ID'}</span>
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

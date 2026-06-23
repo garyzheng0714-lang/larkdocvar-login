@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import { Icon } from './icons';
 import { copyTextToClipboard } from './clipboard';
@@ -53,7 +53,8 @@ export function PrimaryScreen({
   const [optsOpen, setOptsOpen] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [copyNotice, setCopyNotice] = useState<'ok' | 'error' | null>(null);
+  const [copyNotice, setCopyNotice] = useState<'copied' | 'selected' | 'error' | null>(null);
+  const templateIdRef = useRef<HTMLElement | null>(null);
 
   async function handlePreview() {
     if (!tpl || !onPreview || previewing) return;
@@ -82,13 +83,21 @@ export function PrimaryScreen({
   async function copyTemplateId() {
     if (!tpl) return;
     try {
-      await copyTextToClipboard(tpl.id);
-      setCopyNotice('ok');
+      const result = await copyTextToClipboard(tpl.id, { target: templateIdRef.current });
+      setCopyNotice(result);
     } catch {
       setCopyNotice('error');
     }
     window.setTimeout(() => setCopyNotice(null), 1400);
   }
+
+  const copyNoticeText = copyNotice === 'copied'
+    ? '已复制'
+    : copyNotice === 'selected'
+      ? '已选中'
+      : copyNotice === 'error'
+        ? '请手动复制'
+        : null;
 
   function setMapping(varName: string, fieldId: string) {
     setState((s) => ({ ...s, mapping: { ...s.mapping, [varName]: fieldId } }));
@@ -128,7 +137,7 @@ export function PrimaryScreen({
                     <span className="tpl-row-meta">
                       <span>{tpl.updatedAt}更新</span>
                       <span className="dot-sep" />
-                      <span className="tpl-row-id">ID {tpl.id}</span>
+                      <span className="tpl-row-id">ID <code ref={templateIdRef}>{tpl.id}</code></span>
                     </span>
                   </span>
                   <span className="tpl-row-action">
@@ -149,15 +158,17 @@ export function PrimaryScreen({
                     </button>
                   )}
                   <button
-                    className="template-copy-btn"
+                    className={'template-copy-btn' + (copyNoticeText ? ' is-copy-feedback' : '')}
                     type="button"
                     onClick={copyTemplateId}
-                    aria-label={`复制模板 ID：${tpl.id}`}
+                    aria-label={copyNoticeText ? `${copyNoticeText}：${tpl.id}` : `复制模板 ID：${tpl.id}`}
+                    aria-live="polite"
                     title={`复制模板 ID：${tpl.id}`}
+                    data-feedback={copyNoticeText || undefined}
                   >
                     <Icon.Copy />
                     <span>
-                      {copyNotice === 'ok' ? '已复制' : copyNotice === 'error' ? '复制失败' : '复制ID'}
+                      {copyNoticeText || '复制ID'}
                     </span>
                   </button>
                 </div>

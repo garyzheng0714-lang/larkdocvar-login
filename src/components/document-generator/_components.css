@@ -809,15 +809,24 @@
   font-size: 11px;
   line-height: 1;
 }
-.nt-id-main code {
+.nt-id-value {
+  display: block;
+  width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
   color: var(--txt-1);
   font: inherit;
   font-size: 12.5px;
   font-variant-numeric: tabular-nums;
+}
+.nt-id-value::selection {
+  background: rgba(51, 98, 255, .22);
 }
 .nt-id-copy {
   flex-shrink: 0;
@@ -1329,6 +1338,10 @@
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+.tpl-row-id code {
+  font: inherit;
+  color: inherit;
+}
 .tpl-row-action {
   display: none;
 }
@@ -1440,6 +1453,24 @@
   height: 1px;
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.tpl-row-actions .template-copy-btn.is-copy-feedback::after,
+.template-card-actions .template-copy-btn.is-copy-feedback::after {
+  content: attr(data-feedback);
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 3;
+  max-width: 96px;
+  padding: 5px 7px;
+  border: 1px solid var(--bd-2);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--txt-1);
+  box-shadow: 0 4px 14px rgba(20, 30, 60, .14);
+  font-size: 11px;
+  line-height: 1;
   white-space: nowrap;
 }
 .map-table.mapping-table {

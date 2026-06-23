@@ -147,12 +147,25 @@ test('模板 ID 复制入口必须带可见文案和复制反馈', () => {
   assert.doesNotMatch(generatorHeaderSource, /Icon\.Help/);
   assert.match(primaryScreenTemplateSource, /template-copy-btn/);
   assert.match(primaryScreenTemplateSource, /复制ID/);
+  assert.match(primaryScreenTemplateSource, /已选中/);
+  assert.match(primaryScreenTemplateSource, /is-copy-feedback/);
+  assert.match(primaryScreenTemplateSource, /data-feedback/);
+  assert.doesNotMatch(primaryScreenTemplateSource, /复制失败/);
   assert.match(primaryScreenTemplateSource, /copyTextToClipboard/);
   assert.match(pickerScreenSource, /template-copy-btn/);
   assert.match(pickerScreenSource, /复制ID/);
+  assert.match(pickerScreenSource, /已选中/);
+  assert.match(pickerScreenSource, /is-copy-feedback/);
+  assert.match(pickerScreenSource, /data-feedback/);
+  assert.doesNotMatch(pickerScreenSource, /复制失败/);
   assert.match(pickerScreenSource, /copyTextToClipboard/);
   assert.match(css, /\.template-copy-btn/);
+  assert.match(css, /\.template-copy-btn\.is-copy-feedback::after/);
   assert.match(css, /\.nt-id-card\s*\{/);
+  assert.match(newTemplateScreenSource, /nt-id-value/);
+  assert.match(newTemplateScreenSource, /已选中/);
+  assert.doesNotMatch(newTemplateScreenSource, /复制失败/);
+  assert.match(css, /\.nt-id-value\s*\{/);
 });
 
 test('模板库必须支持更新现有模板，而不是只能新建模板', () => {

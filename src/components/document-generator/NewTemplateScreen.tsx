@@ -34,13 +34,14 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
   const [visibility, setVisibility] = useState<'公用' | '个人'>(template?.visibility === 'shared' ? '公用' : '个人');
   const [desc, setDesc] = useState(template?.description || '');
   const [tipOpen, setTipOpen] = useState(false);
-  const [copyNotice, setCopyNotice] = useState<'ok' | 'error' | null>(null);
+  const [copyNotice, setCopyNotice] = useState<'copied' | 'selected' | 'error' | null>(null);
   const [loginPrompt, setLoginPrompt] = useState<{
     phase: 'loading' | 'choice' | 'ready' | 'error' | 'done';
     message: string;
     goto?: string;
   } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const templateIdInputRef = useRef<HTMLInputElement | null>(null);
   const qrElementIdRef = useRef(`nt-login-qr-${Math.random().toString(36).slice(2)}`);
   const retrySaveAfterLoginRef = useRef(false);
 
@@ -206,8 +207,8 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
   async function copyTemplateId() {
     if (!template) return;
     try {
-      await copyTextToClipboard(template.id);
-      setCopyNotice('ok');
+      const result = await copyTextToClipboard(template.id, { target: templateIdInputRef.current });
+      setCopyNotice(result);
     } catch {
       setCopyNotice('error');
     }
@@ -227,16 +228,32 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
           <div className="nt-id-card">
             <div className="nt-id-main">
               <span className="nt-id-label">模板 ID</span>
-              <code>{template.id}</code>
+              <input
+                ref={templateIdInputRef}
+                className="nt-id-value"
+                readOnly
+                value={template.id}
+                aria-label={`模板 ID：${template.id}`}
+                onFocus={(event) => event.currentTarget.select()}
+              />
             </div>
             <button
               className="nt-id-copy"
               type="button"
               onClick={copyTemplateId}
+              aria-live="polite"
               title={`复制模板 ID：${template.id}`}
             >
               <Icon.Copy />
-              <span>{copyNotice === 'ok' ? '已复制' : copyNotice === 'error' ? '复制失败' : '复制'}</span>
+              <span>
+                {copyNotice === 'copied'
+                  ? '已复制'
+                  : copyNotice === 'selected'
+                    ? '已选中'
+                    : copyNotice === 'error'
+                      ? '请手动复制'
+                      : '复制'}
+              </span>
             </button>
           </div>
         )}
