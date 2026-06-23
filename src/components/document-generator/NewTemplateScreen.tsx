@@ -4,11 +4,12 @@ import { Dropdown } from './Dropdown';
 import { copyTextToClipboard } from './clipboard';
 import { buildOptionalBitableSidebarHeaders } from './cloudDoc/bitableAdapter';
 import {
-  fetchTrustedLoginQrGoto,
   hasTrustedSession,
-  mountTrustedLoginQr,
+  pollOAuthHandoff,
+  startOAuthHandoff,
   tryFeishuClientTrustedLogin,
 } from './cloudDoc/feishuTrustedLogin';
+import { setStoredEmbeddedAuthToken } from '../../authSessionToken';
 import type { Template } from './types';
 
 interface SelectedFile {
@@ -24,6 +25,12 @@ interface NewTemplateScreenProps {
   onSave: () => void | Promise<void>;
 }
 
+// open_id 截断展示：完整 id 太长，detail 里只留头尾便于真机肉眼区分两个 open_id。
+function shortOpenId(value: string | undefined): string {
+  if (!value) return '(空)';
+  return value.length <= 14 ? value : `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
+
 export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTemplateScreenProps) {
   const isEditing = Boolean(template);
   const [file, setFile] = useState<SelectedFile | null>(null);
@@ -36,14 +43,13 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
   const [tipOpen, setTipOpen] = useState(false);
   const [copyNotice, setCopyNotice] = useState<'copied' | 'selected' | 'error' | null>(null);
   const [loginPrompt, setLoginPrompt] = useState<{
-    phase: 'loading' | 'choice' | 'ready' | 'error' | 'done';
+    phase: 'loading' | 'choice' | 'waiting' | 'error' | 'done';
     message: string;
-    goto?: string;
+    handoffCode?: string;
     detail?: string;
   } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const templateIdInputRef = useRef<HTMLInputElement | null>(null);
-  const qrElementIdRef = useRef(`nt-login-qr-${Math.random().toString(36).slice(2)}`);
   const retrySaveAfterLoginRef = useRef(false);
 
   function handleFiles(fileList: FileList | null) {
@@ -84,18 +90,12 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
         ? '保存新版本'
         : '保存模板';
 
+  // OAuth handoff 轮询：系统浏览器跑完授权后，后端把会话写进 handoff，这里取回并继续保存。
   useEffect(() => {
-    if (!loginPrompt?.goto) return;
+    const handoffCode = loginPrompt?.handoffCode;
+    if (!handoffCode) return;
     let cancelled = false;
-    mountTrustedLoginQr(qrElementIdRef.current, loginPrompt.goto).catch((err) => {
-      if (cancelled) return;
-      setLoginPrompt({
-        phase: 'error',
-        message: err instanceof Error ? err.message : '登录二维码加载失败，请稍后重试。',
-      });
-    });
-
-    const deadline = Date.now() + 90_000;
+    const deadline = Date.now() + 5 * 60 * 1000;
     const timer = window.setInterval(() => {
       if (Date.now() > deadline) {
         window.clearInterval(timer);
@@ -103,27 +103,51 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
           retrySaveAfterLoginRef.current = false;
           setLoginPrompt({
             phase: 'error',
-            message: '扫码登录超时，当前文件和填写内容已保留，请重新点击保存。',
+            message: '飞书登录超时，当前文件和填写内容已保留，请重新点击保存。',
           });
         }
         return;
       }
-      void hasTrustedSession().then((loggedIn) => {
-        if (!loggedIn || cancelled) return;
-        window.clearInterval(timer);
-        setLoginPrompt({ phase: 'done', message: '登录已完成，正在继续保存...' });
-        if (retrySaveAfterLoginRef.current) {
+      void pollOAuthHandoff(handoffCode).then((result) => {
+        if (cancelled) return;
+        if (result.status === 'done' && result.sessionToken) {
+          window.clearInterval(timer);
+          setStoredEmbeddedAuthToken(result.sessionToken);
+          setLoginPrompt({ phase: 'done', message: '登录已完成，正在继续保存...' });
+          if (retrySaveAfterLoginRef.current) {
+            retrySaveAfterLoginRef.current = false;
+            void saveTemplate();
+          }
+          return;
+        }
+        if (result.status === 'rejected') {
+          // open_id 不匹配：停止轮询、显示原因，detail 暴露两个 open_id 供真机诊断
+          // （区分"防住接管"vs"Base 与 OAuth open_id 应用隔离误伤"），允许重新尝试。
+          window.clearInterval(timer);
           retrySaveAfterLoginRef.current = false;
-          void saveTemplate();
+          setLoginPrompt({
+            phase: 'error',
+            message: `${result.reason || '飞书登录身份不一致。'}当前文件和填写内容已保留，请重新尝试飞书登录。`,
+            detail: `mismatch: base=${shortOpenId(result.expectedOpenId)} vs oauth=${shortOpenId(result.actualOpenId)}`,
+          });
+          return;
+        }
+        if (result.status === 'expired' || result.status === 'unknown') {
+          window.clearInterval(timer);
+          retrySaveAfterLoginRef.current = false;
+          setLoginPrompt({
+            phase: 'error',
+            message: '飞书登录已失效，当前文件和填写内容已保留，请重新点击保存。',
+          });
         }
       }).catch(() => undefined);
-    }, 1500);
+    }, 2000);
 
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [loginPrompt?.goto]);
+  }, [loginPrompt?.handoffCode]);
 
   async function ensureTrustedSessionForTemplateSave(): Promise<boolean> {
     if (await hasTrustedSession()) {
@@ -147,21 +171,21 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
     return false;
   }
 
-  async function startFallbackQrLogin() {
+  async function startHandoffLogin() {
     retrySaveAfterLoginRef.current = true;
-    setLoginPrompt({ phase: 'loading', message: '正在准备扫码备用登录...' });
+    setLoginPrompt({ phase: 'loading', message: '正在打开飞书授权页…' });
     try {
-      const goto = await fetchTrustedLoginQrGoto();
+      const code = await startOAuthHandoff();
       setLoginPrompt({
-        phase: 'ready',
-        message: '请用飞书扫码完成登录。当前文件和填写内容会保留，登录后会继续保存。',
-        goto,
+        phase: 'waiting',
+        message: '已打开飞书授权页，完成后自动继续保存。当前文件和填写内容会保留。',
+        handoffCode: code,
       });
     } catch (err) {
       retrySaveAfterLoginRef.current = false;
       setLoginPrompt({
         phase: 'error',
-        message: err instanceof Error ? err.message : '请先完成可信登录后再管理模板。当前文件和填写内容已保留。',
+        message: err instanceof Error ? err.message : '请先完成飞书登录后再管理模板。当前文件和填写内容已保留。',
       });
     }
   }
@@ -418,37 +442,50 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
                 {loginPrompt.detail}
               </div>
             )}
-            {loginPrompt.goto && loginPrompt.phase === 'ready' && (
-              <div className="nt-login-qr-wrap">
-                <div id={qrElementIdRef.current} className="nt-login-qr" />
-              </div>
-            )}
             {loginPrompt.phase === 'choice' && (
               <div className="nt-login-actions">
                 <button
                   type="button"
                   className="nt-login-primary"
-                  onClick={() => void saveTemplate()}
+                  onClick={() => void startHandoffLogin()}
                 >
-                  重新尝试飞书免登
+                  飞书登录
                 </button>
                 <button
                   type="button"
                   className="nt-login-retry"
-                  onClick={() => void startFallbackQrLogin()}
+                  onClick={() => void saveTemplate()}
                 >
-                  扫码备用登录
+                  重新尝试飞书免登
                 </button>
               </div>
             )}
-            {loginPrompt.phase === 'error' && (
+            {loginPrompt.phase === 'waiting' && (
               <button
                 type="button"
                 className="nt-login-retry"
-                onClick={() => void saveTemplate()}
+                onClick={() => void startHandoffLogin()}
               >
-                重新登录
+                重新打开授权
               </button>
+            )}
+            {loginPrompt.phase === 'error' && (
+              <div className="nt-login-actions">
+                <button
+                  type="button"
+                  className="nt-login-primary"
+                  onClick={() => void startHandoffLogin()}
+                >
+                  飞书登录
+                </button>
+                <button
+                  type="button"
+                  className="nt-login-retry"
+                  onClick={() => void saveTemplate()}
+                >
+                  重新尝试飞书免登
+                </button>
+              </div>
             )}
           </div>
         )}

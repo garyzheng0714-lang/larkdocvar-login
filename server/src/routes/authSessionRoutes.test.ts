@@ -4,6 +4,7 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { registerAuthSessionRoutes, sendAuthenticatedSessionResponse } from './authSessionRoutes';
+import { __resetHandoffStoreForTest } from '../authHandoff';
 
 async function startServer(): Promise<{ baseUrl: string; close: () => Promise<void> }> {
   const app = express();
@@ -255,4 +256,51 @@ test('登录接口不会把用户 access token 暴露给前端', async () => {
   assert.notEqual(profileEnd, -1);
   const profileBlock = source.slice(profileStart, profileEnd);
   assert.doesNotMatch(profileBlock, /accessToken|refreshToken|user_access_token/);
+});
+
+test('OAuth handoff/start 带 X-Bitable-Open-Id 头才发 code（绑定发起者身份，防会话接管）', async () => {
+  // 安全意图：handoff 必须绑定发起者的 Base open_id，缺身份不能建无主 handoff，
+  // 否则攻击者可建 code、钓鱼受害者完成 OAuth 来接管会话。
+  __resetHandoffStoreForTest();
+  const api = await startServer();
+  try {
+    const withId = await fetch(`${api.baseUrl}/api/auth/feishu/fbif/handoff/start`, {
+      method: 'POST',
+      headers: { 'X-Bitable-Open-Id': 'ou_initiator' },
+    });
+    const withIdBody = await withId.json() as { ok?: boolean; code?: string };
+    assert.equal(withId.status, 200);
+    assert.equal(withIdBody.ok, true);
+    assert.match(withIdBody.code || '', /^[0-9a-f]{64}$/);
+    assert.match(withId.headers.get('cache-control') || '', /no-store/);
+
+    const withoutId = await fetch(`${api.baseUrl}/api/auth/feishu/fbif/handoff/start`, {
+      method: 'POST',
+    });
+    const withoutIdBody = await withoutId.json() as { ok?: boolean; error?: string };
+    assert.equal(withoutId.status, 400);
+    assert.equal(withoutIdBody.ok, false);
+    assert.match(withoutIdBody.error || '', /缺少 Base 身份/);
+  } finally {
+    await api.close();
+    __resetHandoffStoreForTest();
+  }
+});
+
+test('OAuth handoff/:code 对非法 code 安全短路成 unknown，不喂进存储', async () => {
+  // 意图：伪造/格式非法的 code 必须被安全拒绝，返回 unknown，不返回任何会话信息。
+  __resetHandoffStoreForTest();
+  const api = await startServer();
+  try {
+    const response = await fetch(`${api.baseUrl}/api/auth/feishu/fbif/handoff/not-a-valid-code`);
+    const body = await response.json() as { ok?: boolean; status?: string; sessionToken?: string };
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.status, 'unknown');
+    assert.equal(body.sessionToken, undefined);
+    assert.match(response.headers.get('cache-control') || '', /no-store/);
+  } finally {
+    await api.close();
+    __resetHandoffStoreForTest();
+  }
 });

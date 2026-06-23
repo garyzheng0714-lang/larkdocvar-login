@@ -98,3 +98,124 @@
 - ✅ 已部署并验证 bundle（2026-06-23）：commit `895078a`(登录) + `51edea8`(测试断言) + `c8779ba`(初始文案)，GitHub Actions 部署成功。线上 `fbif-sidebar-docgen.fbif.com` bundle `index-DjjXPg2_.js` 实测：新文案"正在尝试飞书免登/改用扫码登录/飞书免登未能完成"在线，旧 OAuth 双按钮门面("使用 FBIF 飞书登录"等)+ 旧 loading 文案 0 残留。全量测试 301/301。
   - 踩坑：首发 push 部署在 Test 步失败——`sidebarResponsiveLayout.test.ts` 用源码字符串断言登录文案，3 条断言因重构过时。已改为断言重构后稳定锚点（规则九：测意图不测字面）。
 - ⏳ **唯一未验证（诚实标注，需用户配合）**：真实飞书桌面侧边栏里的 client-code 免登成功路径 + 扫码兜底——`tt.requestAccess` 只在飞书端内存在，本地普通浏览器跑不出。需用户在飞书桌面侧边栏「新建模板」实测一次：免登成功直接进 / 失败显具体原因(stage)+可转扫码 / "重新尝试"有反馈。删桌面 UA 闸门是基于"桌面 UA 不含 WebApp"的推断；即使推断错，失败也会响亮报因（不再死卡片）。
+
+## 阶段2：Base 侧边栏免登路线（2026-06-23 续，**进行中**）
+
+### 真机诊断铁证（用户实测，2026-06-23）
+免登失败卡片显示：`h5sdk_missing | h5sdk=N · tt=N · reqAccess=N · reqAuthCode=N · iframe=Y · lark=Y · webapp=N`
+→ **结论：这是飞书桌面客户端(lark=Y)的 Base 扩展 iframe 侧边栏，容器内不注入任何授权 JSAPI（h5sdk/tt 全无）。client-code 免登结构性不可行**——不是 bug，是 Base 扩展容器不给授权 API。（顺带印证了原 `isFeishuDesktopClientWithoutWebApp` 桌面闸门的判断没错，错只错在静默→死卡片；现已改成响亮报因。）
+- 诊断功能已上线：commit `1872587`，bundle `index-CRb94aX8.js`，`captureClientEnv()` 在 `feishuTrustedLogin.ts` + AuthGate/NewTemplateScreen 卡片显示 detail。
+
+### 用户决策（2026-06-23）
+- **永远不要扫码**：扫码彻底出局，不做主入口、不做兜底。
+- **选 A**：走 **Base SDK 原生「可验证」免登**（真零点击，用户在飞书里本来就登着）。
+
+### A 路线待研究的关键问题（compact 后第一件事）
+1. 飞书 Base 扩展 SDK `@lark-base-open/js-sdk` 是否提供**可验证**的免登凭证？现有 `bitable.bridge.getUserId()`(openId)/`getBaseUserId()`/`getTenantKey()` 都是**不可验证**身份提示（CLAUDE.md 红线：`X-Bitable-*` 不能替代登录）。
+2. 是否有类似"`bitable.bridge` 拿 authorization code / signed token"的 API，后端能拿去飞书验证/换 `user_access_token`？
+3. 查证途径：`lark-base` skill、`lark-openapi-explorer` skill、feishu-login-guide `references/official-docs/`、飞书开放平台「多维表格扩展脚本/插件 鉴权」文档、WebSearch。
+
+### 候选实现
+- **A（首选）**：前端 `bitable.bridge.<可验证API>()` → POST 新后端路由（如 `/api/auth/feishu/fbif/base-code`）→ 后端向飞书验证 → 建 session（复用 `finalizeTrustedLogin`/`upsertSession` + cookie/header 双通道）。**前提是问题1/2 有肯定答案。**
+- **B（A 不成时兜底，非扫码）**：新标签页 OAuth handoff（点按钮授权，不是扫码）+ 同源 localStorage 把 `session_token` 带回 iframe。注意：项目曾上线又下线（runbook 标"session 接管风险"），重做须签名 state + 短时效 + 同源校验做对。
+
+### 当前 deployed 登录态
+AuthGate = Mode A（免登→失败显原因+detail）；扫码按钮代码还在但**用户要求弃用**，A 落地后应移除扫码入口。
+
+### 不做
+- ❌ 扫码（用户否决）。
+- ❌ 直接信任 `X-Bitable-Open-Id` 当登录（不可验证，违 CLAUDE.md）。
+
+### 研究结论（2026-06-23，子代理调研，高置信度）
+**A 结构性死路。** 一手证据 = `@lark-base-open/js-sdk@1.0.2` 的 `dist/index.d.ts`：`bridge` 全部方法穷举无一返回可验证凭证。`getUserId`(已废弃)/`getBaseUserId`/`getTenantKey` 都是可伪造裸 id；唯一像 token 的 `getPersonalBaseToken()` 是**需用户手动在 Base UI 点击生成**的长期 server-side API token（验证的是 token 持有、非"此刻登录人"，且非零点击）。`authcode/requestauthcode/ticket/access_token/signature/jsapi` 在整个 dist grep 零命中。根因：飞书把"H5 网页应用 JSAPI 免登(h5sdk/tt)"和"Base 扩展 SDK(bridge)"做成两套互不相通运行时，Base 扩展 iframe 不注入 h5sdk、bridge 又刻意不给换码/验签。**"零点击+可验证+不扫码"三者不可兼得 = 飞书硬边界。**
+- 文档：bridge 全量 https://lark-base-team.github.io/js-sdk-docs/zh/api/bridge ；网页应用免登(不适用Base) https://open.feishu.cn/document/uAjLw4CM/ukTMukTMukTM/web-app-resource-introduction/utilize-jsapi
+- 证据文件：scratchpad `package/dist/index.d.ts`（bridge 接口 L461-486 / L3033-3059）。
+
+### 决策：实装 B（OAuth handoff，非扫码，一次点击，可验证）
+用户「永不扫码」+ A 死路 → B 是唯一可行的可信链路。形态：**点「飞书登录」→ 系统浏览器跑标准飞书 OAuth 授权（authen/v1/authorize → code → 后端换 user_access_token，已有路由）→ 把会话带回 Base iframe**。
+- **难点 = 会话回传 iframe**：系统浏览器与飞书桌面 webview 不共享 cookie/localStorage。**解法 = handoff-code 轮询（类 device-flow，规避 cookie 隔离）**：
+  1. 前端 POST `/api/auth/feishu/fbif/handoff/start` → 后端建 handoff 记录 `{code=crypto随机, status=pending, exp=5min, sessionToken=null}` → 返回 code。
+  2. 前端开系统浏览器到 `/auth/feishu/fbif/login?handoff=<code>`（code 进**签名 state**，防伪造）。
+  3. OAuth 在浏览器完成 → `finalizeTrustedLogin` 建 session → **同时**把 sessionToken 写进该 handoff 记录、status=done。
+  4. 前端轮询 `GET /api/auth/feishu/fbif/handoff/:code`（~2s）→ done 后返回 sessionToken → 存 localStorage(X-Session-Token) → 登录态成立。
+  5. **安全**（避开旧 `/start`+`/login-status` 被下线的"session 接管风险"）：code crypto 随机不可猜、**单次消费**、5min 过期、与 state 签名绑定、handoff 记录只在 done 后短窗内可取一次。
+- 存储：handoff 记录可先用**内存 Map + 定时清理**（够用、无需 migration）；生产多实例时再落库（当前单实例，内存够）。
+- 复用：`createSignedState/verifySignedState`、`finalizeTrustedLogin`、`upsertSession`、前端 `authSessionToken.ts` 全复用。
+- 完成后：**移除扫码入口**（AuthGate + NewTemplateScreen 的扫码按钮/QR），改为「飞书登录」单按钮 + handoff 轮询。
+
+### 不做
+- ❌ 扫码（用户否决）。❌ A（不可行）。❌ 信任裸 open_id 当登录。
+
+### 待办（goal 驱动，逐项闭环）
+- [x] B-后端：handoff 内存存储 + `POST handoff/start` + `GET handoff/:code` + `login` 路由读 handoff state + `finalizeTrustedLogin` 回写 handoff。
+- [x] B-前端：AuthGate/NewTemplateScreen 改 handoff 流（开浏览器 + 轮询）；移除扫码。
+- [x] tsc + build + 测试（含脆弱源码断言同步）。
+- [ ] /codex:review 审查 → 按结果+判断改。（用户负责）
+- [ ] 部署 → 真机验证（系统浏览器回跳 + handoff 轮询拿回会话）。（用户负责）
+
+### 实装记录（2026-06-23，handoff 落地）
+- 新建 `server/src/authHandoff.ts`：内存 Map handoff 存储。`HANDOFF_TTL_MS=5min`；
+  `createHandoff()`(crypto 32B hex code)/`completeHandoff(code,token)`/`consumeHandoff(code)`(done 后单次消费即删)；
+  `pruneExpired(now?)` 在每次 create/complete/consume 顺带调用（无 setInterval）；`__resetHandoffStoreForTest()` 仅测试。
+  过期测试钩子：`pruneExpired(now)` 接受可选 now，测试传未来时间触发过期，不脏化生产 API。
+- `authSessionRoutes.ts`：
+  - `OAuthStatePayload` 加可选 `handoff?`；`createSignedState(...,handoff?)` 仅有值时进 payload（自动签名）。
+  - 新增 `decodeSignedStatePayload()` 复用 `verifySignedState` 校验后返回 payload；`verifySignedState` 改为它的 `!==null` 包装（不破坏 callback/qr-callback）。
+  - `/auth/feishu/:appKey/login` 读 `query.handoff`（>128 视为无效忽略）传入 state。
+  - `finalizeTrustedLogin(...,handoffCode?)`：成功 upsertSession+建 token 后、return 前若有 handoffCode 调 `completeHandoff`。仅 OAuth callback 传，client-code/qr-callback 不传。
+  - callback 用 `decodeSignedStatePayload` 取 handoff 传入。
+  - 新增 `POST /api/auth/feishu/:appKey/handoff/start`（返回 code+expiresIn:300, no-store）、`GET /api/auth/feishu/:appKey/handoff/:code`（hex64 校验, consumeHandoff, no-store），放在两条 410 兜底之前。
+- 前端 `feishuTrustedLogin.ts`：加 `startOAuthHandoff()`(POST start + window.open login?handoff=)、`pollOAuthHandoff(code)`；
+  移除 `fetchTrustedLoginQrGoto`/`mountTrustedLoginQr`/`FEISHU_QR_SDK_URL`/`QRLogin`/`qrSdkLoadPromise`。
+- `App.tsx` AuthGate：phase `'qr'`→`'waiting'`；主按钮「飞书登录」走 `startHandoffLogin()`（开浏览器+2s 轮询，done→存 token→onReady；超时 5min/连续失败报错可重试）；次按钮「重新尝试免登」。
+- `NewTemplateScreen.tsx`：去扫码；`loginPrompt.phase` 用 `'waiting'`；主按钮「飞书登录」走 handoff，done 后 `retrySaveAfterLoginRef` 继续 `saveTemplate()`；保留 detail + 「重新尝试飞书免登」。
+- 测试：新增 `server/src/authHandoff.test.ts`（create→pending/complete→done/单次消费/过期/未知）；
+  `sidebarResponsiveLayout.test.ts` 扫码断言改 handoff 锚点（`飞书登录`/`startOAuthHandoff`/`重新尝试飞书免登`），保持意图。
+
+### 三项校验结果（2026-06-23，全绿）
+- typecheck：`tsc --noEmit` 0 错误。
+- build:web：`vite build` 通过（chunk size 警告为既有，无关）。
+- tests：`# tests 314 / # pass 314 / # fail 0`。
+- 偏离 spec：(1) consumeHandoff 内 prune 顺序——spec 写"开头 prune 后判断"，但开头 prune 会把
+  已过期的目标 code 删掉导致永远走 unknown、expired 不可达（spec 自身张力）。改为先单独判定目标
+  code（过期→删它返回 expired），再 prune 其余项，使 expired 可达且语义更准。(2) 顺带把
+  feishuTrustedLogin.ts 的 STAGE_REASONS 文案"改用扫码登录"改成"点击下方飞书登录"（扫码入口已删，
+  原文案会指向不存在的入口，属我的改动引入的不一致，按规则三清理）。
+
+## open_id 绑定加固（2026-06-23）
+
+### 背景：会话接管风险
+原 handoff（前端建 code → 开系统浏览器跑 OAuth → 轮询取 sessionToken）有**会话接管风险**：
+攻击者建 code → 钓鱼受害者完成 OAuth → 受害者 token 落进该 code → 攻击者轮询偷走。
+
+### 加固机制（open_id 绑定）
+- `handoff/start` 强制读 `X-Bitable-Open-Id`（发起者 Base 身份），空 → 400「缺少 Base 身份」，
+  不建无主 handoff。`createHandoff(expectedOpenId)` 把它绑进记录。
+- OAuth 在系统浏览器完成后，`finalizeTrustedLogin` 调 `completeHandoff(code, token, userInfo.open_id)`：
+  只有 OAuth 完成者 open_id **严格等于** expectedOpenId 才写 token（status=done）；否则置 status=rejected、
+  留存 actualOpenId，**不发 token**。
+- handoff 状态扩展 `'pending'|'done'|'rejected'`；`consumeHandoff` 对 rejected 单次返回
+  `{reason, expectedOpenId, actualOpenId}` 后删除（供诊断）。前端轮询 rejected → 停止 + 显原因 +
+  detail 拼两个截断 open_id（`mismatch: base=… vs oauth=…`）+ 允许重试。
+- 顺带 codex 3 个 Medium：M1 路由正向 smoke 测试；M2 生产缺 `OAUTH_STATE_SIGNING_SECRET` 模块加载时
+  `console.error` 响亮告警（不 crash）；M3 login 路由 `query.handoff` 改 hex64 格式校验（与 handoff/:code 对齐）。
+
+### 头号真机验证项（必须真机确认）
+**Base bridge `getUserId()` 的 open_id 是否等于 OAuth app 的 open_id。** 飞书 open_id 按应用隔离，
+Base 扩展 SDK 的 open_id 与 FBIF OAuth app 的 open_id **可能不是同一命名空间**。若不同，严格相等会把
+**正常登录误判成 rejected**。因此 mismatch 时刻意**不静默**：后端日志打 actual(OAuth) open_id +
+说明，前端 detail 同时显示两个截断 open_id。真机看到 rejected 时据此区分：
+- base 与 oauth 两个 id 明显不同且都是"自己" → **应用隔离误伤**，需放宽比对策略（如改比对其他可验证字段）。
+- base 是自己、oauth 是陌生 id → **真防住了接管攻击**。
+
+### 旧调用方兼容
+client-code / qr-callback 路由调 `finalizeTrustedLogin` **不传 handoffCode**，completeHandoff 不触发，
+行为完全不变。
+
+### 三项校验结果（2026-06-23，全绿）
+- typecheck：`tsc --noEmit` 0 错误。
+- build:web：`vite build` 通过（chunk size 警告为既有，无关）。
+- tests：`# tests 319 / # pass 319 / # fail 0`。
+- 偏离 spec：后端 mismatch 日志只打 actual(OAuth) open_id（expected 由 handoff/:code 的 rejected 响应连同
+  actualOpenId 一并回前端 detail）——因 spec 把 `completeHandoff` 返回值严格限定为 `{matched}`，
+  日志处拿不到 expectedOpenId。前端 detail 完整暴露两个 id，满足"真机可区分"核心目标。

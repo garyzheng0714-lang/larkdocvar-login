@@ -1,6 +1,6 @@
+import { buildOptionalBitableSidebarHeaders } from './bitableAdapter';
+
 const FEISHU_H5_SDK_URL = 'https://lf-scm-cn.feishucdn.com/lark/op/h5-js-sdk-1.5.44.js';
-const FEISHU_QR_SDK_URL =
-  'https://lf-package-cn.feishucdn.com/obj/feishu-static/lark/passport/qrcode/LarkSSOSDKWebQRCode-1.0.3.js';
 
 declare global {
   interface Window {
@@ -21,13 +21,6 @@ declare global {
         fail: (error: unknown) => void;
       }) => void;
     };
-    QRLogin?: (options: {
-      id: string;
-      goto: string;
-      width?: string;
-      height?: string;
-      style?: string;
-    }) => unknown;
   }
 }
 
@@ -42,7 +35,6 @@ class FeishuClientLoginUnavailableError extends Error {
 }
 
 let h5SdkLoadPromise: Promise<void> | null = null;
-let qrSdkLoadPromise: Promise<void> | null = null;
 
 function isLikelyFeishuRuntime(): boolean {
   const userAgent = navigator.userAgent.toLowerCase();
@@ -273,23 +265,23 @@ function captureClientEnv(): string {
 // stage → 人话原因。规则十二「显式失败」：免登失败必须给用户看得懂的理由，
 // 而不是静默返回 false 让上层弹回一张"登录态没有接上"的死卡片。
 const STAGE_REASONS: Record<string, string> = {
-  not_feishu_runtime: '当前不在飞书客户端内，无法免登。请改用扫码登录。',
-  config_unavailable: '免登服务未就绪（缺少应用配置），请改用扫码登录。',
-  sdk_load_timeout: '飞书免登组件加载超时，请检查网络后重试，或改用扫码登录。',
-  h5sdk_missing: '当前飞书环境不支持客户端内免登，请改用扫码登录。',
-  h5sdk_ready_timeout: '飞书免登组件未就绪，请重试，或改用扫码登录。',
-  auth_api_missing: '当前飞书环境未提供授权接口，请改用扫码登录。',
-  request_access_timeout: '飞书免登授权超时，请重试，或改用扫码登录。',
-  request_auth_code_timeout: '飞书免登授权超时，请重试，或改用扫码登录。',
-  request_access_failed: '飞书免登授权失败或被拒绝，请重试，或改用扫码登录。',
-  request_auth_code_failed: '飞书免登授权失败或被拒绝，请重试，或改用扫码登录。',
-  request_access_no_code: '飞书免登未返回授权码，请重试，或改用扫码登录。',
-  request_auth_code_no_code: '飞书免登未返回授权码，请重试，或改用扫码登录。',
-  exchange_failed: '飞书免登换取登录态失败，请重试，或改用扫码登录。',
+  not_feishu_runtime: '当前不在飞书客户端内，无法免登。请点击下方飞书登录。',
+  config_unavailable: '免登服务未就绪（缺少应用配置），请点击下方飞书登录。',
+  sdk_load_timeout: '飞书免登组件加载超时，请检查网络后重试，或点击下方飞书登录。',
+  h5sdk_missing: '当前飞书环境不支持客户端内免登，请点击下方飞书登录。',
+  h5sdk_ready_timeout: '飞书免登组件未就绪，请重试，或点击下方飞书登录。',
+  auth_api_missing: '当前飞书环境未提供授权接口，请点击下方飞书登录。',
+  request_access_timeout: '飞书免登授权超时，请重试，或点击下方飞书登录。',
+  request_auth_code_timeout: '飞书免登授权超时，请重试，或点击下方飞书登录。',
+  request_access_failed: '飞书免登授权失败或被拒绝，请重试，或点击下方飞书登录。',
+  request_auth_code_failed: '飞书免登授权失败或被拒绝，请重试，或点击下方飞书登录。',
+  request_access_no_code: '飞书免登未返回授权码，请重试，或点击下方飞书登录。',
+  request_auth_code_no_code: '飞书免登未返回授权码，请重试，或点击下方飞书登录。',
+  exchange_failed: '飞书免登换取登录态失败，请重试，或点击下方飞书登录。',
 };
 
 function reasonForStage(stage: string | undefined): string {
-  return (stage && STAGE_REASONS[stage]) || '飞书免登未能完成，请重试，或改用扫码登录。';
+  return (stage && STAGE_REASONS[stage]) || '飞书免登未能完成，请重试，或点击下方飞书登录。';
 }
 
 function loginFailure(stage: string): TrustedLoginResult {
@@ -334,28 +326,49 @@ export async function tryFeishuClientTrustedLogin(): Promise<TrustedLoginResult>
   }
 }
 
-export async function fetchTrustedLoginQrGoto(): Promise<string> {
-  const { response, data } = await fetchJson<{ ok?: boolean; goto?: string; error?: string }>(
-    '/auth/feishu/fbif/qr-config',
-    { cache: 'no-store' },
-  );
-  if (!response.ok || data.ok === false || !data.goto) {
-    throw new Error(data.error || '登录二维码准备失败，请稍后重试。');
-  }
-  return data.goto;
+export interface OAuthHandoffPoll {
+  status: 'pending' | 'done' | 'rejected' | 'expired' | 'unknown';
+  sessionToken?: string;
+  // rejected：发起者（Base 身份）与 OAuth 登录者 open_id 不一致时返回，供 detail 诊断。
+  reason?: string;
+  expectedOpenId?: string;
+  actualOpenId?: string;
 }
 
-export async function mountTrustedLoginQr(elementId: string, goto: string): Promise<void> {
-  if (!qrSdkLoadPromise) qrSdkLoadPromise = loadScript(FEISHU_QR_SDK_URL);
-  await qrSdkLoadPromise;
-  if (!window.QRLogin) {
-    throw new Error('登录二维码组件加载失败，请稍后重试。');
+// 发起 OAuth handoff：向后端要一个 handoff code，再用系统浏览器打开飞书 OAuth 授权页
+// （code 进签名 state，防伪造）。授权完成后后端会把会话写进该 handoff，由 pollOAuthHandoff 取回。
+// open_id 绑定：必须带上 Base 身份头（含 X-Bitable-Open-Id），后端据此绑定 handoff 防接管；
+// 取不到 Base 身份则后端 400，这里抛清晰错误而不是静默打开一个永远会被拒的授权页。
+// Base 扩展 iframe 内 window.open 能否唤起系统浏览器是真机未知项——失败也只是没打开，不破坏状态。
+export async function startOAuthHandoff(): Promise<string> {
+  const headers = await buildOptionalBitableSidebarHeaders();
+  if (!headers['X-Bitable-Open-Id']) {
+    throw new Error('未取到 Base 身份，无法发起飞书登录');
   }
-  window.QRLogin({
-    id: elementId,
-    goto,
-    width: '220',
-    height: '220',
-    style: 'width:220px;height:220px;border:0;',
-  });
+  const { response, data } = await fetchJson<{ ok?: boolean; code?: string; error?: string }>(
+    '/api/auth/feishu/fbif/handoff/start',
+    { method: 'POST', cache: 'no-store', headers },
+  );
+  if (!response.ok || data.ok === false || !data.code) {
+    throw new Error(data.error || '未取到 Base 身份，无法发起飞书登录');
+  }
+  const code = data.code;
+  window.open(`/auth/feishu/fbif/login?handoff=${encodeURIComponent(code)}`, '_blank', 'noopener');
+  return code;
+}
+
+// 轮询 handoff 状态：done 时返回 sessionToken（后端单次消费，取走即失效）；
+// rejected 时返回 reason + 两个 open_id（供前端 detail 诊断 open_id 不匹配）。
+export async function pollOAuthHandoff(code: string): Promise<OAuthHandoffPoll> {
+  const { data } = await fetchJson<OAuthHandoffPoll & { ok?: boolean }>(
+    `/api/auth/feishu/fbif/handoff/${encodeURIComponent(code)}`,
+    { cache: 'no-store' },
+  );
+  return {
+    status: data.status || 'unknown',
+    ...(data.sessionToken ? { sessionToken: data.sessionToken } : {}),
+    ...(data.reason ? { reason: data.reason } : {}),
+    ...(data.expectedOpenId ? { expectedOpenId: data.expectedOpenId } : {}),
+    ...(data.actualOpenId ? { actualOpenId: data.actualOpenId } : {}),
+  };
 }

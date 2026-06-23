@@ -12,14 +12,15 @@ import {
   MOCK_ROWS,
 } from "./components/document-generator";
 import {
-  fetchTrustedLoginQrGoto,
   hasTrustedSession,
-  mountTrustedLoginQr,
+  pollOAuthHandoff,
+  startOAuthHandoff,
   tryFeishuClientTrustedLogin,
 } from "./components/document-generator/cloudDoc/feishuTrustedLogin";
 import {
   consumeEmbeddedAuthTokenFromHash,
   installEmbeddedAuthFetchFallback,
+  setStoredEmbeddedAuthToken,
 } from "./authSessionToken";
 import type { GeneratorKind, PrimaryState, RecordSpec } from "./components/document-generator";
 
@@ -172,18 +173,28 @@ function V2RealRoute({ userMenu }: { userMenu: ReactNode }) {
   );
 }
 
+// handoff 轮询参数：每 2s 轮询，5min 总超时（与后端 handoff TTL 对齐）。
+const HANDOFF_POLL_INTERVAL_MS = 2000;
+const HANDOFF_POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
+// open_id 截断展示：完整 id 太长，detail 里只留头尾便于真机肉眼区分两个 open_id。
+function shortOpenId(value: string | undefined): string {
+  if (!value) return '(空)';
+  return value.length <= 14 ? value : `${value.slice(0, 8)}…${value.slice(-4)}`;
+}
+
 function AuthGate({ onReady }: { onReady: () => void }) {
-  const [phase, setPhase] = useState<'checking' | 'choice' | 'qr' | 'error'>('checking');
+  const [phase, setPhase] = useState<'checking' | 'choice' | 'waiting' | 'error'>('checking');
   const [message, setMessage] = useState('正在尝试飞书免登…');
   const [detail, setDetail] = useState('');
-  const [qrGoto, setQrGoto] = useState('');
-  const qrElementId = useMemo(() => `app-login-qr-${Math.random().toString(36).slice(2)}`, []);
+  const [handoffCode, setHandoffCode] = useState('');
 
+  // 先试客户端内免登（真 H5 环境可能成功）；失败后给「飞书登录」(handoff) 主入口。
   const startLogin = useCallback(async () => {
     setPhase('checking');
     setMessage('正在尝试飞书免登…');
     setDetail('');
-    setQrGoto('');
+    setHandoffCode('');
     try {
       consumeEmbeddedAuthTokenFromHash();
       if (await hasTrustedSession()) {
@@ -195,9 +206,9 @@ function AuthGate({ onReady }: { onReady: () => void }) {
         onReady();
         return;
       }
-      // 显式失败：把免登失败的具体原因 + 容器环境诊断显示出来 + 给扫码入口。
+      // 显式失败：把免登失败的具体原因 + 容器环境诊断显示出来 + 给飞书登录入口。
       setPhase('choice');
-      setMessage(attempt.reason || '飞书免登未完成。可重试，或改用扫码登录。');
+      setMessage(attempt.reason || '飞书免登未完成。可点击下方「飞书登录」继续。');
       setDetail(attempt.detail || '');
     } catch (error) {
       setPhase('error');
@@ -205,45 +216,69 @@ function AuthGate({ onReady }: { onReady: () => void }) {
     }
   }, [onReady]);
 
+  // 开系统浏览器跑 OAuth + 进入轮询等待。
+  const startHandoffLogin = useCallback(async () => {
+    setPhase('checking');
+    setMessage('正在打开飞书授权页…');
+    setDetail('');
+    try {
+      const code = await startOAuthHandoff();
+      setHandoffCode(code);
+      setPhase('waiting');
+      setMessage('已打开飞书授权页，完成后自动登录…');
+    } catch (error) {
+      setPhase('error');
+      setMessage(error instanceof Error ? error.message : '飞书登录准备失败，请稍后重试。');
+    }
+  }, []);
+
   useEffect(() => {
     void startLogin();
   }, [startLogin]);
 
+  // waiting 阶段：每 2s 轮询 handoff，done 拿回 sessionToken；done/超时收尾。
   useEffect(() => {
-    if (!qrGoto || phase !== 'qr') return;
+    if (phase !== 'waiting' || !handoffCode) return;
     let cancelled = false;
-    mountTrustedLoginQr(qrElementId, qrGoto).catch((error) => {
-      if (cancelled) return;
-      setPhase('error');
-      setMessage(error instanceof Error ? error.message : '登录二维码加载失败，请稍后重试。');
-    });
+    const deadline = Date.now() + HANDOFF_POLL_TIMEOUT_MS;
     const timer = window.setInterval(() => {
-      void hasTrustedSession().then((loggedIn) => {
-        if (cancelled || !loggedIn) return;
+      if (Date.now() > deadline) {
         window.clearInterval(timer);
-        onReady();
+        if (!cancelled) {
+          setPhase('error');
+          setMessage('飞书登录超时，请重新点击「飞书登录」。');
+        }
+        return;
+      }
+      void pollOAuthHandoff(handoffCode).then((result) => {
+        if (cancelled) return;
+        if (result.status === 'done' && result.sessionToken) {
+          window.clearInterval(timer);
+          setStoredEmbeddedAuthToken(result.sessionToken);
+          onReady();
+          return;
+        }
+        if (result.status === 'rejected') {
+          // open_id 不匹配：停止轮询、显示原因，detail 暴露两个 open_id 供真机诊断
+          // （区分"防住接管"vs"Base 与 OAuth open_id 应用隔离误伤"），允许重新尝试。
+          window.clearInterval(timer);
+          setPhase('error');
+          setMessage(result.reason || '飞书登录身份不一致，请重新点击「飞书登录」。');
+          setDetail(`mismatch: base=${shortOpenId(result.expectedOpenId)} vs oauth=${shortOpenId(result.actualOpenId)}`);
+          return;
+        }
+        if (result.status === 'expired' || result.status === 'unknown') {
+          window.clearInterval(timer);
+          setPhase('error');
+          setMessage('飞书登录已失效，请重新点击「飞书登录」。');
+        }
       }).catch(() => undefined);
-    }, 1500);
+    }, HANDOFF_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [onReady, phase, qrElementId, qrGoto]);
-
-  const startQrLogin = useCallback(async () => {
-    setPhase('checking');
-    setMessage('正在准备扫码备用登录...');
-    setQrGoto('');
-    try {
-      const goto = await fetchTrustedLoginQrGoto();
-      setQrGoto(goto);
-      setPhase('qr');
-      setMessage('请用飞书扫码登录。登录完成后会自动进入插件。');
-    } catch (error) {
-      setPhase('error');
-      setMessage(error instanceof Error ? error.message : '登录二维码准备失败，请稍后重试。');
-    }
-  }, []);
+  }, [handoffCode, onReady, phase]);
 
   return (
     <div className="auth-gate">
@@ -257,31 +292,31 @@ function AuthGate({ onReady }: { onReady: () => void }) {
         )}
         {phase === 'choice' && (
           <div className="auth-gate-actions">
-            <button className="auth-gate-primary" type="button" onClick={() => void startLogin()}>
-              重新尝试飞书免登
+            <button className="auth-gate-primary" type="button" onClick={() => void startHandoffLogin()}>
+              飞书登录
             </button>
-            <button className="auth-gate-secondary" type="button" onClick={() => void startQrLogin()}>
-              扫码登录
+            <button className="auth-gate-secondary" type="button" onClick={() => void startLogin()}>
+              重新尝试免登
             </button>
           </div>
         )}
-        {phase === 'qr' && (
-          <>
-            <div className="auth-gate-qr-wrap">
-              <div id={qrElementId} className="auth-gate-qr" />
-            </div>
-            <button className="auth-gate-secondary auth-gate-secondary-inline" type="button" onClick={() => void startLogin()}>
+        {phase === 'waiting' && (
+          <div className="auth-gate-actions">
+            <button className="auth-gate-primary" type="button" onClick={() => void startHandoffLogin()}>
+              重新打开授权
+            </button>
+            <button className="auth-gate-secondary" type="button" onClick={() => void startLogin()}>
               重新尝试免登
             </button>
-          </>
+          </div>
         )}
         {phase === 'error' && (
           <div className="auth-gate-actions">
-            <button className="auth-gate-primary" type="button" onClick={() => void startLogin()}>
-              重新尝试飞书免登
+            <button className="auth-gate-primary" type="button" onClick={() => void startHandoffLogin()}>
+              飞书登录
             </button>
-            <button className="auth-gate-secondary" type="button" onClick={() => void startQrLogin()}>
-              扫码登录
+            <button className="auth-gate-secondary" type="button" onClick={() => void startLogin()}>
+              重新尝试免登
             </button>
           </div>
         )}

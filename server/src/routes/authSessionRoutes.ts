@@ -19,6 +19,7 @@ import {
   setOAuthStateCookie,
   UNAUTHORIZED_TENANT_MESSAGE,
 } from '../auth';
+import { completeHandoff, consumeHandoff, createHandoff } from '../authHandoff';
 import type { FeishuOAuthAppKey, OAuthV1TokenResult } from '../auth';
 
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME || 'larkdocvar_session';
@@ -31,6 +32,16 @@ const QR_STATE_TTL_SECONDS = 10 * 60;
 const OAUTH_AUTHORIZE_URL = 'https://accounts.feishu.cn/open-apis/authen/v1/authorize';
 const OAUTH_TOKEN_V2_URL = 'https://open.feishu.cn/open-apis/authen/v2/oauth/token';
 const PUBLIC_CALLBACK_PATH = '/auth/feishu';
+
+// M2：生产环境若没配独立签名密钥，state 签名会回退到 appSecret，安全性降级。
+// 只响亮告警（不 crash 进程，避免因密钥缺失把整个登录服务拖垮），让运维一眼看到。
+if (
+  process.env.NODE_ENV === 'production' &&
+  !(process.env.OAUTH_STATE_SIGNING_SECRET || '').trim()
+) {
+  // eslint-disable-next-line no-console
+  console.error('[auth] 生产环境未配置 OAUTH_STATE_SIGNING_SECRET，签名 state 回退到 appSecret，安全性降级');
+}
 
 type FeishuUserInfoPayload = {
   open_id?: string;
@@ -47,6 +58,9 @@ type OAuthStatePayload = {
   kind: 'oauth' | 'qr';
   nonce: string;
   exp: number;
+  // handoff code（device-flow 风格）：仅 Base iframe 发起的 OAuth 跳转携带，
+  // 用于把系统浏览器里建好的会话回传给 iframe。签进 state 后由 HMAC 自动防伪造。
+  handoff?: string;
 };
 
 function appEnvPrefix(appKey: FeishuOAuthAppKey): 'FEISHU_FBIF' | 'FEISHU_FUDE' {
@@ -132,6 +146,7 @@ function createSignedState(
   kind: OAuthStatePayload['kind'],
   appSecret: string,
   appId: string,
+  handoff?: string,
 ): string {
   const payload: OAuthStatePayload = {
     v: 1,
@@ -140,8 +155,44 @@ function createSignedState(
     nonce: crypto.randomBytes(24).toString('base64url'),
     exp: Math.floor(Date.now() / 1000) + QR_STATE_TTL_SECONDS,
   };
+  if (handoff) payload.handoff = handoff;
   const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
   return `${body}.${signStateBody(body, process.env.OAUTH_STATE_SIGNING_SECRET || appSecret || appId)}`;
+}
+
+// 校验签名 + v/appKey/kind/exp，通过则返回解析后的 payload（含 handoff），否则 null。
+function decodeSignedStatePayload(
+  state: string,
+  appKey: FeishuOAuthAppKey,
+  kind: OAuthStatePayload['kind'],
+  appSecret: string,
+  appId: string,
+): OAuthStatePayload | null {
+  if (!state) return null;
+  const [body, signature] = state.split('.');
+  if (!body || !signature) return null;
+
+  const expected = signStateBody(body, process.env.OAUTH_STATE_SIGNING_SECRET || appSecret || appId);
+  const actualBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (actualBuffer.length !== expectedBuffer.length) return null;
+  if (!crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Partial<OAuthStatePayload>;
+    if (
+      payload.v === 1 &&
+      payload.appKey === appKey &&
+      payload.kind === kind &&
+      typeof payload.exp === 'number' &&
+      payload.exp >= Math.floor(Date.now() / 1000)
+    ) {
+      return payload as OAuthStatePayload;
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function verifySignedState(
@@ -151,28 +202,7 @@ function verifySignedState(
   appSecret: string,
   appId: string,
 ): boolean {
-  if (!state) return false;
-  const [body, signature] = state.split('.');
-  if (!body || !signature) return false;
-
-  const expected = signStateBody(body, process.env.OAUTH_STATE_SIGNING_SECRET || appSecret || appId);
-  const actualBuffer = Buffer.from(signature);
-  const expectedBuffer = Buffer.from(expected);
-  if (actualBuffer.length !== expectedBuffer.length) return false;
-  if (!crypto.timingSafeEqual(actualBuffer, expectedBuffer)) return false;
-
-  try {
-    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as Partial<OAuthStatePayload>;
-    return (
-      payload.v === 1 &&
-      payload.appKey === appKey &&
-      payload.kind === kind &&
-      typeof payload.exp === 'number' &&
-      payload.exp >= Math.floor(Date.now() / 1000)
-    );
-  } catch {
-    return false;
-  }
+  return decodeSignedStatePayload(state, appKey, kind, appSecret, appId) !== null;
 }
 
 function appendHashSessionToken(target: string, sessionToken: string): string {
@@ -282,6 +312,7 @@ async function finalizeTrustedLogin(
   tokens: OAuthV1TokenResult,
   appKey: FeishuOAuthAppKey,
   responseMode: 'json' | 'redirect',
+  handoffCode?: string,
 ): Promise<void> {
   const failLogin = (message: string): void => {
     if (responseMode === 'json') {
@@ -337,6 +368,22 @@ async function finalizeTrustedLogin(
   });
 
   response.cookie(SESSION_COOKIE_NAME, sessionToken, getSessionCookieOptions());
+
+  // Base iframe 发起的 OAuth：把会话回写进 handoff，让 iframe 轮询取回（系统浏览器与 iframe 不共享 cookie）。
+  // open_id 绑定：只有 OAuth 完成者 open_id 与发起者（Base 身份）一致才发 token，防会话接管。
+  if (handoffCode) {
+    const { matched } = completeHandoff(handoffCode, sessionToken, userInfo.open_id);
+    if (!matched) {
+      // 不静默——把 OAuth 实际 open_id 打出来。expected(Base) open_id 由 handoff/:code 的 rejected
+      // 响应连同 actualOpenId 一并返回前端 detail，真机据此区分"防住接管攻击"vs"Base 与 OAuth
+      // open_id 应用隔离导致的误伤"（红线注意项：两者可能不是同一个 open_id 命名空间）。
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[auth] handoff open_id 校验未通过：actual(OAuth)=${userInfo.open_id} ` +
+        '（expected(Base) open_id 见 handoff 诊断响应；若是误伤，请核对 Base bridge open_id 与 OAuth open_id 是否同一应用命名空间）',
+      );
+    }
+  }
 
   if (responseMode === 'json') {
     response.set('Cache-Control', 'no-store');
@@ -493,7 +540,12 @@ export function registerAuthSessionRoutes(app: express.Express): void {
       return;
     }
 
-    const state = createSignedState(appKey, 'oauth', config.appSecret, config.appId);
+    const rawHandoff = typeof request.query.handoff === 'string' ? request.query.handoff.trim() : '';
+    // M3：格式校验 64 hex（与 handoff/:code 的 hex64 校验对齐），不通过则置空忽略，
+    // 不把任意输入签进 state。
+    const handoff = /^[0-9a-f]{64}$/.test(rawHandoff) ? rawHandoff : '';
+
+    const state = createSignedState(appKey, 'oauth', config.appSecret, config.appId, handoff || undefined);
     setOAuthStateCookie(response, `${OAUTH_STATE_COOKIE_PREFIX}_${appKey}_oauth`, state);
     const params = new URLSearchParams({
       client_id: config.appId,
@@ -520,14 +572,17 @@ export function registerAuthSessionRoutes(app: express.Express): void {
 
     const stateCookieName = `${OAUTH_STATE_COOKIE_PREFIX}_${appKey}_oauth`;
     const cookieOk = consumeOAuthStateCookie(request, response, stateCookieName, state);
-    if (!cookieOk && !verifySignedState(state, appKey, 'oauth', config.appSecret, config.appId)) {
+    const statePayload = decodeSignedStatePayload(state, appKey, 'oauth', config.appSecret, config.appId);
+    if (!cookieOk && !statePayload) {
       redirectToFrontendWithAuthError(response, '登录状态已失效，请重新点击飞书登录。');
       return;
     }
+    // handoff 只能从签名 state 里取（HMAC 防伪造）；Base iframe 发起的登录才有。
+    const handoffCode = statePayload?.handoff;
 
     try {
       const tokens = await exchangeCodeV2(code, config.appId, config.appSecret, redirectUri);
-      await finalizeTrustedLogin(response, tokens, appKey, 'redirect');
+      await finalizeTrustedLogin(response, tokens, appKey, 'redirect', handoffCode);
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Feishu OAuth login error:', safeAuthErrorMessage(error));
@@ -596,6 +651,50 @@ export function registerAuthSessionRoutes(app: express.Express): void {
       console.error('Feishu QR login error:', safeAuthErrorMessage(error));
       redirectToFrontendWithAuthError(response, GENERIC_LOGIN_ERROR);
     }
+  });
+
+  // Base iframe OAuth handoff（device-flow 风格）：开系统浏览器跑 OAuth，iframe 轮询取回会话。
+  // 必须放在下面两条 410 兜底之前，否则会被拦掉。
+  app.post('/api/auth/feishu/:appKey/handoff/start', (request, response) => {
+    const appKey = resolveRouteAppKey(request, response);
+    if (!appKey) return;
+    // open_id 绑定：发起者必须带上 Base 身份 open_id，handoff 绑定它；只有 OAuth 完成者
+    // open_id 匹配才发 token（防会话接管）。缺身份直接拒绝，不建无主 handoff。
+    const openId = (request.header('X-Bitable-Open-Id') || '').trim();
+    if (!openId) {
+      response
+        .status(400)
+        .set('Cache-Control', 'no-store')
+        .json({ ok: false, error: '缺少 Base 身份，无法发起登录' });
+      return;
+    }
+    const code = createHandoff(openId);
+    response.set('Cache-Control', 'no-store').json({ ok: true, code, expiresIn: 300 });
+  });
+
+  app.get('/api/auth/feishu/:appKey/handoff/:code', (request, response) => {
+    const appKey = resolveRouteAppKey(request, response);
+    if (!appKey) return;
+    const code = typeof request.params.code === 'string' ? request.params.code : '';
+    // 非法 code（非 64 hex）安全短路成 unknown，避免把任意输入喂进存储。
+    if (!/^[0-9a-f]{64}$/.test(code)) {
+      response.set('Cache-Control', 'no-store').json({ ok: true, status: 'unknown' });
+      return;
+    }
+    const result = consumeHandoff(code);
+    response.set('Cache-Control', 'no-store').json({
+      ok: true,
+      status: result.status,
+      ...(result.sessionToken ? { sessionToken: result.sessionToken } : {}),
+      // rejected：把两个 open_id 带回前端 detail，真机据此区分"防住接管"vs"应用隔离误伤"。
+      ...(result.status === 'rejected'
+        ? {
+            reason: 'open_id 不匹配（发起者与登录者身份不一致）',
+            expectedOpenId: result.expectedOpenId,
+            actualOpenId: result.actualOpenId,
+          }
+        : {}),
+    });
   });
 
   app.all(/^\/auth\/feishu\/[^/]+(?:\/.*)?$/, sendAuthEntryDisabled);
