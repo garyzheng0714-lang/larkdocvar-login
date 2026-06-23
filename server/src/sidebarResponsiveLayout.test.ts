@@ -11,10 +11,17 @@ const layoutCss = readFileSync(
   new URL('../../src/components/document-generator/_layout.css', import.meta.url),
   'utf8',
 );
-const componentsCss = readFileSync(
-  new URL('../../src/components/document-generator/_components.css', import.meta.url),
-  'utf8',
-);
+// _components.css 已按功能拆分为 4 个文件；拼接后等价于原文件（顺序与 _design.css 一致）。
+const componentsCss = [
+  '_components-cards.css',
+  '_components-progress.css',
+  '_components-template-screen.css',
+  '_components-sidebar.css',
+]
+  .map((name) =>
+    readFileSync(new URL(`../../src/components/document-generator/${name}`, import.meta.url), 'utf8'),
+  )
+  .join('');
 const responsiveCss = readFileSync(
   new URL('../../src/components/document-generator/_responsive.css', import.meta.url),
   'utf8',
