@@ -39,6 +39,7 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
     phase: 'loading' | 'choice' | 'ready' | 'error' | 'done';
     message: string;
     goto?: string;
+    detail?: string;
   } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const templateIdInputRef = useRef<HTMLInputElement | null>(null);
@@ -141,6 +142,7 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
     setLoginPrompt({
       phase: 'choice',
       message: `${attempt.reason || '飞书免登未完成。'}当前文件和填写内容会保留。`,
+      detail: attempt.detail,
     });
     return false;
   }
@@ -411,6 +413,11 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
           <div className={`nt-login-card nt-login-${loginPrompt.phase}`}>
             <div className="nt-login-title">可信登录</div>
             <div className="nt-login-message">{loginPrompt.message}</div>
+            {loginPrompt.detail && (
+              <div style={{ marginTop: 6, fontFamily: 'monospace', fontSize: 11, lineHeight: 1.5, color: '#8a9099', wordBreak: 'break-all' }}>
+                {loginPrompt.detail}
+              </div>
+            )}
             {loginPrompt.goto && loginPrompt.phase === 'ready' && (
               <div className="nt-login-qr-wrap">
                 <div id={qrElementIdRef.current} className="nt-login-qr" />

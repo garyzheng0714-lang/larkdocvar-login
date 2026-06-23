@@ -175,12 +175,14 @@ function V2RealRoute({ userMenu }: { userMenu: ReactNode }) {
 function AuthGate({ onReady }: { onReady: () => void }) {
   const [phase, setPhase] = useState<'checking' | 'choice' | 'qr' | 'error'>('checking');
   const [message, setMessage] = useState('正在尝试飞书免登…');
+  const [detail, setDetail] = useState('');
   const [qrGoto, setQrGoto] = useState('');
   const qrElementId = useMemo(() => `app-login-qr-${Math.random().toString(36).slice(2)}`, []);
 
   const startLogin = useCallback(async () => {
     setPhase('checking');
     setMessage('正在尝试飞书免登…');
+    setDetail('');
     setQrGoto('');
     try {
       consumeEmbeddedAuthTokenFromHash();
@@ -193,9 +195,10 @@ function AuthGate({ onReady }: { onReady: () => void }) {
         onReady();
         return;
       }
-      // 显式失败：把免登失败的具体原因显示出来 + 给扫码入口，不再卡在通用文案上。
+      // 显式失败：把免登失败的具体原因 + 容器环境诊断显示出来 + 给扫码入口。
       setPhase('choice');
       setMessage(attempt.reason || '飞书免登未完成。可重试，或改用扫码登录。');
+      setDetail(attempt.detail || '');
     } catch (error) {
       setPhase('error');
       setMessage(error instanceof Error ? error.message : '登录状态确认失败，请稍后重试。');
@@ -247,6 +250,11 @@ function AuthGate({ onReady }: { onReady: () => void }) {
       <div className="auth-gate-panel">
         <div className="auth-gate-title">使用飞书登录</div>
         <div className="auth-gate-message">{message}</div>
+        {detail && (
+          <div style={{ marginTop: 8, fontFamily: 'monospace', fontSize: 11, lineHeight: 1.5, color: '#8a9099', wordBreak: 'break-all' }}>
+            {detail}
+          </div>
+        )}
         {phase === 'choice' && (
           <div className="auth-gate-actions">
             <button className="auth-gate-primary" type="button" onClick={() => void startLogin()}>

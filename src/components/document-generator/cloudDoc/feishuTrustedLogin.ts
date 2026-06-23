@@ -248,6 +248,26 @@ export interface TrustedLoginResult {
   stage?: string;
   /** 给终端用户看的人话原因（失败时一定有）。 */
   reason?: string;
+  /** 环境诊断摘要（h5sdk/tt/iframe 等），失败时直接显示，便于定位容器能力。 */
+  detail?: string;
+}
+
+// 抓当前容器能力快照——Base 扩展侧边栏没有 h5sdk/tt，这里一眼能看出来。
+function captureClientEnv(): string {
+  const tt = window.tt;
+  let iframe = 'Y';
+  try { iframe = window.self !== window.top ? 'Y' : 'N'; } catch { iframe = 'Y'; }
+  const ua = navigator.userAgent;
+  const marks = [
+    `h5sdk=${window.h5sdk ? 'Y' : 'N'}`,
+    `tt=${tt ? 'Y' : 'N'}`,
+    `reqAccess=${tt?.requestAccess ? 'Y' : 'N'}`,
+    `reqAuthCode=${tt?.requestAuthCode ? 'Y' : 'N'}`,
+    `iframe=${iframe}`,
+    `lark=${/lark/i.test(ua) ? 'Y' : 'N'}`,
+    `webapp=${ua.includes('WebApp') ? 'Y' : 'N'}`,
+  ];
+  return marks.join(' · ');
 }
 
 // stage → 人话原因。规则十二「显式失败」：免登失败必须给用户看得懂的理由，
@@ -273,7 +293,7 @@ function reasonForStage(stage: string | undefined): string {
 }
 
 function loginFailure(stage: string): TrustedLoginResult {
-  return { ok: false, stage, reason: reasonForStage(stage) };
+  return { ok: false, stage, reason: reasonForStage(stage), detail: `${stage} | ${captureClientEnv()}` };
 }
 
 export async function tryFeishuClientTrustedLogin(): Promise<TrustedLoginResult> {
