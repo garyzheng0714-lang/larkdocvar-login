@@ -219,3 +219,14 @@ client-code / qr-callback 路由调 `finalizeTrustedLogin` **不传 handoffCode*
 - 偏离 spec：后端 mismatch 日志只打 actual(OAuth) open_id（expected 由 handoff/:code 的 rejected 响应连同
   actualOpenId 一并回前端 detail）——因 spec 把 `completeHandoff` 返回值严格限定为 `{matched}`，
   日志处拿不到 expectedOpenId。前端 detail 完整暴露两个 id，满足"真机可区分"核心目标。
+
+### Codex 审查结论（2026-06-23）
+- 无 Critical。1 条 High = OAuth callback 的 `#session_token` redirect（**既有架构**问题，handoff 未新增也未消除；hash 不发服务器，暴露面小于 query；记为已知风险）。3 条 Medium 已全修（M1/M2/M3）。
+- **Codex 漏判、我独立发现并已加固**：会话接管/登录 CSRF（攻击者建 code→钓鱼受害者完成 OAuth→偷会话）= 旧 handoff 被 410 下线的原因本身。已用 open_id 绑定加固（用户拍板）。
+
+### 部署 + 上线验证（2026-06-23 → 24）
+- commit `3fbd22a` push main → GitHub Actions 部署成功（Test+Build+Deploy On Server 全过，37s）。
+- 线上 bundle `index-Dqsr7h1j.js`：handoff 锚点在线、**扫码 0 残留**；`POST .../handoff/start` 不带 `X-Bitable-Open-Id` 返回 **400**（open_id 绑定强制生效）。
+
+### 状态：✅ 自动可完成部分全部闭环；⏳ 仅剩真机验证（需用户）
+飞书桌面 Base 侧边栏点「飞书登录」实测：① window.open 能否唤起系统浏览器跑 OAuth 并回跳；② handoff 轮询能否拿回会话（rejected 则看 detail 两个 open_id 判断"防住接管"vs"应用隔离误伤"）；③ 成功后自动进插件/继续保存。
