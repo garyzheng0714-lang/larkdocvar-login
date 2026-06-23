@@ -191,37 +191,37 @@ test('模板库必须支持更新现有模板，而不是只能新建模板', ()
   assert.match(css, /\.template-card-actions\s*\{[\s\S]*?position:\s*absolute;/);
 });
 
-test('保存模板前先检查可信会话，避免文件处理完成后才报登录失败', () => {
-  assert.match(newTemplateScreenSource, /ensureTrustedSessionForTemplateSave/);
-  assert.match(newTemplateScreenSource, /tryFeishuClientTrustedLogin/);
-  // 免登失败后提供 OAuth handoff 兜底（非扫码：开系统浏览器跑 OAuth + 轮询取回会话）。
-  assert.match(newTemplateScreenSource, /startOAuthHandoff/);
-  assert.match(newTemplateScreenSource, /pollOAuthHandoff/);
-  assert.match(newTemplateScreenSource, /飞书登录/);
-  assert.match(newTemplateScreenSource, /重新尝试飞书免登/);
-  // 扫码入口已彻底移除，不能再出现。
+test('保存模板不再有登录墙，直接调模板 API（用户指令「登录的流程去掉先」）', () => {
+  // 登录闸门 + handoff 编排已整体移除：保存模板时不再做任何会话检查，直接读文件调 API。
+  assert.doesNotMatch(newTemplateScreenSource, /ensureTrustedSessionForTemplateSave/);
+  assert.doesNotMatch(newTemplateScreenSource, /tryFeishuClientTrustedLogin/);
+  assert.doesNotMatch(newTemplateScreenSource, /startOAuthHandoff/);
+  assert.doesNotMatch(newTemplateScreenSource, /pollOAuthHandoff/);
+  assert.doesNotMatch(newTemplateScreenSource, /loginPrompt/);
+  // 扫码入口早已移除，仍不能出现。
   assert.doesNotMatch(newTemplateScreenSource, /扫码/);
-  assert.ok(newTemplateScreenSource.indexOf('ensureTrustedSessionForTemplateSave') < newTemplateScreenSource.indexOf('readFileAsBase64'));
+  // saveTemplate 直接走「读文件 → 调 /api/v1/document-templates → onSave」。
+  assert.match(newTemplateScreenSource, /readFileAsBase64/);
+  assert.match(newTemplateScreenSource, /\/api\/v1\/document-templates/);
+  // API 失败（含 401）由现有 catch + setError 响亮显示，不再被登录卡片拦截。
+  assert.match(newTemplateScreenSource, /setError\(err instanceof Error/);
 });
 
-test('真实插件入口必须先接上可信会话，不能进主界面后才在保存时报登录失败', () => {
-  assert.match(appSource, /AuthGate/);
+test('真实插件入口直接渲染主界面，不再有登录墙（用户指令「登录的流程去掉先」）', () => {
+  // 登录墙整体移除：不再有 AuthGate / authReady 闸门 / handoff 编排。
+  assert.doesNotMatch(appSource, /AuthGate/);
+  assert.doesNotMatch(appSource, /authReady/);
+  assert.doesNotMatch(appSource, /hasTrustedSession/);
+  assert.doesNotMatch(appSource, /tryFeishuClientTrustedLogin/);
+  assert.doesNotMatch(appSource, /startOAuthHandoff/);
+  assert.doesNotMatch(appSource, /pollOAuthHandoff/);
+  // mockMode 之外直接渲染主界面 V2RealRoute，不经任何登录分支。
+  assert.match(appSource, /<V2RealRoute/);
+  // 既有会话兜底通道保留：挂载时消费 hash token，X-Session-Token 自动带上仍生效。
   assert.match(appSource, /consumeEmbeddedAuthTokenFromHash/);
   assert.match(authSessionTokenSource, /X-Session-Token/);
   assert.match(authSessionTokenSource, /response\.headers\.get\('X-Session-Token'\)/);
   assert.match(authSessionTokenSource, /setStoredEmbeddedAuthToken\(refreshed\)/);
-  assert.match(appSource, /hasTrustedSession/);
-  assert.match(appSource, /tryFeishuClientTrustedLogin/);
-  // 重构后入口模型：端内免登为主 + OAuth handoff 兜底（非扫码，一次点击）。主按钮「飞书登录」。
-  assert.match(appSource, /startOAuthHandoff/);
-  assert.match(appSource, /pollOAuthHandoff/);
-  assert.match(appSource, /飞书登录/);
-  // 扫码入口已彻底移除，不能再出现。
-  assert.doesNotMatch(appSource, /扫码/);
-  // 免登优先：入口流程先尝试 client-code 免登，再退到 handoff 兜底。
-  assert.ok(appSource.indexOf('const attempt = await tryFeishuClientTrustedLogin()') < appSource.indexOf('const startHandoffLogin'));
-  assert.match(appSource, /if \(!authReady\)/);
-  assert.ok(appSource.indexOf('if (!authReady)') < appSource.indexOf('<V2RealRoute'));
 });
 
 test('新建模板表单在窄侧边栏内使用纵向表单布局，不退回浏览器默认控件', () => {

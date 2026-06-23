@@ -1,6 +1,39 @@
 # 云文档变量批量生成 — 优化工程 WORKLOG
 
-最后更新：2026-06-23
+最后更新：2026-06-24
+
+---
+
+# 前端登录流程移除（2026-06-24，用户指令「登录的流程去掉先」）
+
+## 目标
+让插件直接进、不被登录墙挡。只动前端 + 相关测试，不碰后端 auth 路由 / 会话逻辑。
+
+## 改了什么
+- **`src/App.tsx`**：删除整个 `AuthGate` 组件（含 useEffect/useCallback/handoff 轮询）、`HANDOFF_POLL_*` 常量、`shortOpenId` 工具；`App()` 删 `authReady` state 和 `if (!authReady) return <AuthGate/>` 分支，mockMode 检查后直接 `return <V2RealRoute userMenu={null} />`。
+- **import 清理**：移除 `feishuTrustedLogin` 的 `hasTrustedSession`/`pollOAuthHandoff`/`startOAuthHandoff`/`tryFeishuClientTrustedLogin`；移除 `setStoredEmbeddedAuthToken`。
+  - **保留** `installEmbeddedAuthFetchFallback()`（模块顶层调用，无害，让既有会话 token 仍带上 `X-Session-Token` header）。
+  - **保留** `consumeEmbeddedAuthTokenFromHash`：在 App 挂载时调一次（无害，支持 OAuth 回跳带 hash token 的既有会话）。
+- **`src/components/document-generator/NewTemplateScreen.tsx`**：删 `ensureTrustedSessionForTemplateSave`、handoff 轮询 useEffect、`startHandoffLogin`、`loginPrompt` state、登录卡片 JSX、`retrySaveAfterLoginRef`、`shortOpenId`；`saveTemplate` 删掉开头的会话检查闸门，直接走「读文件→调 `/api/v1/document-templates`→onSave」，失败仍由现有 `catch + setError` 响亮显示。
+- **import 清理**：移除 `feishuTrustedLogin` 整组 import + `setStoredEmbeddedAuthToken`。
+- **测试 `server/src/sidebarResponsiveLayout.test.ts`**：把两条断言「先登录再用」的测试（`保存模板前先检查可信会话…` / `真实插件入口必须先接上可信会话…`）改写为断言「应用直接渲染主界面、不再有登录墙」——`appSource` 不含 `AuthGate`/`if (!authReady)`、NewTemplateScreen 不含 `ensureTrustedSessionForTemplateSave`/handoff helper。保留 `authSessionToken.ts` 的 `X-Session-Token` 兜底通道断言（通道还在）。
+
+## 保留未删（可逆）
+- `feishuTrustedLogin.ts`（helper）、后端 `authHandoff.ts` + handoff 路由 + 整套 auth 会话逻辑全部保留，仅前端不再调用。需要时重新接线即可。
+
+## 已知后果
+- **后端模板创建/更新仍要会话**，去掉前端登录后保存模板会收到 401，错误会原样显示在 NewTemplateScreen 的 error 区。待用户决定是否放开后端鉴权。
+
+## 校验（2026-06-24，全绿）
+- typecheck：`tsc --noEmit` 0 错误（无 unused import/var）。
+- build:web：`vite build` 通过（chunk size 警告为既有，无关）。
+- tests：`# tests 320 / # pass 320 / # fail 0`。
+- 残留检查：App.tsx / NewTemplateScreen.tsx grep 登录符号 0 命中。
+- 状态：✅ 前端登录流程移除完成；未 commit、未部署（按指令）。
+
+---
+
+最后更新（历史）：2026-06-23
 
 ## 目标
 在不推倒重写的前提下，把"飞书侧边栏 Docx 变量批量生成"打磨成可放心使用的版本。

@@ -1,15 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Icon } from './icons';
 import { Dropdown } from './Dropdown';
 import { copyTextToClipboard } from './clipboard';
 import { buildOptionalBitableSidebarHeaders } from './cloudDoc/bitableAdapter';
-import {
-  hasTrustedSession,
-  pollOAuthHandoff,
-  startOAuthHandoff,
-  tryFeishuClientTrustedLogin,
-} from './cloudDoc/feishuTrustedLogin';
-import { setStoredEmbeddedAuthToken } from '../../authSessionToken';
 import type { Template } from './types';
 
 interface SelectedFile {
@@ -25,12 +18,6 @@ interface NewTemplateScreenProps {
   onSave: () => void | Promise<void>;
 }
 
-// open_id 截断展示：完整 id 太长，detail 里只留头尾便于真机肉眼区分两个 open_id。
-function shortOpenId(value: string | undefined): string {
-  if (!value) return '(空)';
-  return value.length <= 14 ? value : `${value.slice(0, 8)}…${value.slice(-4)}`;
-}
-
 export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTemplateScreenProps) {
   const isEditing = Boolean(template);
   const [file, setFile] = useState<SelectedFile | null>(null);
@@ -42,15 +29,8 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
   const [desc, setDesc] = useState(template?.description || '');
   const [tipOpen, setTipOpen] = useState(false);
   const [copyNotice, setCopyNotice] = useState<'copied' | 'selected' | 'error' | null>(null);
-  const [loginPrompt, setLoginPrompt] = useState<{
-    phase: 'loading' | 'choice' | 'waiting' | 'error' | 'done';
-    message: string;
-    handoffCode?: string;
-    detail?: string;
-  } | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const templateIdInputRef = useRef<HTMLInputElement | null>(null);
-  const retrySaveAfterLoginRef = useRef(false);
 
   function handleFiles(fileList: FileList | null) {
     const f = fileList?.[0];
@@ -90,115 +70,11 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
         ? '保存新版本'
         : '保存模板';
 
-  // OAuth handoff 轮询：系统浏览器跑完授权后，后端把会话写进 handoff，这里取回并继续保存。
-  useEffect(() => {
-    const handoffCode = loginPrompt?.handoffCode;
-    if (!handoffCode) return;
-    let cancelled = false;
-    const deadline = Date.now() + 5 * 60 * 1000;
-    const timer = window.setInterval(() => {
-      if (Date.now() > deadline) {
-        window.clearInterval(timer);
-        if (!cancelled) {
-          retrySaveAfterLoginRef.current = false;
-          setLoginPrompt({
-            phase: 'error',
-            message: '飞书登录超时，当前文件和填写内容已保留，请重新点击保存。',
-          });
-        }
-        return;
-      }
-      void pollOAuthHandoff(handoffCode).then((result) => {
-        if (cancelled) return;
-        if (result.status === 'done' && result.sessionToken) {
-          window.clearInterval(timer);
-          setStoredEmbeddedAuthToken(result.sessionToken);
-          setLoginPrompt({ phase: 'done', message: '登录已完成，正在继续保存...' });
-          if (retrySaveAfterLoginRef.current) {
-            retrySaveAfterLoginRef.current = false;
-            void saveTemplate();
-          }
-          return;
-        }
-        if (result.status === 'rejected') {
-          // open_id 不匹配：停止轮询、显示原因，detail 暴露两个 open_id 供真机诊断
-          // （区分"防住接管"vs"Base 与 OAuth open_id 应用隔离误伤"），允许重新尝试。
-          window.clearInterval(timer);
-          retrySaveAfterLoginRef.current = false;
-          setLoginPrompt({
-            phase: 'error',
-            message: `${result.reason || '飞书登录身份不一致。'}当前文件和填写内容已保留，请重新尝试飞书登录。`,
-            detail: `mismatch: base=${shortOpenId(result.expectedOpenId)} vs oauth=${shortOpenId(result.actualOpenId)}`,
-          });
-          return;
-        }
-        if (result.status === 'expired' || result.status === 'unknown') {
-          window.clearInterval(timer);
-          retrySaveAfterLoginRef.current = false;
-          setLoginPrompt({
-            phase: 'error',
-            message: '飞书登录已失效，当前文件和填写内容已保留，请重新点击保存。',
-          });
-        }
-      }).catch(() => undefined);
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [loginPrompt?.handoffCode]);
-
-  async function ensureTrustedSessionForTemplateSave(): Promise<boolean> {
-    if (await hasTrustedSession()) {
-      setLoginPrompt(null);
-      return true;
-    }
-    setLoginPrompt({ phase: 'loading', message: '正在尝试飞书免登…' });
-    const attempt = await tryFeishuClientTrustedLogin();
-    if (attempt.ok) {
-      setLoginPrompt(null);
-      return true;
-    }
-
-    retrySaveAfterLoginRef.current = true;
-    // 显式失败：展示免登失败的具体原因，而不是一句通用"登录态没有接上"。
-    setLoginPrompt({
-      phase: 'choice',
-      message: `${attempt.reason || '飞书免登未完成。'}当前文件和填写内容会保留。`,
-      detail: attempt.detail,
-    });
-    return false;
-  }
-
-  async function startHandoffLogin() {
-    retrySaveAfterLoginRef.current = true;
-    setLoginPrompt({ phase: 'loading', message: '正在打开飞书授权页…' });
-    try {
-      const code = await startOAuthHandoff();
-      setLoginPrompt({
-        phase: 'waiting',
-        message: '已打开飞书授权页，完成后自动继续保存。当前文件和填写内容会保留。',
-        handoffCode: code,
-      });
-    } catch (err) {
-      retrySaveAfterLoginRef.current = false;
-      setLoginPrompt({
-        phase: 'error',
-        message: err instanceof Error ? err.message : '请先完成飞书登录后再管理模板。当前文件和填写内容已保留。',
-      });
-    }
-  }
-
   async function saveTemplate() {
     if (!canSave || saving) return;
     setSaving(true);
     setError(null);
     try {
-      if (!await ensureTrustedSessionForTemplateSave()) {
-        // 失败原因已在登录卡片里响亮显示，不再叠加一条通用 error。
-        return;
-      }
       const fileBase64 = file ? await readFileAsBase64(file.file) : undefined;
       const endpoint = template
         ? `/api/v1/document-templates/${encodeURIComponent(template.id)}${file ? '/versions' : ''}`
@@ -432,63 +308,6 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
         )}
 
         {error && <div className="nt-error">{error}</div>}
-
-        {loginPrompt && (
-          <div className={`nt-login-card nt-login-${loginPrompt.phase}`}>
-            <div className="nt-login-title">可信登录</div>
-            <div className="nt-login-message">{loginPrompt.message}</div>
-            {loginPrompt.detail && (
-              <div style={{ marginTop: 6, fontFamily: 'monospace', fontSize: 11, lineHeight: 1.5, color: '#8a9099', wordBreak: 'break-all' }}>
-                {loginPrompt.detail}
-              </div>
-            )}
-            {loginPrompt.phase === 'choice' && (
-              <div className="nt-login-actions">
-                <button
-                  type="button"
-                  className="nt-login-primary"
-                  onClick={() => void startHandoffLogin()}
-                >
-                  飞书登录
-                </button>
-                <button
-                  type="button"
-                  className="nt-login-retry"
-                  onClick={() => void saveTemplate()}
-                >
-                  重新尝试飞书免登
-                </button>
-              </div>
-            )}
-            {loginPrompt.phase === 'waiting' && (
-              <button
-                type="button"
-                className="nt-login-retry"
-                onClick={() => void startHandoffLogin()}
-              >
-                重新打开授权
-              </button>
-            )}
-            {loginPrompt.phase === 'error' && (
-              <div className="nt-login-actions">
-                <button
-                  type="button"
-                  className="nt-login-primary"
-                  onClick={() => void startHandoffLogin()}
-                >
-                  飞书登录
-                </button>
-                <button
-                  type="button"
-                  className="nt-login-retry"
-                  onClick={() => void saveTemplate()}
-                >
-                  重新尝试飞书免登
-                </button>
-              </div>
-            )}
-          </div>
-        )}
 
         <div style={{ height: 8 }} />
       </div>
