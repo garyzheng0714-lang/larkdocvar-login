@@ -29,6 +29,12 @@
 - 可选将用户配置同步到飞书多维表格
 - 提供本地开发、Docker、本地预览和远程部署脚本
 
+## 最新状态（2026-06-24）
+
+- 新增「FBIF 参展合同自动生成」业务链路：飞书多维表格勾选「生成文件」→ 工作流调 Docx API →按「要用哪个合同模板」自动选模板 → 生成合同写回附件。完整流程、涉及的 Base/表/工作流标识与运维提示见 [docs/project-flow.md](docs/project-flow.md)（线上飞书云文档：https://foodtalks.feishu.cn/docx/I7oydxZjYo7hXUxgIG2cghyznuh）。
+- `POST /api/v1/document-renders` 新增 `unusedStrategy`：默认 `error`（多余变量报错，保护变量名拼写）；传 `ignore` 时忽略模板里没有的变量，便于用同一套变量喂多个变量集不同的模板。
+- 生成文件的对象存储 key 末段改为友好文件名（`{requestId}/{文件名}`），下载链接末段即合同名，便于「链接转附件」等按 URL 路径取名的场景拿到可读文件名而非 UUID。
+
 ## 最新状态（2026-05-19）
 
 - 侧边栏生成器已拆到 `src/components/document-generator/`，支持多维表格模式和独立文档生成模式。
@@ -236,7 +242,7 @@ Docx v1 API：
 - `GET /api/v1/document-templates/:templateId`：读取模板详情和版本信息
 - `POST /api/v1/document-templates/:templateId/versions`：新增模板版本
 - `DELETE /api/v1/document-templates/:templateId`：软删除模板
-- `POST /api/v1/document-renders`：单份文档生成，支持 `output.includeFileBase64`
+- `POST /api/v1/document-renders`：单份文档生成，支持 `output.includeFileBase64`、`unusedStrategy`（多余变量 `ignore`/`error`）、`missingStrategy`（缺失变量 `blank`/`fail`）
 - `GET /api/v1/document-renders/downloads/:id`：本地开发存储的临时下载地址
 - `POST /api/v1/document-renders/batch`：同步批量生成，单批最多 100 条
 - `POST /api/v1/document-render-jobs`：异步批量任务，单任务最多 500 条
