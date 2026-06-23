@@ -15,6 +15,7 @@ import { DocumentTemplateService } from './documentTemplateService';
 import { FeishuTemplateService } from './feishu';
 import { getFeishuAppCredentials } from './auth';
 import { initDatabase } from './storage';
+import { runConfigSelfCheck, assertConfigOrExit } from './configSelfCheck';
 import { registerCloudDocRoutes } from './routes/cloudDocRoutes';
 import { registerAuthSessionRoutes } from './routes/authSessionRoutes';
 import { registerHealthRoutes } from './routes/healthRoutes';
@@ -149,6 +150,7 @@ if (existsSync(indexHtml)) {
 }
 
 async function bootstrap(): Promise<void> {
+  assertConfigOrExit(runConfigSelfCheck());
   if (process.env.NODE_ENV === 'production' || hasDatabaseUrl) {
     await initDatabase();
   }

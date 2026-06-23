@@ -64,6 +64,8 @@ API 文档维护红线：
 - `users`：飞书登录用户资料。
 - `auth_sessions`：侧边栏 httpOnly 会话和 OAuth token。
 - `saved_configs`：用户保存的模板映射配置。
+- `render_jobs`：异步批量 Docx 生成任务。
+- `render_audit`：渲染运行时审计（每次单份/批量生成的元数据：模板、状态、变量计数、下载位置、调用方，供回溯；不存变量值）。
 - `schema_migrations`：已执行数据库 migration 版本。
 
 已知技术债：

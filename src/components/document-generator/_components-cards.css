@@ -1,0 +1,264 @@
+/* _components.css — 组件样式：card、button、input、modal、form、table、list、dropdown、tooltip、alert、badge、tag、progress、loading、error、success、warning、info */
+
+/* ─── Source card ──────────────────────────────────────────────── */
+.src-card {
+  background: var(--bg-soft);
+  border: 1px solid var(--bd-2);
+  border-radius: 8px;
+  padding: 4px 12px;
+}
+.src-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 0; min-height: 36px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--bd-2);
+}
+.src-row:last-child { border-bottom: 0; }
+.src-label { color: var(--txt-3); width: 56px; flex-shrink: 0; font-size: 12.5px; }
+.src-value { flex: 1; color: var(--txt-1); display: flex; align-items: center; gap: 10px; }
+.src-value b { font-weight: 600; color: var(--accent); }
+/* ─── Template card ────────────────────────────────────────────── */
+.dot-sep { width: 2px; height: 2px; border-radius: 50%; background: var(--txt-4); }
+
+.tpl-empty {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px;
+  background: var(--bg-soft);
+  border: 1px dashed var(--bd-1);
+  border-radius: 8px;
+  width: 100%; cursor: pointer; text-align: left;
+}
+.tpl-empty:hover { background: #f0f4ff; border-color: var(--accent); }
+.tpl-empty-glyph {
+  width: 40px; height: 40px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  background: #fff; color: var(--accent); border: 1px solid var(--bd-2);
+}
+.tpl-empty-text { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.tpl-empty-title { font-size: 14px; font-weight: 600; color: var(--txt-1); }
+.tpl-empty-hint { font-size: 12px; color: var(--txt-3); }
+
+/* ─── Variable mapping list ────────────────────────────────────── */
+.mapping-card {
+  padding: 14px 0 18px;
+  border-bottom: 1px solid var(--bd-2);
+}
+.mapping-card:first-child {
+  padding-top: 2px;
+}
+.mapping-card:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+.mapping-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.mapping-mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 3px;
+  background: var(--bg-soft);
+  border-radius: 7px;
+  flex-shrink: 0;
+}
+.mapping-field-trigger {
+  height: 42px;
+  padding: 0 12px;
+  background: #fff;
+  border: 1px solid var(--bd-1);
+  border-radius: 8px;
+  font-size: 14px;
+}
+.mapping-field-trigger:hover {
+  background: #fff;
+  border-color: #c8ccd2;
+}
+.mapping-field-trigger:focus,
+.mapping-field-trigger:focus-visible,
+.mapping-field-trigger.is-open {
+  outline: none;
+  background: #fff;
+  border-color: var(--txt-1);
+  box-shadow: none;
+}
+.mapping-field-trigger.fld-empty {
+  background: #fff;
+  border-style: solid;
+  border-color: var(--bd-1);
+  color: var(--txt-3);
+}
+.custom-input.mapping-fixed-input {
+  margin-top: 0;
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 14px;
+}
+.custom-input.mapping-fixed-textarea {
+  height: auto;
+  min-height: 88px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  resize: vertical;
+  line-height: 1.5;
+}
+/* ─── Field type pill ──────────────────────────────────────────── */
+.ft {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+}
+
+/* ─── Dropdown ─────────────────────────────────────────────────── */
+.dd-empty { border-color: var(--err); background: #fef7f6; }
+
+.dd-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: 50;
+  background: #fff;
+  border: 1px solid var(--bd-1);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(20, 30, 60, 0.12);
+  padding: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.dd-menu-fixed { position: fixed; z-index: 200; }
+.dd-sec-label {
+  font-size: 11px; color: var(--txt-3); padding: 6px 8px 4px;
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+.dd-item {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border: 0; background: transparent;
+  border-radius: 6px; cursor: pointer; font-size: 13px;
+  color: var(--txt-1);
+}
+.dd-item:hover { background: var(--bg-hover); }
+.dd-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.dd-item:disabled:hover { background: transparent; }
+.dd-item-on { background: var(--accent-soft); color: var(--accent); }
+.dd-item-on:hover { background: var(--accent-soft); }
+.dd-divider { height: 1px; background: var(--bd-2); margin: 4px 6px; }
+
+.bind-empty {
+  padding: 12px 8px;
+  color: var(--txt-3);
+  font-size: 12px;
+  text-align: center;
+}
+
+.custom-input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--bd-1);
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+}
+.custom-input:focus { border-color: var(--accent); }
+
+/* ─── File name editor ─────────────────────────────────────────── */
+.fn-text {
+  border: 0; outline: none;
+  padding: 2px 2px;
+  font-size: 13px; color: var(--txt-1);
+  background: transparent;
+  min-width: 20px;
+}
+.fn-chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 2px 4px 2px 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+  height: 22px;
+  white-space: nowrap;
+}
+.fn-chip button {
+  width: 16px; height: 16px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: transparent;
+  color: var(--accent); opacity: .6;
+  border-radius: 3px; cursor: pointer; padding: 0;
+}
+.fn-chip button:hover { opacity: 1; background: rgba(43, 95, 237, .15); }
+.fn-add {
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--bd-1);
+  background: transparent;
+  color: var(--txt-3);
+  border-radius: 3px; cursor: pointer;
+  margin-left: 2px;
+}
+.fn-add:hover { color: var(--accent); border-color: var(--accent); }
+/* ─── Options ──────────────────────────────────────────────────── */
+.opt-row {
+  display: flex; align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--bd-2);
+  gap: 12px;
+  min-height: 40px;
+}
+.opt-row:last-child { border-bottom: 0; }
+.opt-label { font-size: 13px; color: var(--txt-1); flex: 1; }
+
+/* ─── Footer ───────────────────────────────────────────────────── */
+.ftr {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--bd-1);
+  background: #fff;
+  flex-shrink: 0;
+  min-width: 0;
+}
+.ftr-info { flex: 1; min-width: 0; line-height: 1.4; }
+.ftr-info-1 { font-size: 13px; color: var(--txt-1); }
+.ftr-info-1 b { color: var(--accent); font-weight: 600; }
+.ftr-info-2 { font-size: 11.5px; color: var(--txt-3); margin-top: 2px; }
+
+.btn-primary {
+  height: 36px; padding: 0 18px;
+  border: 0; border-radius: 6px;
+  background: var(--accent); color: #fff;
+  font-size: 13.5px; font-weight: 500;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 92px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.btn-primary[disabled] {
+  cursor: not-allowed; background: #c8ccd2 !important;
+}
+.btn-ghost {
+  height: 36px; padding: 0 14px;
+  border: 1px solid var(--bd-1); border-radius: 6px;
+  background: #fff; color: var(--txt-1);
+  cursor: pointer; font-size: 13.5px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-ghost:hover { background: var(--bg-hover); }
+.btn-danger { color: var(--err); }
+.btn-danger:hover { background: #fdf3f1; border-color: #f0c4bd; }
+.btn-danger-solid {
+  height: 36px; padding: 0 18px;
+  border: 0; border-radius: 6px;
+  background: var(--err); color: #fff;
+  cursor: pointer; font-size: 13.5px;
+}
+

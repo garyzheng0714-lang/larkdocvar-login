@@ -36,7 +36,7 @@ interface SavedConfigRow {
 let pool: pg.Pool | null = null;
 let initPromise: Promise<pg.Pool> | null = null;
 
-const REQUIRED_TABLES = ['users', 'auth_sessions', 'saved_configs', 'render_jobs', 'schema_migrations'] as const;
+const REQUIRED_TABLES = ['users', 'auth_sessions', 'saved_configs', 'render_jobs', 'render_audit', 'schema_migrations'] as const;
 
 type DatabaseReadiness = {
   ready: boolean;
@@ -501,6 +501,44 @@ async function markStaleRenderJobsAsFailed(): Promise<number> {
   return result.rowCount ?? 0;
 }
 
+// 前置条件：调用方需保证 DATABASE_URL 已配置（recordRenderAudit 已做守卫）。
+// 直接调用且未配 DATABASE_URL 时 initDatabase() 会抛错——审计写入的去重守卫只在 recordRenderAudit。
+async function insertRenderAudit(entry: {
+  requestId: string;
+  templateId: string | null;
+  versionId: string | null;
+  source: string;
+  status: string;
+  errorMessage: string | null;
+  variableCount: number | null;
+  missingCount: number | null;
+  storage: string | null;
+  downloadPath: string | null;
+  sizeBytes: number | null;
+  caller: string | null;
+}): Promise<void> {
+  const db = await initDatabase();
+  await db.query(
+    `INSERT INTO render_audit
+       (request_id, template_id, version_id, source, status, error_message, variable_count, missing_count, storage, download_path, size_bytes, caller)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [
+      entry.requestId,
+      entry.templateId,
+      entry.versionId,
+      entry.source,
+      entry.status,
+      entry.errorMessage,
+      entry.variableCount,
+      entry.missingCount,
+      entry.storage,
+      entry.downloadPath,
+      entry.sizeBytes,
+      entry.caller,
+    ],
+  );
+}
+
 export {
   initDatabase,
   checkDatabaseReady,
@@ -522,6 +560,7 @@ export {
   updateRenderJob,
   cleanupExpiredRenderJobs,
   markStaleRenderJobsAsFailed,
+  insertRenderAudit,
 };
 
 export type { UserRow, AuthSessionRow, SavedConfigRow };

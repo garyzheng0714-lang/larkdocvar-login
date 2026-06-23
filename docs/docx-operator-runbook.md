@@ -9,6 +9,7 @@
 | 变量 | 必需性 | 说明 |
 |---|---|---|
 | `DOCUMENT_RENDER_API_KEY` | 生产必需 | 服务端到服务端 API Key。生产环境没有 API Key 或可信会话时，Docx API 不会匿名放行；业务系统需传 `Authorization: Bearer` 或 `x-api-key`。 |
+| `DOCUMENT_RENDER_STRICT_CONFIG` | 可选 | 设为 `true` 时，启动配置自检发现生产必备配置缺失（如 API Key 未配）会直接拒绝启动（fail loud）；默认只在启动日志醒目告警、不阻断启动。配置自检覆盖：API Key、飞书凭据、租户白名单、`DATABASE_URL`、对象存储 provider+凭据。 |
 | `FEISHU_FBIF_APP_ID` / `FEISHU_FBIF_APP_SECRET` | 云文档模板必需 | FBIF 飞书云文档模板路径使用；`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 仍作为 FBIF 兼容别名。旧 OAuth 入口当前退役，恢复前必须重新做真实侧边栏登录验收。 |
 | `FEISHU_FUDE_APP_ID` / `FEISHU_FUDE_APP_SECRET` | 富的入口按需 | 富的飞书云文档能力使用。 |
 | `FEISHU_REDIRECT_BASE` | 旧登录链路保留项 | 当前 OAuth 登录入口已退役并返回 410；保留该变量仅用于历史兼容和后续显式恢复登录链路时复用。 |

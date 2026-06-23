@@ -1,11 +1,13 @@
 # Docx API 参考文档
 
-最后更新：2026-06-22
+最后更新：2026-06-23
 
 ## 更新日志
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-06-23 | 文档完善 | 新增「业务系统 / 多维表格工作流集成提示」：响应体只取接口 JSON 本体（不含 HTTP `headers`/`status_code` 壳）；补充 `download.url` 有效期说明与 `output.expiresInSeconds` 用法。 | 不改路由与字段；纯文档与集成指引。 | 已同步 |
+| 2026-06-23 | 文档补全 | 补充 API Key 的获取与配置说明，新增 401「API Key 无效或缺失」排查表；修复线上生产环境未配置 `DOCUMENT_RENDER_API_KEY` 导致服务端调用（多维表格工作流等）一律返回 401 的问题。 | 不新增、不改变路由与字段；澄清认证契约：真实 key 由部署方在服务端环境变量 `DOCUMENT_RENDER_API_KEY` 配置，文档与仓库只用 `<api-key>` 占位符，不保存明文。 | 已同步 |
 | 2026-06-22 | 权限修复 | 兼容历史无创建者的团队共享模板，避免用户能看到模板但无法保存更新，同时避免团队模板被第一位编辑者私有化。 | `PATCH /api/v1/document-templates/{templateId}` 与 `POST /api/v1/document-templates/{templateId}/versions` 允许已登录用户维护 `createdByOpenId` 为空的 `shared` 模板，但不会自动写入创建者；普通用户不能把这类模板改成 `private`，删除和历史无主 `private` 模板仍要求管理员或已记录创建者。 | 已同步 |
 | 2026-06-22 | 契约新增 | 模板信息更新与模板文件新增版本拆分；只修改名称、分类、可见范围或说明时不再要求上传 `.docx`。 | 新增 `PATCH /api/v1/document-templates/{templateId}`；`POST /api/v1/document-templates/{templateId}/versions` 继续只用于上传新模板文件并新增版本。 | 已同步 |
 | 2026-06-22 | 登录修复 | 飞书内优先走客户端免登；免登能力不可用时，主入口恢复飞书 OAuth 一键登录；扫码仅作为备用入口。 | 恢复 `GET /auth/feishu/:appKey/login` 与 `GET /auth/feishu/:appKey/callback`；OAuth state 采用签名自包含校验，回跳 hash 携带嵌入式会话兜底；端内免登成功时同源响应头可返回 `X-Session-Token`，前端后续请求继续带该头；有接管风险的 `/api/auth/feishu/:appKey/start`、`/login-status` 继续返回 `410`。 | 已同步 |
@@ -128,6 +130,24 @@ DOCUMENT_RENDER_TOS_PREFIX=renders
 |---|---|---|---|
 | `Authorization` | string | 二选一 | 格式为 `Bearer <api-key>`。 |
 | `x-api-key` | string | 二选一 | 直接传 API Key。 |
+
+API Key 的真实值由部署方在服务端环境变量 `DOCUMENT_RENDER_API_KEY` 配置，本文档与仓库都不保存明文；接入方向部署负责人索取，或在部署平台密钥 / 服务器未提交的 `.env` 中查看。下文示例中的 `<api-key>` 都是占位符，必须替换成真实值，原样发送或不带该头都会返回 401。
+
+```bash
+curl -i 'https://<部署域名>/api/v1/document-templates' \
+  -H 'x-api-key: <api-key>'
+```
+
+#### 排查 401 `API Key 无效或缺失。`
+
+多维表格工作流、外部脚本、第三方服务等服务端调用没有浏览器登录会话，只能用 API Key。收到该错误按下表排查：
+
+| 现象 | 原因 | 解决 |
+|---|---|---|
+| 请求头里没有 `x-api-key` 或 `Authorization` | 漏传凭据 | 加上 `x-api-key: <真实值>`。 |
+| 传的是文档里的 `<api-key>` 占位符 | 占位符不是真实 key | 换成服务端 `DOCUMENT_RENDER_API_KEY` 的真实值。 |
+| 传了值仍 401 | 服务端未配置 `DOCUMENT_RENDER_API_KEY`，生产环境不放行匿名调用 | 在部署平台密钥 / 服务器 `.env` 配置 `DOCUMENT_RENDER_API_KEY` 后重启服务；值可用 `openssl rand -hex 32` 生成。 |
+| 侧边栏 iframe 内请求 401 | 登录会话未建立或 cookie 被拦截 | 重新走客户端免登 / OAuth 登录；会话有效即可，无需 API Key。 |
 
 已登录的侧边栏用户可以通过服务端已验证的登录会话调用同一组接口。生产环境即使未配置 `DOCUMENT_RENDER_API_KEY`，也不会匿名放行 Docx API；必须使用 API Key 或可信会话。
 
@@ -747,6 +767,12 @@ curl -s http://localhost:3000/api/v1/document-renders \
   }
 }
 ```
+
+### 业务系统 / 多维表格工作流集成提示
+
+- **响应体就是上面的 JSON 本体。** 配置工作流「响应体（Response body）」时直接用这段 JSON，**不要把 HTTP 响应外壳（`headers`、`status_code`、`body`）一起包进去**——那是 HTTP 客户端的响应快照，不是接口出参，会触发「出参内容不符合 JSON 格式」。
+- 取 `download.url` 下载生成文件或写回多维表格附件；用 `ok` 判断成功，失败时返回 `{ "ok": false, "requestId": "...", "error": "..." }`（没有 `download`）。
+- **`download.url` 是带签名的临时链接**，默认有效期约 1 小时（看 `download.createdAt` → `download.expiresAt`）。下载 / 写回必须在有效期内完成。需要更长有效期时，请求里传 `output.expiresInSeconds`（最大 7 天），或由运维设置全局默认 `DOCUMENT_RENDER_DOWNLOAD_TTL_SECONDS`。
 
 ### 常见错误
 

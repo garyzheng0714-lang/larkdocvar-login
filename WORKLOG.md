@@ -36,9 +36,12 @@
 ## 待办
 - [x] ~~引擎 run 归一化~~ — 已实装（easy-template-x），探针验证有效，移出范围
 - [x] [高] 配置自检 ✅ **已完成**：`server/src/configSelfCheck.ts` + 接入 `index.ts:bootstrap`；5 项生产必备配置启动自检，缺失醒目告警，默认不阻断、`DOCUMENT_RENDER_STRICT_CONFIG=true` 拒启动；单测 7/7 通过，tsc 0 错误。
-- [ ] [中] 渲染落库审计：单次/批量 render 写运行时审计记录
-- [ ] [中] 前端 `_components.css` 拆分 + UI 细节清单（需真机验证）
-- [ ] [低] 响应示例文档补真实结构 + 下载有效期默认可调
+- [x] [中] 渲染落库审计 ✅ **已完成**：migration 004 + `documentRenderAudit.ts` + `storage.insertRenderAudit` + 接入单次渲染；fire-and-forget；codex 审查通过；13 测试全过。
+- [x] [中] 前端 `_components.css` 拆分 ✅ **已完成**：1863 行拆 4 文件（全 <900），diff 逐字节验证零变化，vite build 通过；真机验证并入部署后。
+- [x] [低] 响应示例文档 ✅ **本地完成**：集成提示 + 有效期说明 + 更新日志；飞书同步在 task4。
+- [ ] [task4] 文档同步飞书 + runbook 加 `DOCUMENT_RENDER_STRICT_CONFIG`/`render_audit`
+- [ ] [task5] commit & push（注意甄别并发 agent 的登录重构改动）
+- [ ] [task6] 部署生产 + 真机验证（含前端视觉）
 
 ## 时间线
 - 2026-06-23：修 401 → 同步文档 → 评估生成质量 → 立项优化工程（砍数据防错）→ 开始真实审查

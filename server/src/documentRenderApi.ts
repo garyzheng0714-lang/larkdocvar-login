@@ -9,6 +9,7 @@ import type { LookupFunction } from 'node:net';
 import { normalizeObjectPrefix, sanitizeObjectRequestId } from './objectStorageKeys';
 import JSZip from 'jszip';
 import { TemplateHandler } from 'easy-template-x';
+import { buildRenderAuditEntry, recordRenderAudit, readAuditCaller } from './documentRenderAudit';
 import { z } from 'zod';
 import { documentRenderJsonParser } from './documentRenderBodyParser';
 import { UserFacingError } from './documentRenderStorageErrors';
@@ -822,17 +823,41 @@ export function createDocumentRenderRouter(options: DocumentRenderRouterOptions 
 
   router.post('/', async (request, response) => {
     const requestId = getRequestId(request);
+    const caller = readAuditCaller(request.headers);
     const parsed = documentRenderSchema.safeParse(request.body);
-    if (!parsed.success) { response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' }); return; }
+    if (!parsed.success) {
+      response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
+      void recordRenderAudit(buildRenderAuditEntry({ requestId, source: 'single', status: 'failed', error: '请求参数不合法。', caller }));
+      return;
+    }
 
     try {
-      response.json(await renderDocumentRequest(
+      const result = await renderDocumentRequest(
         parsed.data,
         storage,
         requestId,
         createRequestScopedDocumentTemplateResolver(request, templateResolver),
-      ));
+      );
+      response.json(result);
+      void recordRenderAudit(buildRenderAuditEntry({
+        requestId,
+        source: 'single',
+        status: 'success',
+        templateId: parsed.data.template.templateId ?? null,
+        versionId: parsed.data.template.versionId ?? null,
+        result,
+        caller,
+      }));
     } catch (error) {
+      void recordRenderAudit(buildRenderAuditEntry({
+        requestId,
+        source: 'single',
+        status: 'failed',
+        templateId: parsed.data.template.templateId ?? null,
+        versionId: parsed.data.template.versionId ?? null,
+        error,
+        caller,
+      }));
       if (error instanceof MissingVariablesError) {
         response.status(400).json({ ok: false, requestId, error: error.message, missingVariables: error.missingVariables });
         return;

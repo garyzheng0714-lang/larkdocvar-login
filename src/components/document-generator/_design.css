@@ -2,5 +2,8 @@
 
 @import './_base.css';
 @import './_layout.css';
-@import './_components.css';
+@import './_components-cards.css';
+@import './_components-progress.css';
+@import './_components-template-screen.css';
+@import './_components-sidebar.css';
 @import './_responsive.css';
