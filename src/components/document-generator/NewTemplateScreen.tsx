@@ -129,15 +129,18 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
       setLoginPrompt(null);
       return true;
     }
-    if (await tryFeishuClientTrustedLogin()) {
+    setLoginPrompt({ phase: 'loading', message: '正在尝试飞书免登…' });
+    const attempt = await tryFeishuClientTrustedLogin();
+    if (attempt.ok) {
       setLoginPrompt(null);
       return true;
     }
 
     retrySaveAfterLoginRef.current = true;
+    // 显式失败：展示免登失败的具体原因，而不是一句通用"登录态没有接上"。
     setLoginPrompt({
       phase: 'choice',
-      message: '登录态没有接上。请先重新尝试飞书免登；扫码只作为备用方式，当前文件和填写内容会保留。',
+      message: `${attempt.reason || '飞书免登未完成。'}当前文件和填写内容会保留。`,
     });
     return false;
   }
@@ -167,7 +170,7 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
     setError(null);
     try {
       if (!await ensureTrustedSessionForTemplateSave()) {
-        setError('请先完成可信登录后再管理模板。当前文件和填写内容已保留。');
+        // 失败原因已在登录卡片里响亮显示，不再叠加一条通用 error。
         return;
       }
       const fileBase64 = file ? await readFileAsBase64(file.file) : undefined;
@@ -418,10 +421,7 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
                 <button
                   type="button"
                   className="nt-login-primary"
-                  onClick={() => {
-                    setLoginPrompt(null);
-                    void saveTemplate();
-                  }}
+                  onClick={() => void saveTemplate()}
                 >
                   重新尝试飞书免登
                 </button>
@@ -438,10 +438,7 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
               <button
                 type="button"
                 className="nt-login-retry"
-                onClick={() => {
-                  setLoginPrompt(null);
-                  void saveTemplate();
-                }}
+                onClick={() => void saveTemplate()}
               >
                 重新登录
               </button>

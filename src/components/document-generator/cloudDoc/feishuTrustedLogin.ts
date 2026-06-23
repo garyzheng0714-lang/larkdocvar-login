@@ -44,14 +44,6 @@ class FeishuClientLoginUnavailableError extends Error {
 let h5SdkLoadPromise: Promise<void> | null = null;
 let qrSdkLoadPromise: Promise<void> | null = null;
 
-function isFeishuDesktopClientWithoutWebApp(): boolean {
-  const userAgent = navigator.userAgent;
-  const lower = userAgent.toLowerCase();
-  const isFeishuClient = lower.includes('lark') || lower.includes('feishu');
-  const isMobile = /(Android|Mobile|iPhone|iPad|iPod|iOS)/i.test(userAgent);
-  return isFeishuClient && !isMobile && !userAgent.includes('WebApp');
-}
-
 function isLikelyFeishuRuntime(): boolean {
   const userAgent = navigator.userAgent.toLowerCase();
   const referrer = document.referrer.toLowerCase();
@@ -250,17 +242,54 @@ function reportClientLoginUnavailable(error: unknown): void {
   }).catch(() => undefined);
 }
 
-export async function tryFeishuClientTrustedLogin(): Promise<boolean> {
-  if (await hasTrustedSession()) return true;
-  if (!isLikelyFeishuRuntime()) return false;
-  if (isFeishuDesktopClientWithoutWebApp()) return false;
+export interface TrustedLoginResult {
+  ok: boolean;
+  /** 诊断阶段标识，与服务端 client-diagnostics 一致，便于排查。 */
+  stage?: string;
+  /** 给终端用户看的人话原因（失败时一定有）。 */
+  reason?: string;
+}
+
+// stage → 人话原因。规则十二「显式失败」：免登失败必须给用户看得懂的理由，
+// 而不是静默返回 false 让上层弹回一张"登录态没有接上"的死卡片。
+const STAGE_REASONS: Record<string, string> = {
+  not_feishu_runtime: '当前不在飞书客户端内，无法免登。请改用扫码登录。',
+  config_unavailable: '免登服务未就绪（缺少应用配置），请改用扫码登录。',
+  sdk_load_timeout: '飞书免登组件加载超时，请检查网络后重试，或改用扫码登录。',
+  h5sdk_missing: '当前飞书环境不支持客户端内免登，请改用扫码登录。',
+  h5sdk_ready_timeout: '飞书免登组件未就绪，请重试，或改用扫码登录。',
+  auth_api_missing: '当前飞书环境未提供授权接口，请改用扫码登录。',
+  request_access_timeout: '飞书免登授权超时，请重试，或改用扫码登录。',
+  request_auth_code_timeout: '飞书免登授权超时，请重试，或改用扫码登录。',
+  request_access_failed: '飞书免登授权失败或被拒绝，请重试，或改用扫码登录。',
+  request_auth_code_failed: '飞书免登授权失败或被拒绝，请重试，或改用扫码登录。',
+  request_access_no_code: '飞书免登未返回授权码，请重试，或改用扫码登录。',
+  request_auth_code_no_code: '飞书免登未返回授权码，请重试，或改用扫码登录。',
+  exchange_failed: '飞书免登换取登录态失败，请重试，或改用扫码登录。',
+};
+
+function reasonForStage(stage: string | undefined): string {
+  return (stage && STAGE_REASONS[stage]) || '飞书免登未能完成，请重试，或改用扫码登录。';
+}
+
+function loginFailure(stage: string): TrustedLoginResult {
+  return { ok: false, stage, reason: reasonForStage(stage) };
+}
+
+export async function tryFeishuClientTrustedLogin(): Promise<TrustedLoginResult> {
+  if (await hasTrustedSession()) return { ok: true };
+  // 注意：不再按 UA 预先短路桌面端。CLAUDE.md 要求飞书桌面侧边栏优先走 client-code 免登；
+  // 桌面端确实跑不动时，由下面的超时 + 显式 stage 响亮兜底，而不是静默跳过。
+  if (!isLikelyFeishuRuntime()) return loginFailure('not_feishu_runtime');
 
   try {
     const config = await fetchJson<{ ok?: boolean; app_id?: string; error?: string }>(
       '/api/auth/feishu/fbif/client-config',
       { cache: 'no-store' },
     );
-    if (!config.response.ok || config.data.ok === false || !config.data.app_id) return false;
+    if (!config.response.ok || config.data.ok === false || !config.data.app_id) {
+      return loginFailure('config_unavailable');
+    }
     await withTimeout(loadFeishuH5Sdk(), 5000, '飞书客户端授权组件加载超时。', 'sdk_load_timeout');
     await waitForH5SdkReady();
     const code = await requestClientCode(config.data.app_id);
@@ -274,10 +303,14 @@ export async function tryFeishuClientTrustedLogin(): Promise<boolean> {
       },
       70000,
     );
-    return login.response.ok && login.data.ok !== false && await hasTrustedSession();
+    if (login.response.ok && login.data.ok !== false && await hasTrustedSession()) {
+      return { ok: true };
+    }
+    return loginFailure('exchange_failed');
   } catch (error) {
     reportClientLoginUnavailable(error);
-    return false;
+    const stage = error instanceof FeishuClientLoginUnavailableError ? error.stage : 'exchange_failed';
+    return loginFailure(stage);
   }
 }
 

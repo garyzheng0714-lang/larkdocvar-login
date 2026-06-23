@@ -180,7 +180,7 @@ function AuthGate({ onReady }: { onReady: () => void }) {
 
   const startLogin = useCallback(async () => {
     setPhase('checking');
-    setMessage('正在接入飞书登录态...');
+    setMessage('正在尝试飞书免登…');
     setQrGoto('');
     try {
       consumeEmbeddedAuthTokenFromHash();
@@ -188,13 +188,14 @@ function AuthGate({ onReady }: { onReady: () => void }) {
         onReady();
         return;
       }
-      if (await tryFeishuClientTrustedLogin()) {
+      const attempt = await tryFeishuClientTrustedLogin();
+      if (attempt.ok) {
         onReady();
         return;
       }
-      const authError = new URLSearchParams(window.location.search).get('auth_error');
-      setPhase(authError ? 'error' : 'choice');
-      setMessage(authError || '请使用飞书一键登录，登录完成后会自动回到插件。');
+      // 显式失败：把免登失败的具体原因显示出来 + 给扫码入口，不再卡在通用文案上。
+      setPhase('choice');
+      setMessage(attempt.reason || '飞书免登未完成。可重试，或改用扫码登录。');
     } catch (error) {
       setPhase('error');
       setMessage(error instanceof Error ? error.message : '登录状态确认失败，请稍后重试。');
@@ -226,10 +227,6 @@ function AuthGate({ onReady }: { onReady: () => void }) {
     };
   }, [onReady, phase, qrElementId, qrGoto]);
 
-  const startOAuthLogin = useCallback(() => {
-    window.location.assign('/auth/feishu/fbif/login');
-  }, []);
-
   const startQrLogin = useCallback(async () => {
     setPhase('checking');
     setMessage('正在准备扫码备用登录...');
@@ -252,8 +249,8 @@ function AuthGate({ onReady }: { onReady: () => void }) {
         <div className="auth-gate-message">{message}</div>
         {phase === 'choice' && (
           <div className="auth-gate-actions">
-            <button className="auth-gate-primary" type="button" onClick={startOAuthLogin}>
-              使用 FBIF 飞书登录
+            <button className="auth-gate-primary" type="button" onClick={() => void startLogin()}>
+              重新尝试飞书免登
             </button>
             <button className="auth-gate-secondary" type="button" onClick={() => void startQrLogin()}>
               扫码登录
@@ -265,18 +262,18 @@ function AuthGate({ onReady }: { onReady: () => void }) {
             <div className="auth-gate-qr-wrap">
               <div id={qrElementId} className="auth-gate-qr" />
             </div>
-            <button className="auth-gate-secondary auth-gate-secondary-inline" type="button" onClick={startOAuthLogin}>
-              改用一键登录
+            <button className="auth-gate-secondary auth-gate-secondary-inline" type="button" onClick={() => void startLogin()}>
+              重新尝试免登
             </button>
           </>
         )}
         {phase === 'error' && (
           <div className="auth-gate-actions">
-            <button className="auth-gate-primary" type="button" onClick={startOAuthLogin}>
-              重新飞书登录
+            <button className="auth-gate-primary" type="button" onClick={() => void startLogin()}>
+              重新尝试飞书免登
             </button>
-            <button className="auth-gate-secondary" type="button" onClick={() => void startLogin()}>
-              重新检查
+            <button className="auth-gate-secondary" type="button" onClick={() => void startQrLogin()}>
+              扫码登录
             </button>
           </div>
         )}
