@@ -89,5 +89,6 @@
   - `App.tsx` `AuthGate`：去掉 OAuth 双按钮 + `startOAuthLogin`；免登失败显示具体原因 + [重新尝试飞书免登] + [扫码登录]。
   - `NewTemplateScreen.tsx`：`ensureTrustedSessionForTemplateSave` 先显 loading 再消费结构化结果、失败显具体原因；去掉叠加的通用 setError；"重新尝试飞书免登"改为真的重跑（loading 反馈）。
 - ✅ 已验证：`tsc --noEmit` 干净；`vite build` 通过；`authSessionRoutes.test.ts` 10/10 通过；静态一致性（OAuth 双按钮门面无残留、两个调用点都已适配）。
-- ⏳ **未验证（诚实标注，需用户配合）**：真实飞书桌面侧边栏里的 client-code 免登成功路径 + 扫码兜底——只能在部署后的飞书端内真机验证，本地普通浏览器跑不出 `tt.requestAccess`。本地 vite 代理指向 :3000，当前跑的是 :3456（API dev），未做本地浏览器渲染验证。
-- 待办：部署到 `fbif-sidebar-docgen.fbif.com` → 飞书桌面侧边栏真机验证免登/扫码 + "点了有反应"。
+- ✅ 已部署并验证 bundle（2026-06-23）：commit `895078a`(登录) + `51edea8`(测试断言) + `c8779ba`(初始文案)，GitHub Actions 部署成功。线上 `fbif-sidebar-docgen.fbif.com` bundle `index-DjjXPg2_.js` 实测：新文案"正在尝试飞书免登/改用扫码登录/飞书免登未能完成"在线，旧 OAuth 双按钮门面("使用 FBIF 飞书登录"等)+ 旧 loading 文案 0 残留。全量测试 301/301。
+  - 踩坑：首发 push 部署在 Test 步失败——`sidebarResponsiveLayout.test.ts` 用源码字符串断言登录文案，3 条断言因重构过时。已改为断言重构后稳定锚点（规则九：测意图不测字面）。
+- ⏳ **唯一未验证（诚实标注，需用户配合）**：真实飞书桌面侧边栏里的 client-code 免登成功路径 + 扫码兜底——`tt.requestAccess` 只在飞书端内存在，本地普通浏览器跑不出。需用户在飞书桌面侧边栏「新建模板」实测一次：免登成功直接进 / 失败显具体原因(stage)+可转扫码 / "重新尝试"有反馈。删桌面 UA 闸门是基于"桌面 UA 不含 WebApp"的推断；即使推断错，失败也会响亮报因（不再死卡片）。
