@@ -160,7 +160,7 @@ export class OssDocumentRenderStorage implements DocumentRenderStorage {
   async saveDocx(input: SaveGeneratedDocxInput): Promise<SavedGeneratedDocx> {
     const safeFileName = ensureDocxExtension(sanitizeFileName(input.fileName, '生成文档.docx'));
     const safeRequestId = sanitizeObjectRequestId(input.requestId);
-    const objectName = `${this.prefix}${new Date().toISOString().slice(0, 10)}/${safeRequestId}.docx`;
+    const objectName = `${this.prefix}${new Date().toISOString().slice(0, 10)}/${safeRequestId}/${safeFileName}`;
     const contentDisposition = buildContentDisposition(safeFileName);
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + input.ttlMs).toISOString();

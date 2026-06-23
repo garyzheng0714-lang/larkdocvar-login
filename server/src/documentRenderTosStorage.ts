@@ -187,7 +187,7 @@ export class TosDocumentRenderStorage implements DocumentRenderStorage {
   async saveDocx(input: SaveGeneratedDocxInput): Promise<SavedGeneratedDocx> {
     const safeFileName = ensureDocxExtension(sanitizeFileName(input.fileName, '生成文档.docx'));
     const safeRequestId = sanitizeObjectRequestId(input.requestId);
-    const objectName = `${this.config.prefix}${formatTosDatePath()}/${safeRequestId}.docx`;
+    const objectName = `${this.config.prefix}${formatTosDatePath()}/${safeRequestId}/${safeFileName}`;
     const contentDisposition = buildContentDisposition(safeFileName);
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + input.ttlMs).toISOString();

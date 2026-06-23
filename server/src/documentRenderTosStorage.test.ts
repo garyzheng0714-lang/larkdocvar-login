@@ -69,7 +69,7 @@ test('TOS 存储上传 Docx 并返回带 TTL 的签名下载链接', async () =>
     assert.equal(saved.fileName, '报价-单-.docx');
     assert.equal(saved.contentType, DOCX_CONTENT_TYPE);
     assert.equal(saved.size, buffer.length);
-    assert.match(saved.path, /^document-renders\/\d{4}\/\d{2}\/\d{2}\/request-id\.docx$/);
+    assert.match(saved.path, /^document-renders\/\d{4}\/\d{2}\/\d{2}\/request-id\/报价-单-\.docx$/);
     assert.match(saved.url, /^https:\/\/examplebucket\.tos-cn-beijing\.volces\.com\//);
     assert.match(saved.url, /X-Tos-Algorithm=TOS4-HMAC-SHA256/);
     assert.equal(calls.length, 1);

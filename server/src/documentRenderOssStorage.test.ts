@@ -54,7 +54,9 @@ test('内置 OSS 存储上传 Docx 并生成带 TTL 的签名下载链接', asyn
   assert.equal(saved.fileName, '报价-单-.docx');
   assert.equal(saved.contentType, DOCX_CONTENT_TYPE);
   assert.equal(saved.size, buffer.length);
-  assert.match(saved.path, /^document-renders\/\d{4}-\d{2}-\d{2}\/request-123\.docx$/);
+  // 验证意图：对象 key 末段必须是友好文件名（requestId 仅作目录保唯一），这样下载链接
+  // URL 末段就是合同名，飞书「链接转附件」按 URL 路径取名时拿到的才是合同名而非 UUID。
+  assert.match(saved.path, /^document-renders\/\d{4}-\d{2}-\d{2}\/request-123\/报价-单-\.docx$/);
   assert.equal(saved.url, `https://oss.example.test/${encodeURIComponent(saved.path)}?expires=3600`);
   assert.equal(client.putCalls.length, 1);
   assert.equal(client.signatureCalls.length, 1);
@@ -93,7 +95,7 @@ test('内置 OSS 存储会清洗 requestId 中的路径片段', async () => {
     ttlSeconds: 3600,
   });
 
-  assert.match(saved.path, /^document-renders\/\d{4}-\d{2}-\d{2}\/evil-nested-request\.docx$/);
+  assert.match(saved.path, /^document-renders\/\d{4}-\d{2}-\d{2}\/evil-nested-request\/合同\.docx$/);
   assert.equal(saved.path.includes('..'), false);
   assert.equal(saved.path.includes('\\'), false);
   assert.equal(client.putCalls[0]?.objectName, saved.path);
