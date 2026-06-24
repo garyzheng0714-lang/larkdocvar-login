@@ -7,6 +7,19 @@ import { isImagePlaceholderName } from './documentRenderImages';
 import { convertCommentAnnotationsToTemplate } from './documentTemplateAnnotations';
 import { TemplateObjectAlreadyExistsError, TemplateObjectNotFoundError, createConfiguredTemplateObjectStore, type TemplateObjectStore } from './documentTemplateStorage';
 
+// 内部版本后缀（如 -Ed0622）：上传模板时带上、仅供内部区分版本，不该展示给插件用户。
+// 对外返回模板前在读取路径统一抹掉；对象存储里的原始 _index.json / metadata.json 不变。
+// 将来换/加后缀只改这个常量即可，无需改数据。
+const INTERNAL_TEMPLATE_NAME_SUFFIXES = ['-Ed0622'];
+
+export function stripInternalTemplateNameSuffix(value: string): string {
+  let result = value ?? '';
+  for (const suffix of INTERNAL_TEMPLATE_NAME_SUFFIXES) {
+    if (suffix) result = result.split(suffix).join('');
+  }
+  return result;
+}
+
 const TEMPLATE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{2,79}$/;
 const TEMPLATE_METADATA_CONTENT_TYPE = 'application/json; charset=utf-8';
 const TEMPLATE_INDEX_CONTENT_TYPE = 'application/json; charset=utf-8';
@@ -163,6 +176,7 @@ function decodeUploadedTemplate(input: CreateDocumentTemplateInput | UpdateDocum
 function publicTemplate(record: DocumentTemplateRecord): PublicDocumentTemplateRecord {
   return {
     ...record,
+    name: stripInternalTemplateNameSuffix(record.name),
     versions: record.versions.map(({ sourceUrl: _sourceUrl, ...version }) => ({
       ...version,
       thumbnail: version.thumbnail || buildTemplateThumbnail(record.name, version.variables),
@@ -213,6 +227,7 @@ function buildTemplateThumbnail(previewText: string, variables: string[]): Docum
 function indexItemWithThumbnail(item: DocumentTemplateIndexItem): DocumentTemplateIndexItem {
   return {
     ...item,
+    name: stripInternalTemplateNameSuffix(item.name),
     thumbnail: item.thumbnail || buildTemplateThumbnail(item.name, item.variables || []),
   };
 }
@@ -539,3 +554,4 @@ export class DocumentTemplateService {
     await this.writeIndex(index.filter((item) => item.templateId !== templateId));
   }
 }
+
