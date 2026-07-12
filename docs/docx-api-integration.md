@@ -6,7 +6,7 @@
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
-| 2026-07-12 | 契约调整 | 稳定性加固：异步任务（`/api/v1/document-render-jobs`）不再内联返回 `download.fileBase64`，结果一律通过 `download.url` 下载。单份生成、同步批量不受影响。此前异步大批量（最多 500 条）+ 大模板 + `includeFileBase64=true` 会累积撑爆内存并让结果 JSON 超出存储上限。同时异步任务现已正确接受并转发 `missingStrategy`/`unusedStrategy`。 | 异步任务请求即使传 `output.includeFileBase64=true` 也不会在结果里返回 `download.fileBase64`；请用 `download.url` 下载。异步任务请求体的 `missingStrategy`（`fail`/`blank`）与 `unusedStrategy`（`error`/`ignore`）现已生效（此前被静默忽略）。单份/同步批量的 `includeFileBase64` 行为不变。 | 待同步 |
+| 2026-07-12 | 契约调整 | 稳定性加固：异步任务（`/api/v1/document-render-jobs`）不再内联返回 `download.fileBase64`，结果一律通过 `download.url` 下载。单份生成、同步批量不受影响。此前异步大批量（最多 500 条）+ 大模板 + `includeFileBase64=true` 会累积撑爆内存并让结果 JSON 超出存储上限。同时异步任务现已正确接受并转发 `missingStrategy`/`unusedStrategy`。 | 异步任务请求即使传 `output.includeFileBase64=true` 也不会在结果里返回 `download.fileBase64`；请用 `download.url` 下载。异步任务请求体的 `missingStrategy`（`fail`/`blank`）与 `unusedStrategy`（`error`/`ignore`）现已生效（此前被静默忽略）。单份/同步批量的 `includeFileBase64` 行为不变。 | 已同步 |
 | 2026-06-24 | 契约新增 | 新增 `unusedStrategy=ignore`：模板正文里没有的多余变量从报错改为忽略（默认仍 `error` 报错以保护变量名拼写检查）。便于多维表格工作流用同一套变量喂不同模板。 | 单份/批量/异步 Docx 渲染请求新增可选字段 `unusedStrategy`（默认 `error` / `ignore`）；传 `ignore` 时多余变量不阻断生成，响应 `variables.unused` 仍会列出。 | 已同步 |
 | 2026-06-23 | 文档完善 | 新增「业务系统 / 多维表格工作流集成提示」：响应体只取接口 JSON 本体（不含 HTTP `headers`/`status_code` 壳）；补充 `download.url` 有效期说明与 `output.expiresInSeconds` 用法。 | 不改路由与字段；纯文档与集成指引。 | 已同步 |
 | 2026-06-23 | 文档补全 | 补充 API Key 的获取与配置说明，新增 401「API Key 无效或缺失」排查表；修复线上生产环境未配置 `DOCUMENT_RENDER_API_KEY` 导致服务端调用（多维表格工作流等）一律返回 401 的问题。 | 不新增、不改变路由与字段；澄清认证契约：真实 key 由部署方在服务端环境变量 `DOCUMENT_RENDER_API_KEY` 配置，文档与仓库只用 `<api-key>` 占位符，不保存明文。 | 已同步 |
