@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { documentRenderJsonParser } from './documentRenderBodyParser';
 import {
   createConfiguredStorage,
+  downloadTemplateDocx,
   renderDocumentRequest,
   type DocumentRenderRequest,
   type DocumentRenderStorage,
@@ -37,18 +38,21 @@ const outputSchema = z.object({
 }).optional();
 
 const missingStrategySchema = z.enum(['fail', 'blank']).optional();
+const unusedStrategySchema = z.enum(['error', 'ignore']).optional();
 
 export type DocumentRenderBatchRecordInput = {
   recordId: string;
   variables: Record<string, string | number | boolean | null>;
   imageVariables?: DocumentRenderRequest['imageVariables'];
   missingStrategy?: DocumentRenderRequest['missingStrategy'];
+  unusedStrategy?: DocumentRenderRequest['unusedStrategy'];
   output?: DocumentRenderRequest['output'];
 };
 
 export type DocumentRenderBatchInput = {
   template: DocumentRenderRequest['template'];
   missingStrategy?: DocumentRenderRequest['missingStrategy'];
+  unusedStrategy?: DocumentRenderRequest['unusedStrategy'];
   output?: DocumentRenderRequest['output'];
   records: DocumentRenderBatchRecordInput[];
 };
@@ -70,12 +74,14 @@ function createBatchSchema(maxRecords: number) {
   return z.object({
     template: templateSchema,
     missingStrategy: missingStrategySchema,
+    unusedStrategy: unusedStrategySchema,
     output: outputSchema,
     records: z.array(z.object({
       recordId: z.string().trim().min(1).max(128),
       variables: variableMapSchema.default({}),
       imageVariables: imageVariableMapSchema.optional(),
       missingStrategy: missingStrategySchema,
+      unusedStrategy: unusedStrategySchema,
       output: outputSchema,
     })).min(1).max(maxRecords),
   });
@@ -116,6 +122,10 @@ export async function renderBatchRecords(
         templateName: loaded.record?.name,
       };
     }
+  } else if (input.template.format === 'docx' && input.template.url) {
+    // 预加载 template.url：否则 100 条记录会把同一个 URL 下载 100 次（每次 20MB 上限 + SSRF 校验 + 超时），
+    // 对第三方造成流量放大并拖慢整批。下载一次、全批复用。
+    preloadedTemplate = { buffer: await downloadTemplateDocx(input.template.url) };
   }
 
   const results: DocumentRenderBatchRecordResult[] = [];
@@ -128,6 +138,7 @@ export async function renderBatchRecords(
         variables: record.variables,
         imageVariables: record.imageVariables || {},
         missingStrategy: record.missingStrategy || input.missingStrategy,
+        unusedStrategy: record.unusedStrategy || input.unusedStrategy,
         output: record.output || input.output,
       }, options.storage, requestId, options.templateResolver, preloadedTemplate) as {
         document?: unknown;

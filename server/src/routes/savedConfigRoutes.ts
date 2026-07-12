@@ -263,7 +263,9 @@ export function registerSavedConfigRoutes(app: express.Express): void {
   });
 
   app.post('/api/configs/auto', async (request, response) => {
-    const body = request.body as { templateUrl?: string; tableId?: string; payload?: Record<string, unknown> };
+    // 不带 Content-Type: application/json 时 express.json 不解析，request.body 为 undefined；
+    // 兜底成 {} 再取值，避免访问属性抛 TypeError（否则会被全局兜底成 500，语义应是 400 无效链接）。
+    const body = (request.body || {}) as { templateUrl?: string; tableId?: string; payload?: Record<string, unknown> };
     const templateUrl = String(body.templateUrl || '').trim();
     const tableId = String(body.tableId || '').trim();
     const docId = extractDocumentIdFromUrl(templateUrl);

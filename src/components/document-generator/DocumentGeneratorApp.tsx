@@ -100,6 +100,10 @@ export function DocumentGeneratorApp({
     writeBackField: '',
   }));
   const [picker, setPicker] = useState(false);
+  // 新建/更新模板后，让模板库聚焦到这张模板（据其归属自动切到「公用」/「个人」页并预选中）；
+  // pickerNonce 变化用于 remount PickerScreen，使其按新的聚焦目标重新初始化标签页。
+  const [pickerFocusId, setPickerFocusId] = useState<string | undefined>(undefined);
+  const [pickerNonce, setPickerNonce] = useState(0);
   const [newTpl, setNewTpl] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
   const [progress, setProgress] = useState(false);
@@ -233,7 +237,7 @@ export function DocumentGeneratorApp({
           fields={fields}
           mode={mode}
           createAttachmentField={createAttachmentField}
-          openPicker={() => setPicker(true)}
+          openPicker={() => { setPickerFocusId(undefined); setPicker(true); }}
           generationBusy={generationBusy}
           startGenerate={() => {
             if (generationBusy) {
@@ -288,9 +292,10 @@ export function DocumentGeneratorApp({
         {picker && (
           <div className="overlay overlay-slide" data-screen-label="02 Sidebar — 选择模板">
             <PickerScreen
+              key={pickerNonce}
               templates={templates}
               categories={categories}
-              initialSelectedId={state.template?.id}
+              initialSelectedId={pickerFocusId ?? state.template?.id}
               accent={accent.primary}
               onCancel={() => setPicker(false)}
               onConfirm={(tpl: Template) => {
@@ -321,8 +326,15 @@ export function DocumentGeneratorApp({
                 setNewTpl(false);
                 setEditingTemplate(null);
               }}
-              onSave={async () => {
+              onSave={async (created) => {
                 await refreshTemplates?.();
+                // 聚焦到刚保存的模板并 remount 模板库，使其按该模板归属自动切到对应标签页并预选中——
+                // 否则从模板库进来新建的私有模板，保存后停在默认「公用」页看不见，像保存失败。
+                // 只重聚焦、不强行打开选择器：从主界面直接新建的流程保持原样（picker 本就关着）。
+                if (created?.templateId) {
+                  setPickerFocusId(created.templateId);
+                  setPickerNonce((n) => n + 1);
+                }
                 setNewTpl(false);
                 setEditingTemplate(null);
               }}

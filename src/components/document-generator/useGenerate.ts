@@ -477,54 +477,56 @@ export function useGenerateReal(): GenerateRunner {
           throw new Error(json.error || '批量生成接口返回异常');
         }
         if (activeRunIdRef.current !== runId || signal.aborted) return;
-        const normalized = json.records.map(normalizeBatchRecord);
-        const byId = new Map(normalized.map((r) => [r.recordId, r]));
-        const warnings = new Map<string, string>();
+        // 逐条落地状态：写回一条就立刻把它标 succeeded，绝不等整批循环结束再统一 setItems。
+        // 否则用户在写回中途点"终止"，已写回附件的记录会停在 processing 被 stop() 误标 failed，
+        // 重试时又写回一次 → 同一记录出现两份附件（真实数据污染）。
         for (const r of json.records) {
-          if (activeRunIdRef.current !== runId || signal.aborted) return;
           const item = normalizeBatchRecord(r);
-          if (item.ok && item.downloadUrl) {
-            const warning = tableId
-              ? await writeBack(
-                  tableId,
-                  item.recordId,
-                  {
-                    url: item.downloadUrl,
-                    fileName: item.fileName || 'document.docx',
-                    contentType: item.contentType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                    fileBase64: item.fileBase64,
-                  },
-                  options.writeBackField,
-                  signal,
-                )
-              : null;
-            if (warning) warnings.set(item.recordId, warning);
+          if (!(item.ok && item.downloadUrl)) {
+            setItems((prev) =>
+              prev.map((it) =>
+                it.id === item.recordId
+                  ? { ...it, status: 'failed' as const, error: item.error || '生成成功但没有返回下载链接' }
+                  : it,
+              ),
+            );
+            continue;
           }
+          // 中断检查放在写回之前：尚未写回的记录到此停下、保持 processing 交给 stop() 收尾（它们确实没写回）。
+          if (activeRunIdRef.current !== runId || signal.aborted) return;
+          const warning = tableId
+            ? await writeBack(
+                tableId,
+                item.recordId,
+                {
+                  url: item.downloadUrl,
+                  fileName: item.fileName || 'document.docx',
+                  contentType: item.contentType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                  fileBase64: item.fileBase64,
+                },
+                options.writeBackField,
+                signal,
+              )
+            : null;
+          // 写回完成立即落地 succeeded；此后即便 abort，也不会被 stop() 回退成 failed 再被重试重复写回。
+          setItems((prev) =>
+            prev.map((it) =>
+              it.id === item.recordId
+                ? { ...it, status: 'succeeded' as const, downloadUrl: item.downloadUrl, fileName: item.fileName, warning: warning || null, error: null }
+                : it,
+            ),
+          );
         }
-        if (activeRunIdRef.current !== runId || signal.aborted) return;
-        setItems((prev) =>
-          prev.map((it) => {
-            const r = byId.get(it.id);
-            if (!r) return it;
-            if (r.ok && r.downloadUrl) {
-              return {
-                ...it,
-                status: 'succeeded' as const,
-                downloadUrl: r.downloadUrl,
-                fileName: r.fileName,
-                warning: warnings.get(r.recordId) || null,
-                error: null,
-              };
-            }
-            return { ...it, status: 'failed' as const, error: r.error || '生成成功但没有返回下载链接' };
-          }),
-        );
       } catch (err) {
         if (activeRunIdRef.current !== runId || signal.aborted) return;
         const message = err instanceof Error ? err.message : String(err);
+        // 只覆盖本批仍在 processing（还没拿到任何结果）的记录；已 succeeded 或已带精确失败原因
+        // （如本地"变量为空"）的记录不被这条整批网络错误抹掉。
         setItems((prev) =>
           prev.map((it) =>
-            sliceIds.has(it.id) ? { ...it, status: 'failed' as const, error: message } : it,
+            sliceIds.has(it.id) && it.status === 'processing'
+              ? { ...it, status: 'failed' as const, error: message }
+              : it,
           ),
         );
       }
@@ -594,6 +596,8 @@ export function useGenerateReal(): GenerateRunner {
     setItems((prev) =>
       prev.map((i) => (i.status === 'failed' ? { ...i, status: 'pending', error: null } : i)),
     );
+    // 重置计时起点：否则重试的 ETA / "用时" 会把用户看结果的空闲时间也算进去，速率被稀释到离谱。
+    setStartedAt(Date.now());
     setPhase('running');
     const tableId = await resolveRunTableId(options);
     if (activeRunIdRef.current !== runId || controller.signal.aborted) return;

@@ -99,6 +99,31 @@ test('Docx 图片变量可以插入图片并设置尺寸和右对齐', async () 
   }
 });
 
+test('图片占位符段落前紧邻自闭合空段落 <w:p/> 时仍产出标签配对的合法 docx', async () => {
+  const restore = enablePrivateImageUrlsForTest();
+  const imageServer = await startImageServer(await createPng());
+  try {
+    // Word/LibreOffice 常产出带 rsid 的自闭合空段落。旧段落正则会把它和后面的图片段落黏成"伪段落"，
+    // 重建时产出标签不配对的 <w:p .../>…</w:p>，Word 打开报"文档需要修复"（甚至整单渲染失败）。
+    const template = await createDocxBuffer({
+      documentXml: '<w:p w:rsidR="00AA11BB"/><w:p><w:r><w:t>{{image:logo}}</w:t></w:r></w:p>',
+    });
+    const rendered = await renderTest.renderDocx(template, {}, { logo: { url: imageServer.url } });
+    assert.deepEqual(rendered.images.found, ['logo'], '图片应正常插入');
+    const outputZip = await JSZip.loadAsync(rendered.buffer);
+    const documentXml = (await outputZip.file('word/document.xml')?.async('string')) || '';
+    assert.doesNotMatch(documentXml, /\{\{image:logo/, '占位符应已被替换');
+    assert.ok(documentXml.includes('00AA11BB'), '自闭合空段落应被保留而非被吞进图片段落');
+    // 核心不损坏判据：非自闭合的 <w:p...> 开标签数量必须等于 </w:p> 闭合标签数量。
+    const opens = (documentXml.match(/<w:p(?:\s[^>]*)?(?<!\/)>/g) || []).length;
+    const closes = (documentXml.match(/<\/w:p>/g) || []).length;
+    assert.equal(opens, closes, `段落开合标签必须配对，opens=${opens} closes=${closes}`);
+  } finally {
+    await imageServer.close();
+    restore();
+  }
+});
+
 test('Docx 图片变量兼容 image 前缀形式的请求键', async () => {
   const restore = enablePrivateImageUrlsForTest();
   const imageServer = await startImageServer(await createPng());

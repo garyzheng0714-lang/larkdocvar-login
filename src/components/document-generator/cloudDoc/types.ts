@@ -69,7 +69,11 @@ export interface CloudDocActions {
   setRange: (value: CloudRange) => void;
   setOutputFieldId: (value: string) => void;
   applyMapping: (next: Record<string, string>) => void;
-  saveAutoConfig: (nextMapping: Record<string, string>, nextOutputFieldId: string) => void;
+  saveAutoConfig: (
+    nextMapping: Record<string, string>,
+    nextOutputFieldId: string,
+    overrides?: { templateUrl?: string; templateTitle?: string; documentId?: string },
+  ) => void;
   extractVariables: () => Promise<void>;
   generate: () => Promise<void>;
 }

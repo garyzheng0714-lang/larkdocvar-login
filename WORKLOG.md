@@ -1,8 +1,96 @@
 # 云文档变量批量生成 — 优化工程 WORKLOG
 
-最后更新：2026-06-24
+最后更新：2026-07-12
 
 ---
+
+# 全面稳定性排查（2026-07-12，用户指令「全面检查找 bug，作为基础设施必须稳定可靠」）
+
+## 目标
+把项目当基础设施验收：地毯式排查后端 API / 存储 / 鉴权安全 / 前端逻辑 / 进程稳定性五个维度的 bug，逐个核实并修复，修完全量回归。
+
+## 基线（2026-07-12 开工时）
+- 测试：320/320 全绿
+- typecheck：0 错误
+- verify:secrets：无泄漏
+- 未提交改动：仅 docs/project-flow.md（文档）
+
+## 排查方式
+5 个并行审查代理分别扫：① 渲染 API 核心 ② 存储层（对象存储+PG）③ 鉴权与安全 ④ 前端核心逻辑 ⑤ 启动/路由/进程稳定性。所有发现先由我逐条核实真伪，再修。
+
+## 状态
+🔄 进行中：5 代理全部回报并逐条核实，正在按优先级修复 + 回归。
+
+## 完整发现清单（5 代理去重 + 我逐条核实）
+
+### 稳定性 / 数据正确性 bug（无争议，修）
+后端：
+- **B-P0** pg 池无 error 监听 → DB 闪断崩进程（存储/进程双报）。
+- **B1** 二次兜底替换把用户值里字面 `{{字段}}` 当占位符替换 → 静默串包/误判 400（渲染）。信任杀手。
+- **B2** 异步任务卡死 running（存储/进程/渲染三报）。
+- **B3** includeFileBase64 OOM + O(n²) 写库（三报）。
+- **B4** 无全局 error middleware → 坏 JSON/空 body 返回 HTML+堆栈（进程，实证）。
+- **B5** 外链下载/TOS 上传无总超时（慢滴挂死，渲染/进程）。
+- **B6** 单份渲染对象 key 用客户端 x-request-id → 同日撞号覆盖（存储/渲染）。
+- **B7** batch/job 静默丢弃 unusedStrategy/missingStrategy 契约字段（渲染）。
+- **B8** 批注 comments.xml 参与变量提取 → 误判 missing（渲染，与 B1 同源）。
+- **B9** 自闭合 `<w:p/>` 段落正则 → 图片路径产坏 docx（渲染）。
+- **B10** batch 对 template.url 逐条重复下载（渲染）。
+- **B11** 查不存在模板返回 400（应 404，我冒烟发现）。
+- **B13** migration 无 advisory lock，多实例同启可崩（存储/进程）。
+- **B15** OSS/TOS 上传错误吞掉无日志（存储）。
+- **B16** HTTP server 超时用默认值（进程）。
+- **B17** 无优雅关闭 SIGTERM（进程/渲染）。
+前端：
+- **F1** 终止后已写回记录标失败 → 重试重复写回附件（数据错误）。
+- **F2** 云文档映射字段失效仍算已绑定 → 整批空文档（数据错误）。
+- **F3** 云文档自动保存 stale closure → 配置张冠李戴。
+- **F4** 本地失败原因被网络错误覆盖。
+- **F5** 重试不重置 startedAt → ETA 失真。
+- **F6** 云文档中途报错进度显示 100%。
+- **F7** 清空的绑定被智能匹配偷偷绑回。
+- **F8** 新建模板默认"仅自己"回"公用"标签消失。
+
+### 产品决策 / 需用户拍板（不擅自改，最终报告呈现）
+- **D1** 后端鉴权是否放开：登录移除后生产 Word 路径全 401 + saved-config 路由无鉴权可枚举 + 多项防护单点依赖 NODE_ENV 且自检默认 fail-open。是「登录去掉先」的连锁后果，加回鉴权 or 保持开放属产品决策。
+- **D2** 部署脚本先杀后建（`docker rm -f` 后再 build，分钟级停机+失败无回滚）。运维脚本。
+- **D3** TOS 分布式锁 If-None-Match 语义需真实 bucket 验证；若 TOS 忽略该头则多实例模板写会丢。单实例不受影响。
+- **D4** Docker 以 root + tsx 跑生产。加固建议。
+
+## 修复进度
+- ✅ **B-P0** pg 池 error 监听 + 进程级 uncaughtException（记录+退出交编排重启）/unhandledRejection（记录不退出）兜底（storage.ts / index.ts）。
+- ✅ **B1** 限定二次兜底只作用于 easy-template-x 不覆盖的脚注/尾注（新增 `isEasyTemplateFallbackPart`/`isVariableContentPart`）。查库确认引擎覆盖 document+header+footer+chart、缺失变量替空串，故正文残留必是用户数据。加 3 回归测试（注入/示例 token/批注）。
+- ✅ **B8** 批注不再参与变量提取（同上门控），回归测试覆盖。
+- ✅ **B2** 加周期性 markStaleAsFailed（unref 定时器，lease/3 间隔）回收僵死任务。
+- ✅ **B3** 异步任务强制不内联 base64（走 download.url）+ 进度只写计数、结果 JSON 完成时整体写一次。加 2 回归测试。
+- ✅ **B7** batch schema 补 unusedStrategy + 转发；job schema 补 missingStrategy/unusedStrategy + 转发。回归测试覆盖异步转发。
+- ✅ **B4** 全局 error middleware（坏 JSON→JSON 400、空 body→JSON 400，不再 HTML+堆栈）+ savedConfig POST auto body 兜底。实测双场景已修。
+- ✅ **B16** server keepAliveTimeout/headersTimeout/requestTimeout 显式设置。
+- ✅ **B17** SIGTERM/SIGINT 优雅关闭：停止接新连接→放行在途→closeDatabase→退出，25s 强制兜底。新增 storage.closeDatabase。
+- ✅ **B5** 模板/图片下载 + TOS 上传加 AbortSignal 墙钟总时限（防慢滴挂死）。
+- ✅ **B6** OSS/TOS 对象 key 插服务端随机段，防客户端 x-request-id 撞号覆盖。加碰撞回归测试 + 更新 key 结构断言。
+- ✅ **B15** OSS/TOS 上传失败 catch 打日志再抛（线上可排障）。
+- ✅ **B9** 图片段落正则加 `(?<!/)>` 负向后行，排除自闭合空段落黏连产坏 docx。加回归测试。
+- ✅ **B10** batch 预加载 template.url，避免 100 条重复下载同一 URL。
+- ✅ **B13** runMigrations 加 pg_advisory_lock 跨实例互斥 + 版本号数值排序（修 10_ 排 2_ 前）。
+- ⏭️ **B11** 查不存在模板返回 400：经查是项目既定约定（batch 测试断言 400），非 bug，按规则十一不改。
+- ✅ **F1** 写回循环逐条落地 succeeded（不再等整批结束统一 setItems）：终止后已写回的记录不会被误标 failed→重试重复写回附件。
+- ✅ **F4** catch 只覆盖仍 processing 的记录，不抹掉已 succeeded / 已带精确原因（本地"变量为空"）的记录。
+- ✅ **F5** 重试重置 startedAt，ETA / 用时不再被空闲时间稀释。
+- ✅ **F2** 云文档 unmappedCount 校验字段是否仍存在（字段被删 / 切表后的残留 id 算未绑定），阻断整批空文档；与行内"未选择"一致。
+- ✅ **F3** saveAutoConfig 支持 overrides，提取路径透传本次模板身份，修首次不保存 / 换模板张冠李戴。
+- ✅ **F6** 云文档 finishedAllBatches 标记：中途报错/中断不再显示进度 100%"已完成"。
+- ✅ **F7** reconcileMapping 尊重用户显式清空（''），只对未设置（undefined）智能匹配；清空的绑定不再被选区变化偷偷绑回。加 2 回归测试。
+- ✅ **F8** PickerScreen 初始标签页跟随选中模板归属 + 新建后聚焦并 remount 模板库：新建私有模板不再停在「公用」页看不见、私有模板选中态不再被清空。
+
+## 最终验收（2026-07-12）
+- 全量测试 **329/329 通过**（320 基线 + 9 新回归：注入/示例token/批注/异步转发/异步不内联base64/OSS撞号/图片自闭合段落/reconcile 清空/reconcile 保留手选）。
+- typecheck 0 错误；vite build 通过；verify:secrets 无泄漏。
+- 实测后端错误兜底：坏 JSON / 空 body 均返回干净 JSON（不再 HTML+堆栈）；服务启动 + 自检正常。
+- 真机浏览器（mock 模式）验证：Word 映射屏、云文档提取+映射屏、模板选择器均正常渲染，无 console 报错；选择器按选中模板归属正确落在「公用」页并保留选中态（F8）。
+- **未擅自改**：D1 鉴权放开 / D2 部署脚本先杀后建 / D3 TOS 锁真机验证 / D4 Docker 加固——均属产品/运维决策，见上文清单，待你拍板。
+
+## 状态：✅ 无争议 bug 全部修复并回归；产品决策项 D1-D4 已列出待用户定夺。
 
 # 前端登录流程移除（2026-06-24，用户指令「登录的流程去掉先」）
 

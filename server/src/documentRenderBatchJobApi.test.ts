@@ -276,6 +276,72 @@ test('异步任务完成后按 TTL 清理，避免长期堆积内存', async () 
   }
 });
 
+test('异步任务转发 missingStrategy=blank 与 unusedStrategy=ignore（契约字段不再被静默丢弃）', async () => {
+  const restore = withPrivateTemplateUrls();
+  const api = await startServer();
+  try {
+    await createTemplate(api.baseUrl);
+    const submitResponse = await fetch(`${api.baseUrl}/api/v1/document-render-jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        template: { format: 'docx', templateId: 'fbiftemp_20260512_001' },
+        missingStrategy: 'blank',
+        unusedStrategy: 'ignore',
+        // 缺 金额（应被留空）+ 多余变量（应被忽略）。策略转发生效时该条才应成功。
+        records: [{ recordId: 'rec_blank', variables: { 客户名称: '北京测试', 多余的字段: 'x' } }],
+      }),
+    });
+    assert.equal(submitResponse.status, 202);
+    const jobId = (await submitResponse.json() as any).job.jobId;
+    let job: any = { status: 'pending' };
+    for (let i = 0; i < 80 && !['completed', 'partial_failed', 'failed'].includes(job.status); i += 1) {
+      await new Promise((r) => setTimeout(r, 25));
+      const p = await (await fetch(`${api.baseUrl}/api/v1/document-render-jobs/${jobId}`)).json() as any;
+      if (p.job) job = p.job;
+    }
+    assert.equal(job.status, 'completed', '转发策略后该条应成功，而非因缺失/多余变量失败');
+    const results = await (await fetch(`${api.baseUrl}/api/v1/document-render-jobs/${jobId}/results`)).json() as any;
+    assert.equal(results.records[0].ok, true);
+    assert.deepEqual(results.records[0].variables.missing, ['金额'], '金额仍如实列在 missing 供回溯');
+  } finally {
+    restore();
+    await api.close();
+  }
+});
+
+test('异步任务即使请求 includeFileBase64 也不内联 base64（大批量统一走 download.url，避免撑爆内存/DB）', async () => {
+  const restore = withPrivateTemplateUrls();
+  const api = await startServer();
+  try {
+    await createTemplate(api.baseUrl);
+    const submitResponse = await fetch(`${api.baseUrl}/api/v1/document-render-jobs`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        template: { format: 'docx', templateId: 'fbiftemp_20260512_001' },
+        output: { includeFileBase64: true },
+        records: [{ recordId: 'rec_b64', variables: { 客户名称: '客户', 金额: '100 元' } }],
+      }),
+    });
+    const jobId = (await submitResponse.json() as any).job.jobId;
+    let job: any = { status: 'pending' };
+    for (let i = 0; i < 80 && !['completed', 'partial_failed', 'failed'].includes(job.status); i += 1) {
+      await new Promise((r) => setTimeout(r, 25));
+      const p = await (await fetch(`${api.baseUrl}/api/v1/document-render-jobs/${jobId}`)).json() as any;
+      if (p.job) job = p.job;
+    }
+    assert.equal(job.status, 'completed');
+    const results = await (await fetch(`${api.baseUrl}/api/v1/document-render-jobs/${jobId}/results`)).json() as any;
+    const download = results.records[0].download as any;
+    assert.ok(download && typeof download.url === 'string', '异步结果仍提供 download.url 供下载');
+    assert.equal(download.fileBase64, undefined, '异步结果绝不内联 base64');
+  } finally {
+    restore();
+    await api.close();
+  }
+});
+
 test('异步任务完成状态等待进度写入完成', async () => {
   const app = express();
   const rows = new Map<string, any>();

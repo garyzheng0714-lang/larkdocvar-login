@@ -152,6 +152,16 @@ async function queryDatabaseReadiness(db: Queryable): Promise<DatabaseReadiness>
   };
 }
 
+// 优雅关闭时释放连接池：停止接新请求后调用，让在途查询完成、连接干净归还。
+export async function closeDatabase(): Promise<void> {
+  if (pool) {
+    const closing = pool;
+    pool = null;
+    initPromise = null;
+    await closing.end().catch(() => undefined);
+  }
+}
+
 async function checkDatabaseReady(): Promise<DatabaseReadiness> {
   const db = await initDatabase();
   return queryDatabaseReadiness(db);

@@ -24,7 +24,14 @@ export function PickerScreen({
   onNew,
   onEdit,
 }: PickerScreenProps) {
-  const [tab, setTab] = useState<'公用' | '个人'>('公用');
+  // 初始标签页跟随"当前选中的模板"归属：若选中的是私有模板，直接落在「个人」页，否则「公用」页。
+  // 否则打开选择器时私有模板停在看不见的「个人」页（选中态被清空、"确认使用"变灰），或刚建的私有模板
+  // 因为默认停在「公用」页而看不到，像保存失败了。
+  const initialTab = useMemo<'公用' | '个人'>(() => {
+    const initial = initialSelectedId ? templates.find((t) => t.id === initialSelectedId) : undefined;
+    return initial?.visibility === 'private' ? '个人' : '公用';
+  }, [initialSelectedId, templates]);
+  const [tab, setTab] = useState<'公用' | '个人'>(initialTab);
   const [category, setCategory] = useState('全部');
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | undefined>(initialSelectedId);

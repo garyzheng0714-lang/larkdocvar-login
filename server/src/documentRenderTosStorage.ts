@@ -1,4 +1,4 @@
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { normalizeObjectPrefix, sanitizeObjectRequestId } from './objectStorageKeys';
 import { DOCX_CONTENT_TYPE, buildContentDisposition, ensureDocxExtension, sanitizeFileName } from './documentRenderFile';
 import { UserFacingError } from './documentRenderStorageErrors';
@@ -169,6 +169,9 @@ export async function putTosObject(config: TosStorageConfig, key: string, body: 
       ...headers,
     },
     body: new Uint8Array(body),
+    // 其它出站请求（飞书、模板/图片下载、Gotenberg）都有超时，唯独 TOS 上传用裸 fetch 无超时——
+    // TOS 网络挂起时单条渲染要等 undici 默认 300s 才失败，且异步任务心跳还会一直续租放大挂死。加墙钟总时限。
+    signal: AbortSignal.timeout(30_000),
   });
   await assertTosResponseOk(response, 'put');
 }
@@ -177,6 +180,7 @@ export async function deleteTosObject(config: TosStorageConfig, key: string): Pr
   const response = await fetch(`https://${getTosHost(config)}/${encodeTosPath(key)}`, {
     method: 'DELETE',
     headers: buildTosAuthorizationHeaders(config, 'DELETE', key, Buffer.alloc(0)),
+    signal: AbortSignal.timeout(30_000),
   });
   await assertTosResponseOk(response, 'delete');
 }
@@ -187,7 +191,8 @@ export class TosDocumentRenderStorage implements DocumentRenderStorage {
   async saveDocx(input: SaveGeneratedDocxInput): Promise<SavedGeneratedDocx> {
     const safeFileName = ensureDocxExtension(sanitizeFileName(input.fileName, '生成文档.docx'));
     const safeRequestId = sanitizeObjectRequestId(input.requestId);
-    const objectName = `${this.config.prefix}${formatTosDatePath()}/${safeRequestId}/${safeFileName}`;
+    // 插入服务端随机段：客户端 x-request-id 撞号 + 同文件名时不再 PUT 覆盖别人的对象（会串包）。requestId 仍留在路径可追溯。
+    const objectName = `${this.config.prefix}${formatTosDatePath()}/${safeRequestId}/${randomUUID().replace(/-/g, '').slice(0, 12)}/${safeFileName}`;
     const contentDisposition = buildContentDisposition(safeFileName);
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + input.ttlMs).toISOString();
@@ -198,7 +203,11 @@ export class TosDocumentRenderStorage implements DocumentRenderStorage {
         'Content-Disposition': contentDisposition,
         'Cache-Control': 'private, max-age=0, no-cache',
       });
-    } catch {
+    } catch (error) {
+      // 线上排障必须能看到根因（限流 / 权限 / bucket 满 / DNS / 超时）；assertTosResponseOk 精心构造的 status/code
+      // 不能被无参 catch 丢弃。记录内部细节，仅向调用方返回稳定的可读文案。
+      // eslint-disable-next-line no-console
+      console.error('[tos-storage] 生成文件上传 TOS 失败：', error instanceof Error ? error.message : String(error));
       throw new UserFacingError('生成文件上传 TOS 失败，请检查 TOS 配置和权限。');
     }
 

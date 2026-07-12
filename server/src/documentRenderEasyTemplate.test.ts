@@ -174,6 +174,51 @@ test('加粗与下划线并存且分散在不同 run：替换后两种字符级�
   assert.equal(result.hasResidualPlaceholders, false);
 });
 
+test('变量值里含完整 {{其它变量}} token 不被二次替换（防跨变量注入/串包，信任杀手）', async () => {
+  // WHY：easy-template-x 替换后若对 document.xml 再跑一遍文本兜底替换，用户值里字面的 {{密钥}}
+  // 会被当成占位符替换成另一个变量的值，静默产出串包的错误文档——接口还返回 ok:true。
+  // 正确语义：正文的兜底二次替换只能作用于引擎不覆盖的脚注/尾注，绝不能碰 document/header/footer。
+  const tpl = await buildDocx(`<w:p><w:r><w:t>{{说明}}</w:t></w:r></w:p>`);
+  const result = await renderDocxWithEasyTemplate(tpl, { 说明: '参见 {{密钥}} 字段', 密钥: 'TOP-SECRET' });
+  const xml = await extractDocumentXml(result.buffer);
+  assert.match(xml, /参见 \{\{密钥\}\} 字段/, '值里字面的 {{密钥}} 必须原样保留');
+  assert.doesNotMatch(xml, /TOP-SECRET/, '绝不能把另一个变量的值注入进本变量文本');
+  assert.equal(result.hasResidualPlaceholders, false, '值里的字面 token 不算残留，不得因此判失败');
+});
+
+test('变量值里含完整 {{未知}} 示例 token：既不注入也不误判残留而整单 400', async () => {
+  // WHY：说明性文案常写"请填成 {{姓名}} 这样"。旧兜底会检测到残留 token 把整单打成 400，合法输入无故失败。
+  const tpl = await buildDocx(`<w:p><w:r><w:t>{{说明}}</w:t></w:r></w:p>`);
+  const result = await renderDocxWithEasyTemplate(tpl, { 说明: '格式请写成 {{姓名}} 这样' });
+  const xml = await extractDocumentXml(result.buffer);
+  assert.match(xml, /格式请写成 \{\{姓名\}\} 这样/, '示例占位符文案必须原样保留');
+  assert.equal(result.hasResidualPlaceholders, false, '值里的示例 token 不是残留，合法输入不能被 400');
+});
+
+test('批注 comments.xml 里的 {{示例}} 不参与变量提取（不误报 missing / 不阻断渲染）', async () => {
+  // WHY：审阅批注里写了 {{客户名称}} 这类示意，不是模板变量。若混进 found → 被判 missing → 整单拒绝生成。
+  const zip = new JSZip();
+  zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+  <Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>
+</Types>`);
+  zip.folder('_rels')?.file('.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`);
+  zip.folder('word')?.file('document.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>客户：{{客户名称}}</w:t></w:r></w:p></w:body></w:document>`);
+  zip.folder('word')?.file('comments.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:comment w:id="1"><w:p><w:r><w:t>这里要填 {{审批人}}</w:t></w:r></w:p></w:comment></w:comments>`);
+  const tpl = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  const result = await renderDocxWithEasyTemplate(tpl, { 客户名称: '上海测试' });
+  assert.deepEqual(result.found, ['客户名称'], '批注里的 {{审批人}} 不该进 found');
+  assert.deepEqual(result.missing, [], '不该把批注里的示意占位符误报为缺失变量');
+});
+
 test('基础替换返回 found 与 previewText', async () => {
   const tpl = await buildDocx(`<w:p><w:r><w:t>客户：{{客户名称}}</w:t></w:r></w:p>`);
   const result = await renderDocxWithEasyTemplate(tpl, { 客户名称: '上海测试' });

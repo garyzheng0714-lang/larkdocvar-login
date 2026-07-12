@@ -1,6 +1,7 @@
 import './env';
 import cors, { CorsOptions } from 'cors';
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +15,7 @@ import { createDocumentTemplateRouter, type DocumentTemplateApiService } from '.
 import { DocumentTemplateService } from './documentTemplateService';
 import { FeishuTemplateService } from './feishu';
 import { getFeishuAppCredentials } from './auth';
-import { initDatabase } from './storage';
+import { initDatabase, closeDatabase } from './storage';
 import { runConfigSelfCheck, assertConfigOrExit } from './configSelfCheck';
 import { registerCloudDocRoutes } from './routes/cloudDocRoutes';
 import { registerAuthSessionRoutes } from './routes/authSessionRoutes';
@@ -149,15 +150,84 @@ if (existsSync(indexHtml)) {
   });
 }
 
+// 全局错误兜底（必须挂在所有路由之后）：请求管线里任何未被路由自身接住的错误——尤其是全局
+// express.json 对坏 JSON 抛的 SyntaxError、handler 里漏 catch 的 TypeError——都在此收敛成稳定 JSON。
+// 绝不把 Express 默认 HTML 错误页或堆栈暴露给调用方（会破坏"业务系统调用"的 JSON 契约、开发模式还泄漏堆栈）。
+const globalErrorHandler: express.ErrorRequestHandler = (error, request, response, next) => {
+  if (response.headersSent) {
+    next(error);
+    return;
+  }
+  const headerRequestId = request.headers['x-request-id'];
+  const rawRequestId = Array.isArray(headerRequestId) ? headerRequestId[0] : headerRequestId;
+  const requestId = typeof rawRequestId === 'string' && rawRequestId.trim() ? rawRequestId.trim().slice(0, 128) : randomUUID();
+  const status = typeof error?.status === 'number' ? error.status : (typeof error?.statusCode === 'number' ? error.statusCode : 0);
+  if (status === 413 || error?.type === 'entity.too.large') {
+    response.status(413).json({ ok: false, requestId, error: '请求体过大，请减少请求内容后重试。' });
+    return;
+  }
+  if (status === 400 || error?.type === 'entity.parse.failed' || error instanceof SyntaxError) {
+    response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
+    return;
+  }
+  // eslint-disable-next-line no-console
+  console.error('[unhandled-route-error]', error instanceof Error ? (error.stack || error.message) : String(error));
+  response.status(500).json({ ok: false, requestId, error: '服务暂时不可用，请稍后重试。' });
+};
+app.use(globalErrorHandler);
+
+// 进程级最后防线：请求路径外的漏网错误（第三方库 emit、fire-and-forget 忘 catch）不能无声无息。
+// uncaughtException 后进程状态已不可信，记录完整堆栈后退出，交给容器编排（restart: unless-stopped）拉起干净实例。
+// unhandledRejection 多为可恢复的边缘遗漏，记录堆栈但不退出，避免单个漏 catch 拖垮整个服务。
+process.on('uncaughtException', (error) => {
+  // eslint-disable-next-line no-console
+  console.error('[fatal] uncaughtException，进程即将退出：', error instanceof Error ? error.stack || error.message : String(error));
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  // eslint-disable-next-line no-console
+  console.error('[warn] unhandledRejection（已记录，进程继续）：', reason instanceof Error ? reason.stack || reason.message : String(reason));
+});
+
 async function bootstrap(): Promise<void> {
   assertConfigOrExit(runConfigSelfCheck());
   if (process.env.NODE_ENV === 'production' || hasDatabaseUrl) {
     await initDatabase();
   }
-  app.listen(port, host, () => {
+  const server = app.listen(port, host, () => {
     // eslint-disable-next-line no-console
     console.log(`Feishu template service started on http://${host}:${port}`);
   });
+  // 显式设置连接层超时：keepAliveTimeout 略大于常见 nginx/SLB 的 60s idle，避免 keep-alive 竞态偶发 502；
+  // headersTimeout 必须 > keepAliveTimeout；requestTimeout 挡住慢客户端长期占连接（沿用 Node 默认 5 分钟）。
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
+  server.requestTimeout = 300_000;
+
+  // 优雅关闭：docker stop / 部署会发 SIGTERM。停止接新连接、放行在途请求、关闭 DB 池后再退出；
+  // 若在途请求 25s 内没排空则强制退出，避免卡死编排。
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    // eslint-disable-next-line no-console
+    console.log(`[shutdown] 收到 ${signal}，开始优雅关闭…`);
+    const forceExit = setTimeout(() => {
+      // eslint-disable-next-line no-console
+      console.error('[shutdown] 在途请求未在 25s 内排空，强制退出');
+      process.exit(1);
+    }, 25_000);
+    if (typeof forceExit.unref === 'function') forceExit.unref();
+    server.close(() => {
+      void closeDatabase().finally(() => {
+        // eslint-disable-next-line no-console
+        console.log('[shutdown] 已排空并关闭，正常退出');
+        process.exit(0);
+      });
+    });
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 void bootstrap().catch((error) => {

@@ -160,7 +160,9 @@ export class OssDocumentRenderStorage implements DocumentRenderStorage {
   async saveDocx(input: SaveGeneratedDocxInput): Promise<SavedGeneratedDocx> {
     const safeFileName = ensureDocxExtension(sanitizeFileName(input.fileName, '生成文档.docx'));
     const safeRequestId = sanitizeObjectRequestId(input.requestId);
-    const objectName = `${this.prefix}${new Date().toISOString().slice(0, 10)}/${safeRequestId}/${safeFileName}`;
+    // requestId 来自客户端（业务系统常用固定值/订单号），同日撞号 + 同文件名会 PUT 覆盖到别人的对象上，
+    // 已签发的下载链接从此指向被串包的新内容。插入服务端随机段保证对象 key 全局唯一；requestId 仍在路径里可追溯。
+    const objectName = `${this.prefix}${new Date().toISOString().slice(0, 10)}/${safeRequestId}/${randomUUID().replace(/-/g, '').slice(0, 12)}/${safeFileName}`;
     const contentDisposition = buildContentDisposition(safeFileName);
     const createdAt = new Date().toISOString();
     const expiresAt = new Date(Date.now() + input.ttlMs).toISOString();
@@ -174,7 +176,10 @@ export class OssDocumentRenderStorage implements DocumentRenderStorage {
           'Cache-Control': 'private, max-age=0, no-cache',
         },
       });
-    } catch {
+    } catch (error) {
+      // 记录内部根因供排障（限流/权限/DNS/超时），仅向调用方返回稳定文案。
+      // eslint-disable-next-line no-console
+      console.error('[oss-storage] 生成文件上传 OSS 失败：', error instanceof Error ? error.message : String(error));
       throw new UserFacingError('生成文件上传 OSS 失败，请检查 OSS 配置和权限。');
     }
 
@@ -188,7 +193,9 @@ export class OssDocumentRenderStorage implements DocumentRenderStorage {
           'content-disposition': contentDisposition,
         },
       });
-    } catch {
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[oss-storage] OSS 下载链接生成失败：', error instanceof Error ? error.message : String(error));
       throw new UserFacingError('OSS 下载链接生成失败，请检查 OSS 配置。');
     }
 

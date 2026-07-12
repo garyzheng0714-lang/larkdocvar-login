@@ -118,6 +118,8 @@ type RenderJob = {
   status: RenderJobStatus;
   template: DocumentRenderRequest['template'];
   output?: DocumentRenderRequest['output'];
+  missingStrategy?: DocumentRenderRequest['missingStrategy'];
+  unusedStrategy?: DocumentRenderRequest['unusedStrategy'];
   total: number;
   processed: number;
   succeeded: number;
@@ -136,6 +138,9 @@ const variableMapSchema = z.custom<Record<string, string | number | boolean | nu
     .every((item) => ['string', 'number', 'boolean'].includes(typeof item) || item === null);
 });
 
+const jobMissingStrategySchema = z.enum(['fail', 'blank']).optional();
+const jobUnusedStrategySchema = z.enum(['error', 'ignore']).optional();
+
 const jobSchema = z.object({
   template: z.object({
     format: z.enum(['doc', 'docx']),
@@ -146,6 +151,8 @@ const jobSchema = z.object({
     versionId: z.string().trim().optional(),
     fileName: z.string().trim().max(255).optional(),
   }),
+  missingStrategy: jobMissingStrategySchema,
+  unusedStrategy: jobUnusedStrategySchema,
   output: z.object({
     fileName: z.string().trim().max(255).optional(),
     expiresInSeconds: z.number().int().positive().max(7 * 24 * 60 * 60).optional(),
@@ -155,6 +162,8 @@ const jobSchema = z.object({
     recordId: z.string().trim().min(1).max(128),
     variables: variableMapSchema.default({}),
     imageVariables: imageVariableMapSchema.optional(),
+    missingStrategy: jobMissingStrategySchema,
+    unusedStrategy: jobUnusedStrategySchema,
     output: z.object({
       fileName: z.string().trim().max(255).optional(),
       expiresInSeconds: z.number().int().positive().max(7 * 24 * 60 * 60).optional(),
@@ -232,8 +241,16 @@ function rowToJob(row: { jobId: string; ownerKey: string; status: string; templa
   };
 }
 
+// 异步任务面向大批量（最多 500 条）：绝不内联每份文档的 base64。500 × 数十 MB 的 base64 会累积撑爆内存，
+// 并让结果 JSON 超出 V8 字符串上限与 PostgreSQL 单行上限。统一强制走 download.url 下载，结果只留元数据 + 链接。
+function stripInlineBase64(output?: DocumentRenderRequest['output']): DocumentRenderRequest['output'] {
+  return output ? { ...output, includeFileBase64: false } : output;
+}
+
 async function runJob(job: RenderJob, storage: DocumentRenderStorage, ttlMs: number, leaseMs: number, jobStore: JobStore, templateResolver?: DocumentTemplateResolver): Promise<void> {
   const progressResults: DocumentRenderBatchRecordResult[] = [];
+  const sanitizedRecords = job.records.map((record) =>
+    record.output ? { ...record, output: stripInlineBase64(record.output) } : record);
   // 心跳续租：单条记录可能耗时超过 lease（远程模板下载/转换卡顿等），仅在每条完成后续租
   // 会留下"活着的进程仍在跑、lease 却先过期"的窗口，被 markStale 误判为 stale 失败。
   // 定时刷新 lease_expires_at，保证活进程持有的任务不会被误杀；进程崩溃则心跳停止、lease 自然过期。
@@ -246,8 +263,10 @@ async function runJob(job: RenderJob, storage: DocumentRenderStorage, ttlMs: num
     job.status = 'running';
     job.results = await renderBatchRecords({
       template: job.template,
-      output: job.output,
-      records: job.records,
+      output: stripInlineBase64(job.output),
+      missingStrategy: job.missingStrategy,
+      unusedStrategy: job.unusedStrategy,
+      records: sanitizedRecords,
     }, {
       storage,
       templateResolver,
@@ -257,11 +276,12 @@ async function runJob(job: RenderJob, storage: DocumentRenderStorage, ttlMs: num
         job.processed += 1;
         if (result.ok) job.succeeded += 1;
         else job.failed += 1;
+        // 只更新计数与续租；不在每条进度里全量重写 resultsJson——那是 O(n²) 全量重序列化，大批量会拖爆 DB。
+        // 完整结果只在任务完成/失败时整体写一次（见下）；进度通过 GET /:jobId 的计数字段观察。
         await jobStore.update(job.jobId, {
           processed: job.processed,
           succeeded: job.succeeded,
           failed: job.failed,
-          resultsJson: JSON.stringify(progressResults),
           leaseExpiresAt: futureIso(leaseMs),
         });
       },
@@ -320,6 +340,18 @@ export function createDocumentRenderJobRouter(options: {
 
   // 服务启动时标记 stale job 为 failed
   jobStore.markStaleAsFailed().catch(() => undefined);
+  // 定时兜底：仅启动时扫一次会漏掉"进程崩溃后几秒内被拉起、此时崩掉的任务 lease 还没过期"的窗口，
+  // 导致这些任务永远停在 running、客户端无限轮询。周期性回收租约已过期（心跳已停）的任务，标为 failed。
+  // 用 unref 让定时器不阻止进程退出；lease 默认 15 分钟，检查间隔取 lease/3（下限 60s）足够及时。
+  const staleSweep = setInterval(() => {
+    jobStore.markStaleAsFailed().then((count) => {
+      if (count > 0) {
+        // eslint-disable-next-line no-console
+        console.warn(`[document-render-job] 回收 ${count} 个租约过期的僵死任务（标记为 failed）`);
+      }
+    }).catch(() => undefined);
+  }, Math.max(60_000, Math.floor(jobLeaseMs / 3)));
+  if (typeof staleSweep.unref === 'function') staleSweep.unref();
 
   router.post('/', async (request, response) => {
     const requestId = randomUUID();
@@ -357,6 +389,8 @@ export function createDocumentRenderJobRouter(options: {
       status: 'pending',
       template: parsed.data.template,
       output: parsed.data.output,
+      missingStrategy: parsed.data.missingStrategy,
+      unusedStrategy: parsed.data.unusedStrategy,
       total: parsed.data.records.length,
       processed: 0,
       succeeded: 0,

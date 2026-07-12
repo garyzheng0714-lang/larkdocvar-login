@@ -54,9 +54,9 @@ test('内置 OSS 存储上传 Docx 并生成带 TTL 的签名下载链接', asyn
   assert.equal(saved.fileName, '报价-单-.docx');
   assert.equal(saved.contentType, DOCX_CONTENT_TYPE);
   assert.equal(saved.size, buffer.length);
-  // 验证意图：对象 key 末段必须是友好文件名（requestId 仅作目录保唯一），这样下载链接
-  // URL 末段就是合同名，飞书「链接转附件」按 URL 路径取名时拿到的才是合同名而非 UUID。
-  assert.match(saved.path, /^document-renders\/\d{4}-\d{2}-\d{2}\/request-123\/报价-单-\.docx$/);
+  // 验证意图：对象 key 末段必须是友好文件名（这样下载链接末段就是合同名，飞书「链接转附件」取到合同名而非 UUID）；
+  // requestId 与文件名之间夹一段服务端随机段，保证客户端 x-request-id 撞号也不会覆盖别人的对象。
+  assert.match(saved.path, /^document-renders\/\d{4}-\d{2}-\d{2}\/request-123\/[a-f0-9]{12}\/报价-单-\.docx$/);
   assert.equal(saved.url, `https://oss.example.test/${encodeURIComponent(saved.path)}?expires=3600`);
   assert.equal(client.putCalls.length, 1);
   assert.equal(client.signatureCalls.length, 1);
@@ -83,6 +83,15 @@ test('内置 OSS 存储上传 Docx 并生成带 TTL 的签名下载链接', asyn
   });
 });
 
+test('相同 requestId + 相同文件名两次上传得到不同对象 key（防客户端撞号覆盖串包）', async () => {
+  const client = new FakeAliOssClient();
+  const storage = new __test__.OssDocumentRenderStorage(client as any, 'document-renders/');
+  const input = { buffer: Buffer.from('docx-content'), fileName: '合同.docx', requestId: 'order-1001', ttlMs: 3600 * 1000, ttlSeconds: 3600 };
+  const first = await storage.saveDocx(input);
+  const second = await storage.saveDocx(input);
+  assert.notEqual(first.path, second.path, '同 requestId + 同文件名必须落到不同对象，绝不能互相覆盖');
+});
+
 test('内置 OSS 存储会清洗 requestId 中的路径片段', async () => {
   const client = new FakeAliOssClient();
   const storage = new __test__.OssDocumentRenderStorage(client as any, 'document-renders/');
@@ -95,7 +104,7 @@ test('内置 OSS 存储会清洗 requestId 中的路径片段', async () => {
     ttlSeconds: 3600,
   });
 
-  assert.match(saved.path, /^document-renders\/\d{4}-\d{2}-\d{2}\/evil-nested-request\/合同\.docx$/);
+  assert.match(saved.path, /^document-renders\/\d{4}-\d{2}-\d{2}\/evil-nested-request\/[a-f0-9]{12}\/合同\.docx$/);
   assert.equal(saved.path.includes('..'), false);
   assert.equal(saved.path.includes('\\'), false);
   assert.equal(client.putCalls[0]?.objectName, saved.path);

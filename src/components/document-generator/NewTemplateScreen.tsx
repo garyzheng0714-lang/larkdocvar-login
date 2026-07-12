@@ -15,7 +15,7 @@ interface NewTemplateScreenProps {
   accent: string;
   template?: Template | null;
   onCancel: () => void;
-  onSave: () => void | Promise<void>;
+  onSave: (created?: { templateId: string }) => void | Promise<void>;
 }
 
 export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTemplateScreenProps) {
@@ -97,11 +97,13 @@ export function NewTemplateScreen({ accent, template, onCancel, onSave }: NewTem
         headers: { 'Content-Type': 'application/json', ...sidebarHeaders },
         body: JSON.stringify(requestBody),
       });
-      const body = await response.json().catch(() => null) as { ok?: boolean; error?: string } | null;
+      const body = await response.json().catch(() => null) as { ok?: boolean; error?: string; template?: { templateId?: string } } | null;
       if (!response.ok || !body?.ok) {
         throw new Error(body?.error || '模板保存失败，请稍后重试。');
       }
-      await onSave();
+      // 把新建/更新后的 templateId 回传，让模板库能定位并展示这张模板（否则新建的私有模板停在默认「公用」页看不到）。
+      const savedTemplateId = body.template?.templateId || template?.id;
+      await onSave(savedTemplateId ? { templateId: savedTemplateId } : undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : '模板保存失败，请稍后重试。');
     } finally {

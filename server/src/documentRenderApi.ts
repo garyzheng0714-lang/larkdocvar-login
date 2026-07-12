@@ -149,6 +149,24 @@ function xmlHasResidualPlaceholders(xml: string): boolean {
   return textHasResidualPlaceholder(collectTextNodeSegments(xml).combinedText);
 }
 
+// easy-template-x 的 getContentParts 只覆盖 document.xml + 页眉 header* + 页脚 footer* + chart，
+// 且缺失变量会被替换成空串——这些部件处理完不会再残留"真占位符"。脚注 footnotes.xml / 尾注 endnotes.xml
+// 它完全不处理，仍留着原始 {{x}}，需要事后兜底文本替换。这个集合就是"需要兜底"的部件白名单。
+const EASY_TEMPLATE_FALLBACK_PARTS = new Set(['word/footnotes.xml', 'word/endnotes.xml']);
+function isEasyTemplateFallbackPart(name: string): boolean {
+  return EASY_TEMPLATE_FALLBACK_PARTS.has(name);
+}
+
+// 参与变量提取与 found/missing 统计、以及需要做变量替换的"正文类"部件：
+// 引擎覆盖的正文/页眉/页脚 + 需兜底的脚注/尾注。批注 comments.xml、设置 settings.xml 等辅助部件排除在外——
+// 那里若出现 {{示例}} 不是模板变量，混进来会误报 missing 甚至让整单渲染失败。
+function isVariableContentPart(name: string): boolean {
+  return name === 'word/document.xml'
+    || /^word\/header\d*\.xml$/.test(name)
+    || /^word\/footer\d*\.xml$/.test(name)
+    || EASY_TEMPLATE_FALLBACK_PARTS.has(name);
+}
+
 function renderText(input: string, variables: Record<string, string>): string {
   return input.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, rawName: string) => {
     const name = rawName.trim();
@@ -231,6 +249,9 @@ export async function downloadTemplateDocx(rawUrl: string, redirectCount = 0): P
     response = await axios.get<ArrayBuffer>(target.url.toString(), {
       responseType: 'arraybuffer',
       timeout: 30000,
+      // axios 的 timeout 只是 socket 空闲超时——对端每 29s 滴一个字节即可绕过它无限拖住下载。
+      // 再加一个墙钟总时限硬上限，保证慢滴服务器无法让单份渲染 / 异步任务永久挂起。
+      signal: AbortSignal.timeout(60_000),
       maxContentLength: MAX_TEMPLATE_DOWNLOAD_BYTES,
       maxBodyLength: MAX_TEMPLATE_DOWNLOAD_BYTES,
       maxRedirects: 0,
@@ -570,15 +591,19 @@ async function renderDocxWithEasyTemplate(
   // 图片占位符（{{image:xxx}} → drawing），复用现有实现
   const renderedImages = await replaceImagePlaceholdersInDocx(zip, normalizeImageVariables(imageVariables));
 
-  // 收集模板里出现的文本变量名（用于 found/missing），并对各 word/*.xml 做 run 归一化
+  // 收集模板里出现的文本变量名（用于 found/missing），并对各 word/*.xml 做 run 归一化。
+  // 变量名只从"正文类"部件收集：批注 comments.xml、设置等辅助部件里若写了 {{示例}} 不是模板变量，
+  // 混进 found 会被误判为 missing（未提供该变量）导致整单 400 拒绝生成。
   const foundSet = new Set<string>();
   const xmlFiles = Object.keys(zip.files).filter((name) => name.startsWith('word/') && name.endsWith('.xml'));
   for (const name of xmlFiles) {
     const file = zip.file(name);
     if (!file) continue;
     const xml = await file.async('string');
-    for (const variableName of extractVariablesFromText(collectTextNodeSegments(xml).combinedText).filter((candidate) => !isImagePlaceholderName(candidate))) {
-      foundSet.add(variableName);
+    if (isVariableContentPart(name)) {
+      for (const variableName of extractVariablesFromText(collectTextNodeSegments(xml).combinedText).filter((candidate) => !isImagePlaceholderName(candidate))) {
+        foundSet.add(variableName);
+      }
     }
     zip.file(name, normalizePlaceholderRuns(xml));
   }
@@ -591,12 +616,17 @@ async function renderDocxWithEasyTemplate(
     throw new UserFacingError('文档生成失败：模板内容无法解析，请检查模板占位符是否完整。');
   }
 
-  // easy-template-x 只处理正文/页眉/页脚等主体部件；对它未覆盖、仍残留占位符的部件
-  // （如 footnotes.xml 脚注、endnotes.xml 尾注），用已归一化的 run 做兜底文本替换，
-  // 保证脚注等位置的变量也被替换且样式保真，避免静默漏替换产出半成品。
+  // easy-template-x 已用 XML 感知方式替换了 document/header/footer（缺失变量替成空串，不留真占位符）。
+  // 对它不覆盖、仍留着原始 {{x}} 的脚注/尾注部件，在此做兜底文本替换，保证脚注等位置也被替换。
+  //
+  // 关键红线：兜底只能作用于脚注/尾注，绝不能对 document/header/footer 再跑一遍文本替换。
+  // 此刻用户变量值已写进这些部件的 XML，值里字面的 {{某字段}}（说明文案、示例、粘贴内容里很常见）
+  // 会被当成占位符二次替换 → 把另一个变量的值静默注入进来，产出串包的错误文档；也不能据此判残留而 400
+  // （值里的示例括号不是残留）。这是"看起来成功、内容却错"的信任杀手，务必只兜底引擎不覆盖的部件。
   const finalZip = await JSZip.loadAsync(processedBuffer);
   let hasResidualPlaceholders = false;
   for (const name of Object.keys(finalZip.files).filter((n) => n.startsWith('word/') && n.endsWith('.xml'))) {
+    if (!isEasyTemplateFallbackPart(name)) continue;
     const file = finalZip.file(name);
     if (!file) continue;
     let xml = await file.async('string');

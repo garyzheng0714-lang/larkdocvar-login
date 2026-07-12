@@ -60,7 +60,14 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
   const targetCount = range === 'selected'
     ? selectedRecordIds.length
     : totalRecordCount || allRecordIds.length;
-  const unmappedCount = variables.filter((variable) => !mapping[variable]).length;
+  // 有效字段 id 集合。字段被删 / 切换数据表后，mapping 里残留的旧字段 id 虽非空但已不存在于当前表，
+  // 读值时会静默取到空字符串 → 生成整批空文档。因此"映射到已失效字段"必须和"未选择"一样算作未绑定，
+  // 阻断生成、并与行内 CloudMapRow 显示的"未选择"保持一致（行也是按 textFields 判定的）。
+  const validTextFieldIds = useMemo(() => new Set(textFields.map((field) => field.id)), [textFields]);
+  const unmappedCount = variables.filter((variable) => {
+    const fieldId = mapping[variable];
+    return !fieldId || !validTextFieldIds.has(fieldId);
+  }).length;
   const canExtract = demo || templateUrl.trim().length > 0;
   const canGenerate = variables.length > 0 && unmappedCount === 0 && targetCount > 0 && (demo || bitableAvailable);
 
@@ -84,15 +91,25 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
     }
   }, [activeTableId, cancelActiveGeneration]);
 
-  const saveAutoConfig = useCallback((nextMapping: Record<string, string>, nextOutputFieldId: string) => {
-    if (demo || !templateUrl.trim() || !templateTitle) return;
+  const saveAutoConfig = useCallback((
+    nextMapping: Record<string, string>,
+    nextOutputFieldId: string,
+    // 刚提取完变量时，templateTitle/documentId 的 setState 还没生效，闭包里读到的是上一轮的旧值——
+    // 首次提取会因 templateTitle 为空而静默不保存；换模板后会把新映射和旧模板的 title/documentId 混存。
+    // 因此提取路径显式把本次的模板身份透传进来，覆盖闭包里的过期值。
+    overrides?: { templateUrl?: string; templateTitle?: string; documentId?: string },
+  ) => {
+    const effectiveTemplateUrl = (overrides?.templateUrl ?? templateUrl).trim();
+    const effectiveTemplateTitle = overrides?.templateTitle ?? templateTitle;
+    const effectiveDocumentId = overrides?.documentId ?? documentId;
+    if (demo || !effectiveTemplateUrl || !effectiveTemplateTitle) return;
     if (autoSaveTimer.current) window.clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = window.setTimeout(() => {
       void saveCloudDocAutoConfig({
-        templateUrl: templateUrl.trim(),
+        templateUrl: effectiveTemplateUrl,
         activeTableId,
-        templateTitle,
-        documentId,
+        templateTitle: effectiveTemplateTitle,
+        documentId: effectiveDocumentId,
         mapping: nextMapping,
         outputFieldId: nextOutputFieldId === AUTO_OUTPUT_FIELD ? '' : nextOutputFieldId,
       }).catch((error) => {
@@ -149,7 +166,12 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
       setDocumentId(payload.documentId);
       setVariables(payload.variables);
       setMapping(nextMapping);
-      saveAutoConfig(nextMapping, outputFieldId);
+      // 透传本次提取的模板身份，避免读到还没生效的旧 state（首次不保存 / 换模板张冠李戴）。
+      saveAutoConfig(nextMapping, outputFieldId, {
+        templateUrl: templateUrl.trim(),
+        templateTitle: payload.templateTitle,
+        documentId: payload.documentId,
+      });
       setNotice({
         type: 'success',
         text: payload.variables.length > 0
@@ -177,6 +199,8 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
     setGenerating(true);
     setNotice(null);
     setResults([]);
+    // 是否正常跑完全部批次。中途报错/中断时保持 false，finally 就不会把进度条拉满显示"已完成"。
+    let finishedAllBatches = false;
     try {
       if (demo) {
         const count = Math.max(1, targetCount || 3);
@@ -192,6 +216,7 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
         setProgress({ total: count, done: count, phase: '已完成' });
         setResults(demoResults);
         setNotice({ type: 'success', text: `已完成：成功 ${count} 条，失败 0 条。` });
+        finishedAllBatches = true;
         return;
       }
 
@@ -249,6 +274,8 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
       const failed = generated.filter((item) => item.status === 'failed').length;
       const succeeded = generated.length - failed;
       if (generateRunIdRef.current !== runId || controller.signal.aborted) return;
+      // 所有批次都处理完了（此后的 refreshBitable 失败不影响"生成已跑完"的事实）。
+      finishedAllBatches = true;
       setResults(generated);
       setNotice({
         type: failed > 0 ? 'error' : 'success',
@@ -263,7 +290,14 @@ export function useCloudDocState(input: CloudDocRuntimeInput): CloudDocState & C
         generatingRef.current = false;
         generateAbortRef.current = null;
         setGenerating(false);
-        setProgress((current) => current.total > 0 ? { ...current, done: current.total, phase: '已完成' } : current);
+        // 只有正常跑完全部批次才显示"已完成 100%"；中途报错/中断时保留实际进度并标注"未完成"，
+        // 避免"顶部提示替换失败、进度条却拉满 100% 已完成"的自相矛盾。
+        setProgress((current) => {
+          if (current.total === 0) return current;
+          return finishedAllBatches
+            ? { ...current, done: current.total, phase: '已完成' }
+            : { ...current, phase: '未完成' };
+        });
       }
     }
   }, [

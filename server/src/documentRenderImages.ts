@@ -121,6 +121,8 @@ async function downloadImage(rawUrl: string, redirectCount = 0): Promise<Buffer>
     response = await axios.get<ArrayBuffer>(target.url.toString(), {
       responseType: 'arraybuffer',
       timeout: 30000,
+      // 墙钟总时限硬上限：axios timeout 只是 socket 空闲超时，慢滴响应能绕过它无限拖住图片下载。
+      signal: AbortSignal.timeout(30_000),
       maxContentLength: MAX_IMAGE_DOWNLOAD_BYTES,
       maxBodyLength: MAX_IMAGE_DOWNLOAD_BYTES,
       maxRedirects: 0,
@@ -375,7 +377,7 @@ async function replaceImagesInParagraph(input: {
   input.zip.file(mediaPath, prepared.image.buffer);
   await addContentType(input.zip, prepared.image.extension, prepared.image.contentType);
   const relId = await addImageRelationship(input.zip, input.partPath, mediaPath);
-  const openingTag = input.paragraphXml.match(/^<w:p(?:\s[^>]*)?>/)?.[0] || '<w:p>';
+  const openingTag = input.paragraphXml.match(/^<w:p(?:\s[^>]*)?(?<!\/)>/)?.[0] || '<w:p>';
   const pPr = input.paragraphXml.match(/<w:pPr[\s\S]*?<\/w:pPr>/)?.[0];
   const drawing = buildDrawingXml({ relId, docPrId, width: size.width, height: size.height, name: `Image ${placeholder.name}`, alt: prepared.options.alt || placeholder.name });
   return {
@@ -410,7 +412,9 @@ async function replaceImagesInXml(zip: JSZip, partPath: string, xml: string, ima
   const rendered: RenderedImageVariable[] = [];
   let output = '';
   let cursor = 0;
-  const pattern = /<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g;
+  // (?<!/)> 负向后行断言：排除自闭合空段落 <w:p .../>。否则 [^>]* 会吞掉自闭合的 /，把空段落和后面真正的
+  // 段落黏成一个"伪段落"，图片路径重建时产出标签不配对的 <w:p/>…</w:p>，Word 打开报"文档需要修复"。
+  const pattern = /<w:p(?:\s[^>]*)?(?<!\/)>[\s\S]*?<\/w:p>/g;
   let match: RegExpExecArray | null = null;
   while ((match = pattern.exec(xml)) !== null) {
     output += xml.slice(cursor, match.index);
