@@ -21,7 +21,9 @@
 
 ## 进度 — 全部完成
 - ✅ **D1 登录接回来**：App.tsx 整体还原到移除前（含 AuthGate：client 免登为主 → handoff 兜底 + open_id 绑定 + 显式失败诊断）；NewTemplateScreen 以移除前为基线重贴 F8（保存前会话闸门 + 登录卡片回归）；`sidebarResponsiveLayout.test.ts` 还原「登录墙在」断言。浏览器真机验证：非 mock 模式登录页正确渲染，准确识别「不在飞书客户端内」并给登录入口，CSS 完好。⚠️ 飞书 Base 侧边栏内 `tt.requestAccess` 免登需用户真机点一次确认（我无法驱动真实飞书客户端）。
-- ✅ **D2 部署先建后切**：`deploy-fbif-sidebar-docgen.sh` 改为先 `build`（旧容器不动、零停机，构建失败安全退出）→ 再 `up -d`（秒级切换）→ 健康检查失败自动回滚到上一个可用镜像（tag+id 回滚）。`bash -n` 语法通过。
+- ✅ **D2 部署先建后切**：改为先 `build`（旧容器不动、零停机，构建失败安全退出）→ 再 `up -d`（秒级切换）→ 健康检查失败自动回滚到上一个可用镜像（tag+id 回滚）。
+  - ⚠️ **关键修正**：首次只改了独立脚本 `scripts/deploy-fbif-sidebar-docgen.sh`，但看部署日志发现 CI 用的是 `.github/workflows/deploy-fbif-sidebar-docgen.yml` **内联的 REMOTE_SCRIPT**（变量名 `HOST_PORT_VALUE` 而非脚本的 `HOST_PORT`）——独立脚本根本没被 CI 用到。已把同样的先建后切+回滚补进 workflow 内联脚本（真正生效处），独立脚本改动作为手动部署的一致性保留。YAML 语法校验通过。
+  - `.dockerignore` 未被 release 打包排除 → 远程 docker build 会用它，D4 的 .env 保护在真实部署路径生效。
 - ✅ **D3 TOS 防覆盖锁**：`buildTosAuthorizationHeaders` 加「额外签名头」通道，`putObjectIfAbsent` 改用**签名的** `x-tos-forbid-overwrite`（火山原生防覆盖头）替代未签名的 `If-None-Match:*`。加回归测试锁死「头既进 SignedHeaders 又随请求发出」。⚠️ 仍建议真实 bucket 跑一次并发 PUT 确认（我无 TOS bucket 可测；改用的是官方文档机制）。
 - ✅ **D4 Docker 加固**：Dockerfile 加非 root `USER node` + chown；`tsx` 从 devDependencies 移到 dependencies（生产依赖显式化，`npm ci --omit=dev` 也保留，lock 已同步 dev:false）；`.dockerignore` 补 `.env`（防密钥进构建镜像）+ 杂物；compose 加 `init: true`（tini 作 PID1 转发 SIGTERM + 回收僵尸）。⚠️ 本机无 Docker，镜像构建在服务器部署时验证（有 D2 回滚兜底）。
 
