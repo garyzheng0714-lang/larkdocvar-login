@@ -150,11 +150,19 @@ export class TosTemplateObjectStore implements TemplateObjectStore {
   async putObjectIfAbsent(key: string, body: Buffer, contentType: string): Promise<string> {
     const objectName = this.objectName(key);
     try {
-      await putTosObject(this.config, objectName, body, {
-        'Content-Type': contentType,
-        'Cache-Control': 'private, max-age=31536000, immutable',
-        'If-None-Match': '*',
-      });
+      await putTosObject(
+        this.config,
+        objectName,
+        body,
+        {
+          'Content-Type': contentType,
+          'Cache-Control': 'private, max-age=31536000, immutable',
+        },
+        // 用火山 TOS 原生的防覆盖头 x-tos-forbid-overwrite（且必须签名，见 putTosObject/buildTosAuthorizationHeaders）。
+        // 此前用的 If-None-Match:* 是 S3 的 GET 条件头，TOS 在 PUT 上大概率忽略 → 锁形同虚设，多实例并发写
+        // _index.json 会互相覆盖丢模板。对象已存在时 TOS 返回 409。
+        { 'x-tos-forbid-overwrite': 'true' },
+      );
       return objectName;
     } catch (error) {
       const status = (error as { tos?: { status?: number } }).tos?.status;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { TosDocumentRenderStorage, __test__, createTosPresignedGetUrl, type TosStorageConfig } from './documentRenderTosStorage';
+import { TosDocumentRenderStorage, __test__, createTosPresignedGetUrl, putTosObject, type TosStorageConfig } from './documentRenderTosStorage';
 
 const DOCX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
@@ -34,6 +34,30 @@ test('TOS 预签名下载 URL 符合官方 TOS4 查询参数格式', () => {
   assert.equal(parsed.searchParams.get('X-Tos-Expires'), '86400');
   assert.equal(parsed.searchParams.get('X-Tos-SignedHeaders'), 'host');
   assert.match(parsed.searchParams.get('X-Tos-Signature') || '', /^[0-9a-f]{64}$/);
+});
+
+test('防覆盖锁用签名的 x-tos-forbid-overwrite（头既进 SignedHeaders 又随请求发出）', async () => {
+  const previousFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    return new Response('', { status: 200 });
+  }) as typeof fetch;
+  try {
+    await putTosObject(
+      buildConfig(),
+      '_locks/document-templates.json',
+      Buffer.from('lock'),
+      { 'Content-Type': 'application/json' },
+      { 'x-tos-forbid-overwrite': 'true' },
+    );
+    const headers = calls[0]?.init?.headers as Record<string, string>;
+    // TOS 只认签名过的 x-tos-* 头：既要在 Authorization 的 SignedHeaders 里，又要真正随请求发出，缺一不可。
+    assert.equal(headers['x-tos-forbid-overwrite'], 'true', '防覆盖头必须随请求发出');
+    assert.match(String(headers.Authorization), /SignedHeaders=[a-z0-9;-]*x-tos-forbid-overwrite/, '防覆盖头必须在签名的 SignedHeaders 里');
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
 });
 
 test('TOS 前缀支持统一项目根目录并清理危险路径片段', () => {

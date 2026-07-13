@@ -261,8 +261,21 @@ fi
 
 ln -sfn "${RELEASE_DIR}" "${CURRENT_LINK}"
 cd "${CURRENT_LINK}"
-docker rm -f "${APP_NAME}" >/dev/null 2>&1 || true
-${DC} -p "${APP_NAME}" up -d --build --remove-orphans
+
+# 先建后切：先构建新镜像，此时旧容器仍在服务、零停机；构建失败直接退出、旧容器毫发无损。
+# （旧流程是 docker rm -f 先杀旧容器、再 up --build 边构建边停机数分钟，失败还无回滚——已废弃。）
+echo "[remote] 构建新镜像（旧容器继续服务中）…"
+if ! ${DC} -p "${APP_NAME}" build; then
+  echo "[remote] 镜像构建失败，旧容器未受影响，部署中止"
+  exit 1
+fi
+
+# 记录当前在跑的镜像（tag + id），用于健康检查失败时回滚；首次部署为空则跳过回滚。
+ROLLBACK_IMAGE_TAG="$(docker inspect --format '{{.Config.Image}}' "${APP_NAME}" 2>/dev/null || true)"
+ROLLBACK_IMAGE_ID="$(docker inspect --format '{{.Image}}' "${APP_NAME}" 2>/dev/null || true)"
+
+# 切换：用已构建好的镜像重建容器（不带 --build）。停机仅为一次秒级容器重建，而非整段构建时间。
+${DC} -p "${APP_NAME}" up -d --remove-orphans
 
 HEALTH_OK="0"
 for _ in {1..30}; do
@@ -276,6 +289,19 @@ done
 if [[ "${HEALTH_OK}" != "1" ]]; then
   echo "[remote] 健康检查失败: http://127.0.0.1:${HOST_PORT}/api/health"
   docker logs --tail 80 "${APP_NAME}" || true
+  # 自动回滚到上一个可用镜像，避免部署失败让服务长时间下线。
+  if [[ -n "${ROLLBACK_IMAGE_ID}" && -n "${ROLLBACK_IMAGE_TAG}" ]]; then
+    echo "[remote] 回滚到上一个可用镜像 ${ROLLBACK_IMAGE_TAG} …"
+    docker tag "${ROLLBACK_IMAGE_ID}" "${ROLLBACK_IMAGE_TAG}" || true
+    ${DC} -p "${APP_NAME}" up -d --remove-orphans || true
+    if curl -fsS "http://127.0.0.1:${HOST_PORT}/api/health" >/dev/null 2>&1; then
+      echo "[remote] 已回滚到上一个可用版本（本次部署失败，服务已恢复）"
+    else
+      echo "[remote] 回滚后健康检查仍未通过，请人工介入"
+    fi
+  else
+    echo "[remote] 无可回滚镜像（可能是首次部署）"
+  fi
   exit 1
 fi
 

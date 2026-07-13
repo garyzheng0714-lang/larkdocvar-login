@@ -71,7 +71,7 @@ function buildScope(date: string, region: string): string {
   return `${date}/${region}/tos/request`;
 }
 
-function buildTosAuthorizationHeaders(config: TosStorageConfig, method: string, key: string, payload: Buffer, now = new Date()): Record<string, string> {
+function buildTosAuthorizationHeaders(config: TosStorageConfig, method: string, key: string, payload: Buffer, now = new Date(), extraSignedHeaders: Record<string, string> = {}): Record<string, string> {
   const host = getTosHost(config);
   const dateTime = formatTosDate(now);
   const date = dateTime.slice(0, 8);
@@ -81,6 +81,11 @@ function buildTosAuthorizationHeaders(config: TosStorageConfig, method: string, 
     'x-tos-content-sha256': payloadHash,
     'x-tos-date': dateTime,
   };
+  // 额外需签名的头（如防覆盖 x-tos-forbid-overwrite）：TOS 只认签名过的 x-tos-* 头，未签名的会被静默忽略，
+  // 防覆盖就形同虚设。这里把它们统一小写并纳入 canonical/signedHeaders 一起签名。
+  for (const [name, value] of Object.entries(extraSignedHeaders)) {
+    headers[name.toLowerCase()] = value;
+  }
   const signedHeaders = Object.keys(headers).sort().join(';');
   const canonicalHeaders = Object.keys(headers).sort().map((name) => `${name}:${headers[name]}\n`).join('');
   const canonicalRequest = [
@@ -99,12 +104,17 @@ function buildTosAuthorizationHeaders(config: TosStorageConfig, method: string, 
     sha256Hex(canonicalRequest),
   ].join('\n');
   const signature = hmacHex(createSigningKey(config.accessKeySecret, date, config.region), stringToSign);
-  return {
+  const authHeaders: Record<string, string> = {
     Host: host,
     'x-tos-content-sha256': payloadHash,
     'x-tos-date': dateTime,
     Authorization: `TOS4-HMAC-SHA256 Credential=${config.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
   };
+  // 签名头也必须随请求真正发出去，否则 TOS 校验签名时找不到对应头会 403。
+  for (const [name, value] of Object.entries(extraSignedHeaders)) {
+    authHeaders[name.toLowerCase()] = value;
+  }
+  return authHeaders;
 }
 
 export function createTosPresignedGetUrl(config: TosStorageConfig, key: string, expires: number, now = new Date()): string {
@@ -161,12 +171,13 @@ async function assertTosResponseOk(response: Response, action: string): Promise<
   throw error;
 }
 
-export async function putTosObject(config: TosStorageConfig, key: string, body: Buffer, headers: Record<string, string> = {}): Promise<void> {
+export async function putTosObject(config: TosStorageConfig, key: string, body: Buffer, headers: Record<string, string> = {}, signedHeaders: Record<string, string> = {}): Promise<void> {
   const response = await fetch(`https://${getTosHost(config)}/${encodeTosPath(key)}`, {
     method: 'PUT',
     headers: {
-      ...buildTosAuthorizationHeaders(config, 'PUT', key, body),
       ...headers,
+      // 签名头放在最后展开，确保不被普通 headers 覆盖（签名头必须与 Authorization 里签的值逐字一致）。
+      ...buildTosAuthorizationHeaders(config, 'PUT', key, body, undefined, signedHeaders),
     },
     body: new Uint8Array(body),
     // 其它出站请求（飞书、模板/图片下载、Gotenberg）都有超时，唯独 TOS 上传用裸 fetch 无超时——

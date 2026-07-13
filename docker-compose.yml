@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: ${APP_NAME:-fbif-sidebar-docgen}
     restart: unless-stopped
+    # 用 Docker 内置 init（tini）作 PID 1：正确转发 SIGTERM 给 node（配合后端优雅关闭）并回收僵尸进程。
+    init: true
     env_file:
       - .env
     environment:

@@ -5,3 +5,17 @@ dist
 stitch-downloads
 npm-debug.log*
 .DS_Store
+
+# 密钥绝不进构建上下文/镜像层（builder 阶段 COPY . . 否则会把 .env 带进去）
+.env
+.env.local
+.env.*.local
+
+# 构建不需要的本地杂物与审查产物
+*.log
+tmp
+scratchpad
+redteam
+.agents
+.codex
+openspec

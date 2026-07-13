@@ -1,8 +1,34 @@
 # 云文档变量批量生成 — 优化工程 WORKLOG
 
-最后更新：2026-07-12
+最后更新：2026-07-13
 
 ---
+
+# D1-D4 产品/运维决策落地（2026-07-13，用户批准四项全做）
+
+## 用户裁决
+1. D1 后端鉴权：**接回来**，用 `/feishu-login-guide` 技能。
+2. D2 部署脚本先杀后建：按建议改「先建后切」。
+3. D3 TOS 分布式锁：按建议加固。
+4. D4 Docker root/tsx：按建议加固。
+
+## D1 登录接回来 — 方案（不平行新建，恢复既有）
+- 技能核心原则「已有 session 体系不要平行新建，优先接入现有」。本项目后端整套 auth 全在，2026-06-24 提交 `5d512bc` 只从**前端**移除登录墙（App.tsx 删 AuthGate、NewTemplateScreen 删会话闸门、测试改断言、CSS 保留）。
+- 这是**飞书多维表格侧边栏插件**，登录模型是 CLAUDE.md 规定的「客户端内 `tt.requestAccess` + `/api/auth/feishu/:appKey/client-code` 免登为主 + OAuth handoff 兜底」，非技能默认的独立网页 OAuth 跳转页。移除前的 AuthGate 正是这套（client 免登为主 → 失败给 handoff + open_id 绑定防接管），属技能所说的「既有体系」。
+- 前置全部核实健在：feishuTrustedLogin 4 个导出、authSessionToken 的 setStoredEmbeddedAuthToken、后端 client-config/client-code/qr-* 路由、`.auth-gate-*`/`.nt-login-*` CSS（25 处）。
+- **还原策略**：App.tsx 移除后未再改动 → 整体还原到 `5d512bc^`；NewTemplateScreen 后被 F8 改过 → 以移除前版本为基线重贴 F8 两处；`sidebarResponsiveLayout.test.ts` 还原移除前断言（登录墙在）。
+- ⚠️ 真机验证局限：飞书桌面 Base 侧边栏的 `tt.requestAccess` 免登 + handoff 我无法自动驱动（需真实飞书客户端 + Base 宿主），这部分需用户真机点一次确认。
+
+## 进度 — 全部完成
+- ✅ **D1 登录接回来**：App.tsx 整体还原到移除前（含 AuthGate：client 免登为主 → handoff 兜底 + open_id 绑定 + 显式失败诊断）；NewTemplateScreen 以移除前为基线重贴 F8（保存前会话闸门 + 登录卡片回归）；`sidebarResponsiveLayout.test.ts` 还原「登录墙在」断言。浏览器真机验证：非 mock 模式登录页正确渲染，准确识别「不在飞书客户端内」并给登录入口，CSS 完好。⚠️ 飞书 Base 侧边栏内 `tt.requestAccess` 免登需用户真机点一次确认（我无法驱动真实飞书客户端）。
+- ✅ **D2 部署先建后切**：`deploy-fbif-sidebar-docgen.sh` 改为先 `build`（旧容器不动、零停机，构建失败安全退出）→ 再 `up -d`（秒级切换）→ 健康检查失败自动回滚到上一个可用镜像（tag+id 回滚）。`bash -n` 语法通过。
+- ✅ **D3 TOS 防覆盖锁**：`buildTosAuthorizationHeaders` 加「额外签名头」通道，`putObjectIfAbsent` 改用**签名的** `x-tos-forbid-overwrite`（火山原生防覆盖头）替代未签名的 `If-None-Match:*`。加回归测试锁死「头既进 SignedHeaders 又随请求发出」。⚠️ 仍建议真实 bucket 跑一次并发 PUT 确认（我无 TOS bucket 可测；改用的是官方文档机制）。
+- ✅ **D4 Docker 加固**：Dockerfile 加非 root `USER node` + chown；`tsx` 从 devDependencies 移到 dependencies（生产依赖显式化，`npm ci --omit=dev` 也保留，lock 已同步 dev:false）；`.dockerignore` 补 `.env`（防密钥进构建镜像）+ 杂物；compose 加 `init: true`（tini 作 PID1 转发 SIGTERM + 回收僵尸）。⚠️ 本机无 Docker，镜像构建在服务器部署时验证（有 D2 回滚兜底）。
+
+## 校验
+- typecheck 0 错误；全量测试 **330/330 通过**（329 + 1 新 TOS 签名回归）；部署脚本 `bash -n` 通过；npm ci 与 lock 一致。
+
+## 状态：✅ D1-D4 全部落地。待部署 + 用户真机确认飞书侧边栏免登。
 
 # 全面稳定性排查（2026-07-12，用户指令「全面检查找 bug，作为基础设施必须稳定可靠」）
 
