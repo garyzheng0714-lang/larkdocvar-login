@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380" role="img" aria-labelledby="heroTitle heroDesc">
+  <title id="heroTitle">云文档变量批量生成</title>
+  <desc id="heroDesc">飞书多维表格侧边栏插件：把表格里每一行记录按 Word 或飞书云文档模板批量生成文档。图中左侧是插件的字段映射界面，右侧是一次生成 6 份文档的结果列表。</desc>
+
+  <defs>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", monospace; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="380" rx="26" fill="#0E1116"/>
+
+  <!-- 左：标题区 -->
+  <g id="title-block" class="sans">
+    <rect x="64" y="74" width="6" height="22" rx="3" fill="#3370FF"/>
+    <text x="82" y="92" font-size="22" font-weight="600" fill="#5B8CFF" letter-spacing="1">飞书多维表格 · 侧边栏插件</text>
+
+    <text x="64" y="164" font-size="56" font-weight="700" fill="#FFFFFF" letter-spacing="1">云文档变量批量生成</text>
+
+    <text x="64" y="216" font-size="24" fill="#A7B0BA">表格里的每一行记录，套上 Word 或飞书云文档模板，</text>
+    <text x="64" y="252" font-size="24" fill="#A7B0BA">一次最多生成 500 份，直接下载或写回附件字段。</text>
+
+    <text x="64" y="316" font-size="18" class="mono" fill="#69727D">React 19 · Express 5 · PostgreSQL 16 · TOS / OSS</text>
+  </g>
+
+  <!-- 右：真实侧边栏界面 -->
+  <g id="sidebar-panel" class="sans">
+    <rect x="656" y="48" width="252" height="284" rx="16" fill="#FFFFFF"/>
+
+    <text x="670" y="80" font-size="20" font-weight="600" fill="#1F2329">文档生成</text>
+    <circle cx="884" cy="73" r="10" fill="#F5C400"/>
+    <line x1="656" y1="96" x2="908" y2="96" stroke="#EEF0F2" stroke-width="1"/>
+
+    <!-- 模板卡片 -->
+    <rect x="670" y="110" width="224" height="48" rx="10" fill="#F7F8FA" stroke="#E4E6EA" stroke-width="1"/>
+    <rect x="682" y="122" width="24" height="24" rx="4" fill="#DCE7FF"/>
+    <line x1="687" y1="130" x2="701" y2="130" stroke="#3370FF" stroke-width="2"/>
+    <line x1="687" y1="136" x2="701" y2="136" stroke="#8FB3FF" stroke-width="2"/>
+    <line x1="687" y1="142" x2="696" y2="142" stroke="#8FB3FF" stroke-width="2"/>
+    <text x="716" y="141" font-size="18" fill="#1F2329">标准商业合同模板</text>
+
+    <!-- 字段映射 -->
+    <text x="670" y="188" font-size="18" fill="#8F959E">字段映射</text>
+    <text x="894" y="188" font-size="18" fill="#3370FF" text-anchor="end">智能匹配</text>
+
+    <g id="mapping-rows">
+      <text x="670" y="219" font-size="20" fill="#1F2329">客户名称</text>
+      <path d="M756 213 h14" stroke="#C6CBD2" stroke-width="1.5"/>
+      <rect x="776" y="200" width="118" height="30" rx="8" fill="#F2F4F7"/>
+      <text x="788" y="220" font-size="17" class="mono" fill="#3370FF">T</text>
+      <text x="806" y="220" font-size="18" fill="#4E5969">客户名称</text>
+
+      <text x="670" y="255" font-size="20" fill="#1F2329">合同金额</text>
+      <path d="M756 249 h14" stroke="#C6CBD2" stroke-width="1.5"/>
+      <rect x="776" y="236" width="118" height="30" rx="8" fill="#F2F4F7"/>
+      <text x="788" y="256" font-size="17" class="mono" fill="#3370FF">#</text>
+      <text x="806" y="256" font-size="18" fill="#4E5969">合同金额</text>
+
+      <text x="670" y="291" font-size="20" fill="#1F2329">签订日期</text>
+      <path d="M756 285 h14" stroke="#C6CBD2" stroke-width="1.5"/>
+      <rect x="776" y="272" width="118" height="30" rx="8" fill="#F2F4F7"/>
+      <rect x="787" y="280" width="13" height="13" rx="2.5" fill="none" stroke="#3370FF" stroke-width="1.6"/>
+      <text x="806" y="292" font-size="18" fill="#4E5969">签订日期</text>
+    </g>
+  </g>
+
+  <!-- 生成箭头 -->
+  <g id="generate-arrow">
+    <path d="M916 172 h20" stroke="#3370FF" stroke-width="2" stroke-linecap="round"/>
+    <path d="M930 166 l7 6 -7 6" fill="none" stroke="#3370FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- 右：生成结果 -->
+  <g id="result-list" class="sans">
+    <circle cx="954" cy="74" r="5" fill="#34C724"/>
+    <text x="968" y="80" font-size="19" font-weight="600" fill="#FFFFFF">生成完成 · 6 成功</text>
+
+    <g fill="#D8DEE6" font-size="18">
+      <path d="M950 107 l5 5 9 -10" fill="none" stroke="#34C724" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="974" y="114">上海测试科技.docx</text>
+
+      <path d="M950 141 l5 5 9 -10" fill="none" stroke="#34C724" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="974" y="148">北京远望咨询.docx</text>
+
+      <path d="M950 175 l5 5 9 -10" fill="none" stroke="#34C724" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="974" y="182">深圳云岚数据.docx</text>
+
+      <path d="M950 209 l5 5 9 -10" fill="none" stroke="#34C724" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="974" y="216">杭州青屿网络.docx</text>
+    </g>
+    <text x="974" y="250" font-size="18" fill="#69727D">…… 共 6 份</text>
+
+    <rect x="948" y="274" width="188" height="38" rx="9" fill="#3370FF"/>
+    <path d="M984 288 v11 M979 294 l5 5 5 -5" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="1000" y="299" font-size="18" font-weight="600" fill="#FFFFFF">下载全部（6）</text>
+  </g>
+</svg>
