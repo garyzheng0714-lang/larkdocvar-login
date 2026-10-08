@@ -1,6 +1,6 @@
 # Docx API 运维手册
 
-更新时间：2026-06-22
+更新时间：2026-07-17
 
 ## 必备环境变量
 
@@ -10,13 +10,13 @@
 |---|---|---|
 | `DOCUMENT_RENDER_API_KEY` | 生产必需 | 服务端到服务端 API Key。生产环境没有 API Key 或可信会话时，Docx API 不会匿名放行；业务系统需传 `Authorization: Bearer` 或 `x-api-key`。 |
 | `DOCUMENT_RENDER_STRICT_CONFIG` | 可选 | 设为 `true` 时，启动配置自检发现生产必备配置缺失（如 API Key 未配）会直接拒绝启动（fail loud）；默认只在启动日志醒目告警、不阻断启动。配置自检覆盖：API Key、飞书凭据、租户白名单、`DATABASE_URL`、对象存储 provider+凭据。 |
-| `FEISHU_FBIF_APP_ID` / `FEISHU_FBIF_APP_SECRET` | 云文档模板必需 | FBIF 飞书云文档模板路径使用；`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 仍作为 FBIF 兼容别名。旧 OAuth 入口当前退役，恢复前必须重新做真实侧边栏登录验收。 |
+| `FEISHU_FBIF_APP_ID` / `FEISHU_FBIF_APP_SECRET` | 云文档模板必需 | FBIF 飞书云文档模板、client-code 和 OAuth handoff 使用；`FEISHU_APP_ID` / `FEISHU_APP_SECRET` 仍作为兼容别名。 |
 | `FEISHU_FUDE_APP_ID` / `FEISHU_FUDE_APP_SECRET` | 富的入口按需 | 富的飞书云文档能力使用。 |
-| `FEISHU_REDIRECT_BASE` | 旧登录链路保留项 | 当前 OAuth 登录入口已退役并返回 410；保留该变量仅用于历史兼容和后续显式恢复登录链路时复用。 |
-| `FEISHU_FBIF_OAUTH_REDIRECT_URI` / `FEISHU_FBIF_QR_REDIRECT_URI` | 旧登录链路保留项 | 当前不参与侧边栏主流程。 |
-| `FEISHU_FUDE_OAUTH_REDIRECT_URI` / `FEISHU_FUDE_QR_REDIRECT_URI` | 旧登录链路保留项 | 当前不参与侧边栏主流程。 |
+| `FEISHU_REDIRECT_BASE` | OAuth 必需 | 用于生成 `/auth/feishu/:appKey/callback` 与 QR 回调地址，必须与飞书后台白名单一致。 |
+| `FEISHU_FBIF_OAUTH_REDIRECT_URI` / `FEISHU_FBIF_QR_REDIRECT_URI` | 按需覆盖 | 覆盖 FBIF 应用的 OAuth / QR callback 地址。 |
+| `FEISHU_FUDE_OAUTH_REDIRECT_URI` / `FEISHU_FUDE_QR_REDIRECT_URI` | 按需覆盖 | 覆盖富的应用的 OAuth / QR callback 地址。 |
 | `FEISHU_ALLOWED_TENANT_KEYS` | 生产必需 | 逗号分隔的飞书租户白名单；为空只允许非生产环境。 |
-| `FRONTEND_POST_LOGIN_URL` | 旧登录链路保留项 | GitHub Actions 仍会写成 `https://{APP_DOMAIN}`；当前侧边栏主流程不依赖它。 |
+| `FRONTEND_POST_LOGIN_URL` | OAuth 必需 | OAuth callback 完成后回到前端的同源地址。 |
 | `OAUTH_STATE_SIGNING_SECRET` | 可选 | OAuth state 签名密钥；不填时使用当前应用密钥派生。 |
 | `CORS_ALLOWED_ORIGINS` | 跨域部署时配置 | 逗号分隔允许来源；同源请求不需要。 |
 | `DATABASE_URL` | 侧边栏必需 | 保存登录会话、飞书云文档模板配置和异步 Docx 批量生成任务。 |
@@ -167,8 +167,8 @@ docker exec -i fbif-sidebar-docgen-postgres pg_restore -U postgres -d larkdocvar
 - 生产 Docx API 必须配置 `DOCUMENT_RENDER_API_KEY` 或使用服务端可信会话；不能依赖 `X-Bitable-*` 作为登录凭据。
 - 飞书多维表格侧边栏请求可以通过 Base JS SDK 附带 `X-Bitable-Open-Id` / `X-Bitable-Base-User-Id`、`X-Bitable-Base-Id`、`X-Bitable-Table-Id`、`X-Bitable-Tenant-Key` 作为宿主上下文线索，但这些头不授予模板创建、管理或 `private` 模板读取权限。
 - `/api/auth/session` 只作为兼容诊断接口，未登录时返回稳定 JSON；`/api/auth/logout` 可清理旧会话。
-- 当前可信登录入口优先级是：Feishu client-code 端内免登、一键 OAuth、扫码备用。相关路由包括 `/api/auth/feishu/:appKey/client-config`、`/api/auth/feishu/:appKey/client-code`、`/auth/feishu/:appKey/login`、`/auth/feishu/:appKey/callback`、`/auth/feishu/:appKey/qr-config`、`/auth/feishu/:appKey/qr-callback`。
-- OAuth / 扫码回调会写 httpOnly cookie；一键 OAuth 还会通过 URL hash 给嵌入式侧边栏传递会话兜底。端内免登的 JSON 响应体不返回会话 token，但同源响应头可返回 `X-Session-Token`。前端立即清理 hash、保存响应头会话，并在同源请求里继续带 `X-Session-Token`。旧 `/api/auth/feishu/:appKey/start`、`/login-status` handoff 入口继续显式返回 410，避免 session 接管风险。
+- 当前可信登录优先级是：已有会话、client-code 端内免登、绑定 Base `open_id` 的 OAuth handoff。相关路由包括 `/api/auth/feishu/:appKey/client-*`、`/auth/feishu/:appKey/login|callback`、`/api/auth/feishu/:appKey/handoff/start|:code`；QR 路由只作兼容保留。
+- handoff 当前为单进程内存状态，5 分钟过期并单次消费。多实例部署前必须改共享存储或配置粘性路由；真实 Base 验收必须确认 Base 与 OAuth `open_id` 命名空间一致。旧 `/api/auth/feishu/:appKey/start`、`/login-status` 和未知登录子路径继续返回 410。
 - `index.html` 响应头应为 `Cache-Control: no-cache`；带 hash 的静态资源可长期缓存。
 - API 错误响应不应包含堆栈、AccessKey、bucket 名称或内部路径。
 - `.env.local`、部署密钥和真实 AccessKey 不允许提交到仓库。
@@ -182,7 +182,7 @@ docker exec -i fbif-sidebar-docgen-postgres pg_restore -U postgres -d larkdocvar
 | 生成失败，返回 `missingVariables` | 请求变量缺少模板中存在的字段，补齐后重试。 |
 | 生成失败，返回 `unusedVariables` | 请求变量名和模板变量不一致，检查大小写、空格和中文名。 |
 | 生产环境返回对象存储配置错误 | 检查 OSS/TOS 四件套：AccessKey、Secret、Bucket、Region。 |
-| 侧边栏上传/更新模板提示登录状态没有接上 | 先检查 `/api/auth/session` 是否 `loggedIn:true`；若为 false，检查入口是否先尝试端内免登并显示“使用 FBIF 飞书登录”按钮，再检查 `/api/auth/feishu/fbif/client-config`、`/api/auth/feishu/fbif/client-code`、`/auth/feishu/fbif/login`、`/auth/feishu/fbif/callback`。扫码只作为备用入口。`X-Bitable-*` 只能说明宿主上下文，不能替代登录。 |
+| 侧边栏上传/更新模板提示登录状态没有接上 | 先检查 `/api/auth/session`，再检查 client-code 与 `/handoff/start`、`/auth/.../login|callback`、`/handoff/:code`。若 handoff 返回 `rejected`，核对 Base 与 OAuth `open_id` 是否属于同一应用命名空间；不要取消身份绑定。 |
 | 模板列表看不到“仅自己”模板 | 确认当前调用方是模板创建者的可信会话、管理员或 API Key；后端会在列表、详情、版本、生成和预览路径都过滤 `private` 模板。 |
 | 访问 `/auth/feishu/fbif/login` 返回 410 | 这不是当前预期；说明线上代码或反代仍是旧版本。先查线上 bundle、后端部署版本和 `/api/auth/feishu/fbif/start` 是否仍为 410。 |
 | `/api/auth/session` 返回 `loggedIn:false` | 当前请求没有服务端可信会话；这会阻塞需要用户身份的模板创建、更新和 `private` 模板读取。 |
@@ -198,4 +198,4 @@ docker exec -i fbif-sidebar-docgen-postgres pg_restore -U postgres -d larkdocvar
 3. 用真实浏览器或 Playwright 打开页面。
 4. 检查桌面和移动宽度下的模板库、字段映射、按钮、空状态、错误状态。
 
-登录相关 UI 改动还必须在飞书桌面真实侧边栏验证：进入插件后应先尝试端内免登；免登不可用时显示“使用 FBIF 飞书登录”，二维码不得作为默认主界面。点击一键登录完成回调后，侧边栏应通过 cookie 或 `X-Session-Token` 进入主界面；扫码只作为用户主动选择的备用入口。只验证普通页面或 Chrome 已登录不算通过。
+登录相关 UI 改动还必须在飞书桌面真实侧边栏验证：进入插件后先尝试端内免登；失败后应能创建 handoff、打开系统浏览器授权并由原侧边栏轮询接回会话。必须同时验证成功、`open_id` 不匹配拒绝、超时与单次消费；只验证普通页面或 Chrome 已登录不算通过。

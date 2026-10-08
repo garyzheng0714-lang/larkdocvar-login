@@ -1,6 +1,6 @@
 # Docx API 架构说明
 
-更新时间：2026-06-22
+更新时间：2026-08-14
 
 ## 模块划分
 
@@ -12,9 +12,9 @@
 | 模板管理 API | `server/src/documentTemplateApi.ts` | 上传、列表、查询、版本、删除模板资产。 |
 | 模板服务 | `server/src/documentTemplateService.ts` | 生成 `templateId`/`versionId`、提取变量和缩略图、维护 metadata/index。 |
 | 模板对象存储 | `server/src/documentTemplateStorage.ts` | TOS 或本地开发目录读写模板资产。 |
-| 输出对象存储 | `server/src/documentRenderTosStorage.ts` 和 `documentRenderApi.ts` | OSS/TOS/local 保存最终生成文件。 |
+| 输出对象存储 | `server/src/documentRenderStorage.ts`、`server/src/documentRenderTosStorage.ts` | OSS/TOS/local provider 选择、保存和下载链接登记。 |
 | 侧边栏 UI | `src/components/document-generator/` | 服务器 Docx 模板库管理和多维表格批量生成入口。 |
-| 侧边栏身份 | `server/src/auth.ts`、`server/src/routes/authSessionRoutes.ts`、`src/authSessionToken.ts`、`src/components/document-generator/cloudDoc/bitableAdapter.ts`、`src/components/document-generator/cloudDoc/feishuTrustedLogin.ts` | 当前 Word 模板侧边栏只把 Base JS SDK 的 `X-Bitable-*` 作为宿主上下文线索；模板权限必须来自 API Key 或服务端可信会话；可信会话优先通过 Feishu client-code 免登建立，能力不可用时走一键 OAuth，扫码仅作备用；旧 handoff 入口返回 410。 |
+| 侧边栏身份 | `server/src/auth.ts`、`server/src/routes/authSessionRoutes.ts`、`server/src/authHandoff.ts`、`src/authSessionToken.ts`、`src/components/document-generator/cloudDoc/bitableAdapter.ts`、`src/components/document-generator/cloudDoc/feishuTrustedLogin.ts` | `X-Bitable-*` 只作宿主线索；模板权限来自 API Key 或可信会话。已有会话与 client-code 优先，能力不可用时走绑定 Base `open_id` 的一次性 OAuth handoff；扫码路由只作兼容保留。 |
 | 数据库迁移 | `server/migrations/` + `server/src/migrations.ts` | 管理 PostgreSQL 表结构版本，启动时记录到 `schema_migrations`。 |
 
 ## 数据流
@@ -43,6 +43,7 @@ PostgreSQL schema 由 `server/migrations/` 管理，启动时通过 `server/src/
 | `auth_sessions` | `token`、`oauth_app_key`、`open_id`、`access_token`、`refresh_token`、`expires_at` | 保存侧边栏 httpOnly 登录会话和 OAuth token。 |
 | `saved_configs` | `id`、`open_id`、`config_name`、`payload_json` | 保存用户模板映射配置；同一用户同一配置名只保留一份。 |
 | `render_jobs` | `job_id`、`owner_key`、`lease_owner`、`lease_expires_at`、`status`、`processed`、`succeeded`、`failed`、`records_json`、`results_json` | 保存异步 Docx 批量任务状态、进度、结果、执行租约和提交者身份绑定。 |
+| `render_audit` | `request_id`、`template_id`、`status`、变量计数、存储位置、调用方 | 保存渲染元数据供回溯，不保存变量值。 |
 | `schema_migrations` | `version`、`name`、`applied_at` | 记录已执行 migration，避免重复执行 DDL。 |
 
 ## 模板资产结构
@@ -129,7 +130,7 @@ sequenceDiagram
   Server-->>Iframe: "模板列表/保存/生成响应"
 ```
 
-`/api/auth/session` 保留为兼容诊断接口，未登录时返回稳定 JSON，已登录时也不返回飞书 `access_token`。侧边栏入口会先检查可信会话，再尝试 Feishu client-code 端内免登；当前宿主不支持 H5 WebApp 授权时，界面展示“使用 FBIF 飞书登录”按钮，走 `/auth/feishu/:appKey/login` 当前页 OAuth。OAuth state 是签名自包含数据，回调即使没有 state cookie 也能校验；登录成功后同时写 httpOnly cookie，并通过 URL hash 给嵌入式侧边栏传递会话兜底。端内免登的 JSON 响应体不返回会话 token，但同源响应头可返回 `X-Session-Token`，前端会立即存储并在后续同源请求里继续带该头。扫码登录只作为用户主动选择的备用入口。旧 `/api/auth/feishu/:appKey/start`、`/login-status` handoff 子路径继续返回 410，避免重新引入 session 接管风险；query token 已移除，避免 token 出现在 URL、日志或分享链路里。
+`/api/auth/session` 是兼容诊断接口，不返回飞书 `access_token`。侧边栏先复用可信会话，再尝试 client-code 端内免登；失败后调用 `POST /api/auth/feishu/:appKey/handoff/start`，用 Base `open_id` 创建 5 分钟、单次消费的 handoff code，并在系统浏览器打开 `/auth/feishu/:appKey/login?handoff=...`。OAuth callback 只在 OAuth `open_id` 与 handoff 发起者一致时写入完成状态，侧边栏通过 `GET /api/auth/feishu/:appKey/handoff/:code` 轮询接回会话。该状态当前存于单进程内存，多实例必须使用共享存储或粘性路由。扫码路由仍兼容保留，但主界面不展示扫码入口。旧 `/api/auth/feishu/:appKey/start`、`/login-status` 与未知登录子路径继续返回 410。
 
 ## 安全边界
 
@@ -143,6 +144,7 @@ sequenceDiagram
 
 ## 已知实现边界
 
+- `server/src/documentRenderApi.ts` 当前 940 行，已超过 900 行维护预算；继续新增校验、下载或路由能力前应先拆分职责。
 - 异步任务在配置 `DATABASE_URL` 时写入 PostgreSQL `render_jobs` 表，并按提交时的登录用户或 API Key 绑定查询权限；未配置数据库的本地开发/测试环境会降级为进程内存。运行中的任务会刷新 `lease_expires_at`，服务启动只会失败租约过期的未完成任务，避免多实例误杀。
 - PDF 预览是按需能力：只有请求 `output.includePdfPreview=true` 且服务端配置 `GOTENBERG_URL` 时，才会把生成后的 Docx 交给 Gotenberg/LibreOffice 转成 PDF 预览。
-- 侧边栏当前已拆到 `src/components/document-generator/`，但 `PrimaryScreen.tsx` 和 `_design.css` 仍偏大。继续扩展前端时应优先按模板库、字段映射、生成进度等边界拆分。
+- 侧边栏当前已拆到 `src/components/document-generator/`；`_design.css` 已收敛为模块入口，但 `PrimaryScreen.tsx` 及侧栏、模板页、进度等样式模块仍偏大。继续扩展前端时应按模板库、字段映射、生成进度等边界拆分。

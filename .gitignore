@@ -13,3 +13,6 @@ npm-debug.log*
 .playwright-mcp/
 v2-*.png
 redteam/
+
+# 内部飞书资源索引（含 Base/表/文档标识），公开仓库不提交
+docs/feishu-resources.md

@@ -1,11 +1,12 @@
 # Docx API 参考文档
 
-最后更新：2026-07-12
+最后更新：2026-07-17
 
 ## 更新日志
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-07-17 | 文档校准 | 按当前代码补齐绑定 Base `open_id` 的 OAuth handoff 路由；明确旧 `/start`、`/login-status` 才是退役入口。 | 新增 `handoff/start`、`handoff/:code` 说明；不改变 API 实现。 | 待同步 |
 | 2026-07-12 | 契约调整 | 稳定性加固：异步任务（`/api/v1/document-render-jobs`）不再内联返回 `download.fileBase64`，结果一律通过 `download.url` 下载。单份生成、同步批量不受影响。此前异步大批量（最多 500 条）+ 大模板 + `includeFileBase64=true` 会累积撑爆内存并让结果 JSON 超出存储上限。同时异步任务现已正确接受并转发 `missingStrategy`/`unusedStrategy`。 | 异步任务请求即使传 `output.includeFileBase64=true` 也不会在结果里返回 `download.fileBase64`；请用 `download.url` 下载。异步任务请求体的 `missingStrategy`（`fail`/`blank`）与 `unusedStrategy`（`error`/`ignore`）现已生效（此前被静默忽略）。单份/同步批量的 `includeFileBase64` 行为不变。 | 已同步 |
 | 2026-06-24 | 契约新增 | 新增 `unusedStrategy=ignore`：模板正文里没有的多余变量从报错改为忽略（默认仍 `error` 报错以保护变量名拼写检查）。便于多维表格工作流用同一套变量喂不同模板。 | 单份/批量/异步 Docx 渲染请求新增可选字段 `unusedStrategy`（默认 `error` / `ignore`）；传 `ignore` 时多余变量不阻断生成，响应 `variables.unused` 仍会列出。 | 已同步 |
 | 2026-06-23 | 文档完善 | 新增「业务系统 / 多维表格工作流集成提示」：响应体只取接口 JSON 本体（不含 HTTP `headers`/`status_code` 壳）；补充 `download.url` 有效期说明与 `output.expiresInSeconds` 用法。 | 不改路由与字段；纯文档与集成指引。 | 已同步 |
@@ -173,11 +174,13 @@ curl -i 'https://<部署域名>/api/v1/document-templates' \
 | `POST` | `/api/auth/logout` | 清理兼容会话 cookie / token；无会话时也返回 `{ ok: true }`。 |
 | `GET` | `/api/auth/feishu/:appKey/client-config` | 返回飞书端内授权所需 `app_id`；不会返回 `app_secret` 或 session token。 |
 | `POST` | `/api/auth/feishu/:appKey/client-code` | 仅接受飞书客户端授权 code；服务端用应用凭证换取用户 OAuth token，并通过 httpOnly cookie 建立可信会话。响应体不返回 session token；同源响应头可返回 `X-Session-Token` 作为 iframe cookie 被拦截时的会话兜底。 |
-| `GET` | `/auth/feishu/:appKey/login` | 飞书一键登录主入口；跳转飞书 OAuth，写入签名 state cookie。 |
-| `GET` | `/auth/feishu/:appKey/callback` | 飞书一键登录回调；优先校验签名 state，cookie 只作为兼容增强；成功后写 httpOnly cookie，并通过 URL hash 给嵌入式侧边栏传递会话兜底。 |
+| `GET` | `/auth/feishu/:appKey/login` | 发起系统浏览器 OAuth；可携带签名 state 中的 handoff code。 |
+| `GET` | `/auth/feishu/:appKey/callback` | 完成 OAuth、创建会话，并在 handoff 场景写回一次性状态。 |
+| `POST` | `/api/auth/feishu/:appKey/handoff/start` | 必须携带 Base `open_id`；创建 5 分钟有效、单次消费的 handoff。 |
+| `GET` | `/api/auth/feishu/:appKey/handoff/:code` | 轮询 handoff；仅 OAuth `open_id` 与发起者一致时返回完成状态。 |
 | `GET` | `/auth/feishu/:appKey/qr-config` | 返回插件内扫码登录二维码 `goto`；不返回 session token。 |
 | `GET` | `/auth/feishu/:appKey/qr-callback` | 扫码授权回调；校验 state 后写入可信会话 cookie。 |
-| `GET/POST` | 其它 `/auth/feishu/*`、`/api/auth/feishu/*` | 旧 handoff / 未知登录子路径显式返回 `410`，避免被静态前端页面兜底成假 200。 |
+| `GET/POST` | 旧 `/api/auth/feishu/:appKey/start`、`/login-status` 与其它未知登录子路径 | 显式返回 `410`，避免被静态前端页面兜底成假 200。 |
 
 模板可见范围：
 

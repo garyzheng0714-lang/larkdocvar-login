@@ -18,9 +18,7 @@ GitHub Issues via `gh` CLI（仓库 `garyzheng0714-lang/larkdocvar-login`）。�
 - 业务系统接入：`docs/docx-api-integration.md`
 - 架构与存储边界：`docs/docx-api-architecture.md`
 - 运维与故障排查：`docs/docx-operator-runbook.md`
-- 阶段交接：`docs/handoff.md`
-- 里程碑 1 验收审计：`docs/docx-api-milestone1-audit.md`
-- 登录事故复盘与 OAuth 失败分支验收：`docs/auth-login-incident-review-2026-05-14.md`
+- 当前交接与外部验收：`docs/handoff.md`
 
 Docx API 是本项目最底层契约。新增能力必须先维护 API 文档和后端 API，再把能力接入侧边栏工具；侧边栏只是调用 API 的壳，不能把核心能力只做在前端状态或临时 UI 逻辑里。典型例子：模板缩略图应作为模板 API 响应字段返回，前端模板列表只消费该字段渲染。
 
@@ -39,6 +37,7 @@ API 文档维护红线：
 - `GET /api/v1/document-templates`
 - `GET /api/v1/document-templates/:templateId`
 - `GET /api/v1/document-templates/:templateId/versions`
+- `PATCH /api/v1/document-templates/:templateId`
 - `POST /api/v1/document-templates/:templateId/versions`
 - `DELETE /api/v1/document-templates/:templateId`
 - `POST /api/v1/document-renders`
@@ -57,6 +56,8 @@ API 文档维护红线：
 - `DOCUMENT_RENDER_API_KEY` 开启后，业务系统用 API Key；已登录侧边栏用户可用会话。
 - OAuth 回调失败必须重定向回前端登录页并显示可读错误，不能把 JSON/内部接口响应暴露给终端用户。
 - 飞书桌面侧边栏按钮登录必须优先走客户端内 `tt.requestAccess` + `/api/auth/feishu/:appKey/client-code`；外部 OAuth handoff 只做兜底。Chrome 登录成功不等于侧边栏 iframe 登录成功。
+- 当前 handoff 入口是 `POST /api/auth/feishu/:appKey/handoff/start` 与 `GET /api/auth/feishu/:appKey/handoff/:code`；旧 `/start`、`/login-status` 和未知登录子路径必须继续返回 410。
+- handoff 必须绑定 Base `open_id`，并只允许 OAuth 同一 `open_id` 单次领取会话。不要移除格式校验、5 分钟 TTL、单次消费或身份比对。
 - 真实密钥只能放 `.env.local`、部署密钥或运行环境变量，不写入仓库文档。
 
 当前 PostgreSQL 表：
@@ -70,4 +71,7 @@ API 文档维护红线：
 
 已知技术债：
 
-- 侧边栏前端已拆到 `src/components/document-generator/`。继续改前端时优先继续拆小 `PrimaryScreen.tsx`、`_design.css`、模板库、字段映射、生成进度和结果列表组件。
+- 单文件上限按全局 500 行。`server/src/documentRenderApi.ts`（约 940 行）超限最多；新增校验、下载或路由逻辑前先继续拆分，存储 provider 细节不得回流。`feishu.ts`、`useGenerate.ts`、`authSessionRoutes.ts` 等 500 行以上文件改动时顺带按模块边界拆分。
+- 侧边栏前端已拆到 `src/components/document-generator/`；`_design.css` 现在只负责导入模块，但 `PrimaryScreen.tsx`、侧栏、模板页和进度样式模块仍偏大，继续改前端时按功能边界拆分。
+- OAuth handoff 当前是单进程内存状态；多实例前必须改为共享存储或配置粘性路由，并在真实 Base 中确认 Base 与 OAuth `open_id` 属于同一命名空间。
+- handoff 身份不匹配时，当前实现会在服务端日志和接口响应中带出完整身份标识，前端还会展示缩写诊断。修复并在真实拒绝路径复验前，不得宣称 OAuth 失败链路已满足隐私边界。
