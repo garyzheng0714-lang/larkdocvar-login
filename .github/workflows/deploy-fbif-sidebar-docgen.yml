@@ -146,7 +146,6 @@ jobs:
           CONTAINER_PORT: ${{ secrets.CONTAINER_PORT }}
           POSTGRES_HOST_PORT: ${{ secrets.POSTGRES_HOST_PORT }}
           POSTGRES_CONTAINER_NAME: ${{ secrets.POSTGRES_CONTAINER_NAME }}
-          APP_ENV_B64: ${{ secrets.APP_ENV_B64 }}
           GH_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -167,6 +166,10 @@ jobs:
               exit 1
             fi
 
+            # 6 个共用密钥由 FBIF 中台的本机代理写这个文件，compose 叠在 .env 后面读，工作流不经手；没有它就在改动线上前停下。
+            HUB_ENV_FILE="/etc/fbif-hub/env/docgen.env"
+            test -s "${HUB_ENV_FILE}" || { echo "缺少 FBIF 中台文件 ${HUB_ENV_FILE}，部署中止（线上未改动）"; exit 1; }
+
             APP_ROOT="${APP_DIR:-/opt/fbif-sidebar-docgen}"
             RELEASES_DIR="${APP_ROOT}/releases"
             CURRENT_LINK="${APP_ROOT}/current"
@@ -185,9 +188,6 @@ jobs:
 
             if [[ -f "${CURRENT_LINK}/.env" && ! -f "${RELEASE_DIR}/.env" ]]; then
               cp "${CURRENT_LINK}/.env" "${RELEASE_DIR}/.env"
-            fi
-            if [[ ! -f "${RELEASE_DIR}/.env" && -n "${APP_ENV_B64:-}" ]]; then
-              printf '%s' "${APP_ENV_B64}" | tr -d '\r\n ' | base64 -d > "${RELEASE_DIR}/.env"
             fi
             if [[ ! -f "${RELEASE_DIR}/.env" ]]; then
               touch "${RELEASE_DIR}/.env"
@@ -339,8 +339,8 @@ jobs:
           REMOTE_SCRIPT
 
           REMOTE_ENV="$(printf \
-            "APP_DIR=%q APP_NAME=%q APP_DOMAIN=%q HOST_PORT=%q CONTAINER_PORT=%q POSTGRES_HOST_PORT=%q POSTGRES_CONTAINER_NAME=%q APP_ENV_B64=%q GH_SHA=%q" \
-            "${APP_DIR:-}" "${APP_NAME:-}" "${APP_DOMAIN:-}" "${HOST_PORT:-}" "${CONTAINER_PORT:-}" "${POSTGRES_HOST_PORT:-}" "${POSTGRES_CONTAINER_NAME:-}" "${APP_ENV_B64:-}" "${GH_SHA}")"
+            "APP_DIR=%q APP_NAME=%q APP_DOMAIN=%q HOST_PORT=%q CONTAINER_PORT=%q POSTGRES_HOST_PORT=%q POSTGRES_CONTAINER_NAME=%q GH_SHA=%q" \
+            "${APP_DIR:-}" "${APP_NAME:-}" "${APP_DOMAIN:-}" "${HOST_PORT:-}" "${CONTAINER_PORT:-}" "${POSTGRES_HOST_PORT:-}" "${POSTGRES_CONTAINER_NAME:-}" "${GH_SHA}")"
 
           ssh -i ~/.ssh/id_fbif_sidebar_docgen \
             -o BatchMode=yes \

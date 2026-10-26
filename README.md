@@ -242,7 +242,7 @@ npm run verify:secrets
 
 ## 部署与当前状态
 
-`.github/workflows/deploy-fbif-sidebar-docgen.yml` 在 `main` push 或手动触发时：安装依赖 → 类型检查 → 测试 → 构建前端 → 打包 release → 上传到版本化 release 目录 → 保持 PostgreSQL 稳定数据目录并重建 Compose → 轮询 `/api/health` 验证。
+`.github/workflows/deploy-fbif-sidebar-docgen.yml` 在 `main` push 或手动触发时：安装依赖 → 类型检查 → 测试 → 构建前端 → 打包 release → 上传到版本化 release 目录 → 保持 PostgreSQL 稳定数据目录并重建 Compose → 轮询 `/api/health` 验证。`DOCUMENT_RENDER_API_KEY`、三个 `FEISHU_*_APP_SECRET`、`TOS_ACCESS_KEY` / `TOS_SECRET_KEY` 由 FBIF 中台下发到服务器 `/etc/fbif-hub/env/docgen.env`，Compose 叠在 `.env` 后面读，不放 GitHub；文件缺失时部署在改动线上前终止。
 
 > **工作流存在不等于某次部署成功。** 应同时检查 Actions 结果、`databaseReady`、登录失败分支、对象存储签名下载、真实飞书侧边栏和附件回写。
 

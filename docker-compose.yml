@@ -7,17 +7,20 @@ services:
     restart: unless-stopped
     # 用 Docker 内置 init（tini）作 PID 1：正确转发 SIGTERM 给 node（配合后端优雅关闭）并回收僵尸进程。
     init: true
+    # DOCUMENT_RENDER_API_KEY、三个 FEISHU_*_APP_SECRET、TOS_ACCESS_KEY / TOS_SECRET_KEY 不经 environment：
+    # 服务器上由 FBIF 中台的本机代理写第二个文件，同名以它为准（FBIF-One-Api docs/hub/公共变量和密钥.md）；
+    # 本机开发没有它，就从 .env 读。environment 会盖过这里，所以那边不写这几项。
     env_file:
-      - .env
+      - path: .env
+        required: false
+      - path: /etc/fbif-hub/env/docgen.env
+        required: false
     environment:
       HOST: 0.0.0.0
       PORT: ${CONTAINER_PORT:-3180}
       FEISHU_APP_ID: ${FEISHU_APP_ID:-}
-      FEISHU_APP_SECRET: ${FEISHU_APP_SECRET:-}
       FEISHU_FBIF_APP_ID: ${FEISHU_FBIF_APP_ID:-}
-      FEISHU_FBIF_APP_SECRET: ${FEISHU_FBIF_APP_SECRET:-}
       FEISHU_FUDE_APP_ID: ${FEISHU_FUDE_APP_ID:-}
-      FEISHU_FUDE_APP_SECRET: ${FEISHU_FUDE_APP_SECRET:-}
       FEISHU_REDIRECT_BASE: ${FEISHU_REDIRECT_BASE:-}
       FEISHU_ALLOWED_TENANT_KEYS: ${FEISHU_ALLOWED_TENANT_KEYS:-}
       FEISHU_OAUTH_REDIRECT_URI: ${FEISHU_OAUTH_REDIRECT_URI:-}

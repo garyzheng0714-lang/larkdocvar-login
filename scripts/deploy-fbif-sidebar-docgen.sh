@@ -12,7 +12,6 @@ CONTAINER_PORT="3180"
 POSTGRES_HOST_PORT="15433"
 POSTGRES_CONTAINER_NAME="fbif-sidebar-docgen-postgres"
 KEEP_RELEASES="5"
-APP_ENV_B64=""
 
 usage() {
   cat <<'EOF'
@@ -31,7 +30,6 @@ Options:
   --postgres-host-port <port>   Host mapped PostgreSQL port (default: 15433)
   --postgres-container <name>   PostgreSQL container name (default: fbif-sidebar-docgen-postgres)
   --keep-releases <num>         Keep latest N releases (default: 5)
-  --app-env-b64 <base64>        Optional base64 .env content for remote bootstrap
   -h, --help                    Show this help
 EOF
 }
@@ -82,10 +80,6 @@ while [[ "$#" -gt 0 ]]; do
       KEEP_RELEASES="$2"
       shift 2
       ;;
-    --app-env-b64)
-      APP_ENV_B64="$2"
-      shift 2
-      ;;
     -h|--help)
       usage
       exit 0
@@ -119,6 +113,8 @@ tar -czf "$RELEASE_TAR" \
   --exclude="node_modules" \
   --exclude="dist" \
   --exclude="stitch-downloads" \
+  --exclude=".env" \
+  --exclude=".env.local" \
   --exclude=".DS_Store" \
   .
 
@@ -126,8 +122,8 @@ echo "[deploy] Uploading package to server: $SSH_TARGET"
 scp "${SSH_ARGS[@]}" "$RELEASE_TAR" "$SSH_TARGET:$REMOTE_RELEASE_TAR"
 
 REMOTE_ENV="$(printf \
-  "APP_DIR=%q APP_NAME=%q HOST_PORT=%q CONTAINER_PORT=%q POSTGRES_HOST_PORT=%q POSTGRES_CONTAINER_NAME=%q KEEP_RELEASES=%q APP_ENV_B64=%q RELEASE_FILE=%q RELEASE_NAME=%q" \
-  "$APP_DIR" "$APP_NAME" "$HOST_PORT" "$CONTAINER_PORT" "$POSTGRES_HOST_PORT" "$POSTGRES_CONTAINER_NAME" "$KEEP_RELEASES" "$APP_ENV_B64" "$REMOTE_RELEASE_TAR" "$RELEASE_NAME")"
+  "APP_DIR=%q APP_NAME=%q HOST_PORT=%q CONTAINER_PORT=%q POSTGRES_HOST_PORT=%q POSTGRES_CONTAINER_NAME=%q KEEP_RELEASES=%q RELEASE_FILE=%q RELEASE_NAME=%q" \
+  "$APP_DIR" "$APP_NAME" "$HOST_PORT" "$CONTAINER_PORT" "$POSTGRES_HOST_PORT" "$POSTGRES_CONTAINER_NAME" "$KEEP_RELEASES" "$REMOTE_RELEASE_TAR" "$RELEASE_NAME")"
 
 echo "[deploy] Running remote deploy script"
 ssh "${SSH_ARGS[@]}" "$SSH_TARGET" \
@@ -145,6 +141,10 @@ else
   exit 1
 fi
 
+# 6 个共用密钥由 FBIF 中台的本机代理写这个文件，compose 叠在 .env 后面读，发布不经手；没有它就在改动线上前停下。
+HUB_ENV_FILE="/etc/fbif-hub/env/docgen.env"
+test -s "${HUB_ENV_FILE}" || { echo "[remote] 缺少 FBIF 中台文件 ${HUB_ENV_FILE}，部署中止（线上未改动）"; exit 1; }
+
 mkdir -p "${APP_DIR}/releases"
 RELEASE_DIR="${APP_DIR}/releases/${RELEASE_NAME}"
 CURRENT_LINK="${APP_DIR}/current"
@@ -155,10 +155,6 @@ tar -xzf "${RELEASE_FILE}" -C "${RELEASE_DIR}"
 
 if [[ -f "${CURRENT_LINK}/.env" && ! -f "${RELEASE_DIR}/.env" ]]; then
   cp "${CURRENT_LINK}/.env" "${RELEASE_DIR}/.env"
-fi
-
-if [[ ! -f "${RELEASE_DIR}/.env" && -n "${APP_ENV_B64:-}" ]]; then
-  printf '%s' "${APP_ENV_B64}" | tr -d '\r\n ' | base64 -d > "${RELEASE_DIR}/.env"
 fi
 
 if [[ ! -f "${RELEASE_DIR}/.env" ]]; then

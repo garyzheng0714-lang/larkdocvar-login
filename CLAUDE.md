@@ -59,6 +59,7 @@ API 文档维护红线：
 - 当前 handoff 入口是 `POST /api/auth/feishu/:appKey/handoff/start` 与 `GET /api/auth/feishu/:appKey/handoff/:code`；旧 `/start`、`/login-status` 和未知登录子路径必须继续返回 410。
 - handoff 必须绑定 Base `open_id`，并只允许 OAuth 同一 `open_id` 单次领取会话。不要移除格式校验、5 分钟 TTL、单次消费或身份比对。
 - 真实密钥只能放 `.env.local`、部署密钥或运行环境变量，不写入仓库文档。
+- `DOCUMENT_RENDER_API_KEY`、三个 `FEISHU_*_APP_SECRET`、`TOS_ACCESS_KEY` / `TOS_SECRET_KEY` 归 FBIF 中台：本机代理写服务器 `/etc/fbif-hub/env/docgen.env`，Compose `env_file` 叠在 `.env` 后面读、同名以它为准；`environment:` 不能再写这几个名字（会盖过 `env_file`）。部署工作流不经手它们，中台文件缺失时在改动线上前终止；换值后代理用当前镜像重建容器，不重新构建。
 
 当前 PostgreSQL 表：
 

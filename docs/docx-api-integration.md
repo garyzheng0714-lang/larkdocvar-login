@@ -1,11 +1,12 @@
 # Docx API 参考文档
 
-最后更新：2026-07-17
+最后更新：2026-10-26
 
 ## 更新日志
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-10-26 | 运维 | 生产 `DOCUMENT_RENDER_API_KEY` 改由 FBIF 中台下发，更新 API Key 获取与 401 排查说明。 | 不改路由、字段与鉴权方式。 | 待同步 |
 | 2026-07-17 | 文档校准 | 按当前代码补齐绑定 Base `open_id` 的 OAuth handoff 路由；明确旧 `/start`、`/login-status` 才是退役入口。 | 新增 `handoff/start`、`handoff/:code` 说明；不改变 API 实现。 | 待同步 |
 | 2026-07-12 | 契约调整 | 稳定性加固：异步任务（`/api/v1/document-render-jobs`）不再内联返回 `download.fileBase64`，结果一律通过 `download.url` 下载。单份生成、同步批量不受影响。此前异步大批量（最多 500 条）+ 大模板 + `includeFileBase64=true` 会累积撑爆内存并让结果 JSON 超出存储上限。同时异步任务现已正确接受并转发 `missingStrategy`/`unusedStrategy`。 | 异步任务请求即使传 `output.includeFileBase64=true` 也不会在结果里返回 `download.fileBase64`；请用 `download.url` 下载。异步任务请求体的 `missingStrategy`（`fail`/`blank`）与 `unusedStrategy`（`error`/`ignore`）现已生效（此前被静默忽略）。单份/同步批量的 `includeFileBase64` 行为不变。 | 已同步 |
 | 2026-06-24 | 契约新增 | 新增 `unusedStrategy=ignore`：模板正文里没有的多余变量从报错改为忽略（默认仍 `error` 报错以保护变量名拼写检查）。便于多维表格工作流用同一套变量喂不同模板。 | 单份/批量/异步 Docx 渲染请求新增可选字段 `unusedStrategy`（默认 `error` / `ignore`）；传 `ignore` 时多余变量不阻断生成，响应 `variables.unused` 仍会列出。 | 已同步 |
@@ -134,7 +135,7 @@ DOCUMENT_RENDER_TOS_PREFIX=renders
 | `Authorization` | string | 二选一 | 格式为 `Bearer <api-key>`。 |
 | `x-api-key` | string | 二选一 | 直接传 API Key。 |
 
-API Key 的真实值由部署方在服务端环境变量 `DOCUMENT_RENDER_API_KEY` 配置，本文档与仓库都不保存明文；接入方向部署负责人索取，或在部署平台密钥 / 服务器未提交的 `.env` 中查看。下文示例中的 `<api-key>` 都是占位符，必须替换成真实值，原样发送或不带该头都会返回 401。
+API Key 的真实值由部署方在服务端环境变量 `DOCUMENT_RENDER_API_KEY` 配置，本文档与仓库都不保存明文；生产值由 FBIF 中台管理，接入方向部署负责人索取。下文示例中的 `<api-key>` 都是占位符，必须替换成真实值，原样发送或不带该头都会返回 401。
 
 ```bash
 curl -i 'https://<部署域名>/api/v1/document-templates' \
@@ -149,7 +150,7 @@ curl -i 'https://<部署域名>/api/v1/document-templates' \
 |---|---|---|
 | 请求头里没有 `x-api-key` 或 `Authorization` | 漏传凭据 | 加上 `x-api-key: <真实值>`。 |
 | 传的是文档里的 `<api-key>` 占位符 | 占位符不是真实 key | 换成服务端 `DOCUMENT_RENDER_API_KEY` 的真实值。 |
-| 传了值仍 401 | 服务端未配置 `DOCUMENT_RENDER_API_KEY`，生产环境不放行匿名调用 | 在部署平台密钥 / 服务器 `.env` 配置 `DOCUMENT_RENDER_API_KEY` 后重启服务；值可用 `openssl rand -hex 32` 生成。 |
+| 传了值仍 401 | 服务端未配置 `DOCUMENT_RENDER_API_KEY`，生产环境不放行匿名调用 | 生产在 FBIF 中台加或换值，本机代理会写进服务器 `/etc/fbif-hub/env/docgen.env` 并重建服务；不要改服务器 `.env`（会被中台文件盖过）。本地开发配在 `.env.local`，值可用 `openssl rand -hex 32` 生成。 |
 | 侧边栏 iframe 内请求 401 | 登录会话未建立或 cookie 被拦截 | 重新走客户端免登 / OAuth 登录；会话有效即可，无需 API Key。 |
 
 已登录的侧边栏用户可以通过服务端已验证的登录会话调用同一组接口。生产环境即使未配置 `DOCUMENT_RENDER_API_KEY`，也不会匿名放行 Docx API；必须使用 API Key 或可信会话。

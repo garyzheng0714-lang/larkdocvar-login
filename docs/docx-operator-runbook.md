@@ -1,6 +1,6 @@
 # Docx API 运维手册
 
-更新时间：2026-07-17
+更新时间：2026-10-26
 
 ## 必备环境变量
 
@@ -164,6 +164,7 @@ docker exec -i fbif-sidebar-docgen-postgres pg_restore -U postgres -d larkdocvar
 - 生产环境必须配置模板 TOS 存储；缺配置时模板资产能力会返回可读错误。
 - 生产环境必须配置生成文件 OSS/TOS 存储；不要让最终 Docx 落到本机临时目录。
 - 生产环境 PostgreSQL 数据目录必须固定；部署脚本会自动写入 `POSTGRES_DATA_DIR` 并兼容旧 release 目录迁移。
+- `DOCUMENT_RENDER_API_KEY`、三个 `FEISHU_*_APP_SECRET`、`TOS_ACCESS_KEY` / `TOS_SECRET_KEY` 归 FBIF 中台：本机代理写 `/etc/fbif-hub/env/docgen.env`，Compose 叠在 `.env` 后面读、同名以它为准。换值在中台做，代理随后用当前镜像重建容器（`docker compose -f /opt/fbif-sidebar-docgen/current/docker-compose.yml -p fbif-sidebar-docgen up -d --no-build --force-recreate --no-deps fbif-sidebar-docgen`）；改服务器 `.env` 里的这几项不生效。部署不经手它们，中台文件缺失时在改动线上前终止。
 - 生产 Docx API 必须配置 `DOCUMENT_RENDER_API_KEY` 或使用服务端可信会话；不能依赖 `X-Bitable-*` 作为登录凭据。
 - 飞书多维表格侧边栏请求可以通过 Base JS SDK 附带 `X-Bitable-Open-Id` / `X-Bitable-Base-User-Id`、`X-Bitable-Base-Id`、`X-Bitable-Table-Id`、`X-Bitable-Tenant-Key` 作为宿主上下文线索，但这些头不授予模板创建、管理或 `private` 模板读取权限。
 - `/api/auth/session` 只作为兼容诊断接口，未登录时返回稳定 JSON；`/api/auth/logout` 可清理旧会话。
