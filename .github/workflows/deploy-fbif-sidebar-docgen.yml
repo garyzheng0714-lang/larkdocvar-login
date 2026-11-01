@@ -4,11 +4,14 @@ on:
   push:
     branches:
       - main
+    # 只改说明文档（.md）的推送不考试、不上线：测试和线上程序都不读 .md（只有手动跑的 verify 脚本读 README）。
+    paths-ignore: ["**.md"]
   workflow_dispatch:
 
+# 上线排队，不取消：main 上每次推送都要完整跑完，部署跑到一半被掐会留下半换的容器。
 concurrency:
   group: deploy-fbif-sidebar-docgen
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   test:
