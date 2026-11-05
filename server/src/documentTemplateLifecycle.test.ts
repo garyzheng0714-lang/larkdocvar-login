@@ -277,6 +277,13 @@ test('变量词典：别名可以用顿号逗号分隔，一个名字只能属�
     assert.equal(conflict.status, 400);
     assert.match(conflict.json.error, /「证件号」已经记在变量「身份证号」下面/);
 
+    const bodyConflict = await api.call('PUT', '/api/v1/document-variables/rec2', { name: '证件号码', aliases: ['证件号'], errorMode: 'body' }, ADMIN);
+    assert.equal(bodyConflict.status, 200);
+    assert.equal(bodyConflict.json.errorCode, 'REJECTED');
+    const bodyDenied = await api.call('DELETE', '/api/v1/document-variables/rec1?errorMode=body', undefined, OWNER);
+    assert.equal(bodyDenied.status, 200);
+    assert.equal(bodyDenied.json.errorCode, 'FORBIDDEN');
+
     const renamed = await api.call('PUT', '/api/v1/document-variables/rec1', { name: '身份证号码', aliases: ['身份证号', '证件号'] }, ADMIN);
     assert.equal(renamed.status, 200);
 

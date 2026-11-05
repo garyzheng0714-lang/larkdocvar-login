@@ -13,6 +13,7 @@ const upsertVariableSchema = z.object({
   aliases: z.union([z.string().max(2000), z.array(z.string().max(64)).max(50)]).optional(),
   description: z.string().trim().max(500).optional(),
   format: z.string().trim().max(64).optional(),
+  errorMode: z.enum(['status', 'body']).optional(),
 });
 
 export type DocumentVariableRouterOptions = {
@@ -25,14 +26,30 @@ function getRequestId(request: express.Request): string {
   return typeof requestId === 'string' && requestId.trim() ? requestId.trim().slice(0, 128) : randomUUID();
 }
 
-function sendError(response: express.Response, requestId: string, error: unknown): void {
+const ERROR_CODE_BY_STATUS: Record<number, string> = { 400: 'REJECTED', 403: 'FORBIDDEN', 500: 'INTERNAL_ERROR' };
+
+// 写接口可选 errorMode=body（请求体或 ?errorMode=body）：出错也回 200 带 errorCode，多维表格自动化才能把原因写回表格。
+function wantsBodyErrors(request: express.Request): boolean {
+  const body = request.body as { errorMode?: unknown } | undefined;
+  return request.query.errorMode === 'body' || Boolean(body && typeof body === 'object' && body.errorMode === 'body');
+}
+
+function sendJsonError(request: express.Request, response: express.Response, status: number, payload: { ok: false; requestId: string; error: string }, errorCode?: string): void {
+  if (!wantsBodyErrors(request)) {
+    response.status(status).json(payload);
+    return;
+  }
+  response.status(200).json({ ...payload, errorCode: errorCode || ERROR_CODE_BY_STATUS[status] || 'REJECTED', ...(status >= 500 ? { retryable: true } : {}) });
+}
+
+function sendError(request: express.Request, response: express.Response, requestId: string, error: unknown): void {
   if (error instanceof UserFacingError) {
-    response.status(400).json({ ok: false, requestId, error: error.message });
+    sendJsonError(request, response, 400, { ok: false, requestId, error: error.message });
     return;
   }
   // eslint-disable-next-line no-console
   console.error(`[document-variable:${requestId}]`, error instanceof Error ? error.message : String(error));
-  response.status(500).json({ ok: false, requestId, error: '变量词典暂时不可用，请稍后重试。' });
+  sendJsonError(request, response, 500, { ok: false, requestId, error: '变量词典暂时不可用，请稍后重试。' });
 }
 
 export function createDocumentVariableRouter(
@@ -46,7 +63,7 @@ export function createDocumentVariableRouter(
   async function requireWriter(request: express.Request, response: express.Response, requestId: string): Promise<boolean> {
     const actor = await resolveActor(request).catch(() => ({ isAdmin: false }));
     if (actor.isAdmin) return true;
-    response.status(403).json({ ok: false, requestId, error: '只有管理员可以修改变量词典。' });
+    sendJsonError(request, response, 403, { ok: false, requestId, error: '只有管理员可以修改变量词典。' });
     return false;
   }
 
@@ -55,7 +72,7 @@ export function createDocumentVariableRouter(
     try {
       response.json({ ok: true, requestId, variables: await store.list() });
     } catch (error) {
-      sendError(response, requestId, error);
+      sendError(request, response, requestId, error);
     }
   });
 
@@ -63,14 +80,15 @@ export function createDocumentVariableRouter(
     const requestId = getRequestId(request);
     const parsed = upsertVariableSchema.safeParse(request.body);
     if (!parsed.success) {
-      response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
+      sendJsonError(request, response, 400, { ok: false, requestId, error: '请求参数不合法。' }, 'INVALID_REQUEST');
       return;
     }
     try {
       if (!await requireWriter(request, response, requestId)) return;
-      response.json({ ok: true, requestId, variable: await store.upsert(String(request.params.variableId || ''), parsed.data) });
+      const { errorMode: _errorMode, ...input } = parsed.data;
+      response.json({ ok: true, requestId, variable: await store.upsert(String(request.params.variableId || ''), input) });
     } catch (error) {
-      sendError(response, requestId, error);
+      sendError(request, response, requestId, error);
     }
   });
 
@@ -81,7 +99,7 @@ export function createDocumentVariableRouter(
       const deleted = await store.remove(String(request.params.variableId || ''));
       response.json({ ok: true, requestId, deleted });
     } catch (error) {
-      sendError(response, requestId, error);
+      sendError(request, response, requestId, error);
     }
   });
 

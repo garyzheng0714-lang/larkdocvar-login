@@ -6,6 +6,7 @@
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-11-05 | 契约新增 | 变量词典写接口（`PUT`/`DELETE /api/v1/document-variables/{variableId}`）支持可选 `errorMode=body`。 | `PUT` 请求体或 `DELETE` 查询参数传 `errorMode=body` 时，出错也回 200 并带 `errorCode`（`INVALID_REQUEST`、`REJECTED`、`FORBIDDEN`、`INTERNAL_ERROR`）。不传时行为不变。 | 已同步 |
 | 2026-11-05 | 契约新增 | 上传模板、新增版本、发布版本三个写接口支持可选 `errorMode=body`，出错也回 200，方便多维表格自动化把原因写回表格。 | 请求体新增可选 `errorMode`（`status` 默认 / `body`）；`body` 时错误响应多 `errorCode`（`INVALID_REQUEST`、`REJECTED`、`UNAUTHORIZED`、`FORBIDDEN`、`INTERNAL_ERROR`），服务端故障再带 `retryable: true`。不传时行为不变。 | 已同步 |
 | 2026-11-05 | 契约新增 | 为「在多维表格里运营模板」新增：检查模板、发布/退回已有版本、变量词典（标准名 + 别名）、生成时按词典顶替同义变量、出错回 200 的可选模式。 | 新增 `POST /api/v1/document-templates/inspect`、`POST /api/v1/document-templates/{templateId}/publish`、`GET/PUT/DELETE /api/v1/document-variables`；上传模板和新增版本新增可选 `expectedSha256`，版本新增 `sourceSha256`；单份生成新增可选 `aliasStrategy`、`errorMode`，响应在 `aliasStrategy=dictionary` 时多 `variables.aliased`。不传新字段时所有老接口行为不变。 | 已同步 |
 | 2026-10-26 | 运维 | 生产 `DOCUMENT_RENDER_API_KEY` 改由 FBIF 中台下发，更新 API Key 获取与 401 排查说明。 | 不改路由、字段与鉴权方式。 | 已同步 |
@@ -1285,6 +1286,7 @@ curl -s http://localhost:3000/api/v1/document-templates/inspect \
 | `aliases` | string 或 string[] | 否 | 别名。传字符串时按「、 , ， ; ； 换行」拆开；和标准名相同的会被去掉；最多 20 个。 |
 | `description` | string | 否 | 说明，最多 500 字。 |
 | `format` | string | 否 | 格式说明（如「日期」「金额」），最多 64 字。 |
+| `errorMode` | string | 否 | 传 `body` 时出错也回 200 并带 `errorCode`（同「上传模板」）。`DELETE` 用查询参数 `?errorMode=body`。 |
 
 同一个名字只能属于一组：标准名或别名已经记在别的变量下时返回 400，例如 `「证件号」已经记在变量「身份证号」下面，同一个名字只能属于一组。`
 
