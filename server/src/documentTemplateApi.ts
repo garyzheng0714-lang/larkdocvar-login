@@ -37,13 +37,17 @@ const updateTemplateMetadataSchema = templateInputSchema
     message: '模板信息不能为空。',
   });
 
+const emptyAsMissing = (value: string | undefined) => value || undefined;
+
 const inspectTemplateSchema = z.object({
-  url: z.string().trim().min(1).optional(),
-  fileBase64: z.string().trim().min(1).optional(),
+  // 表单体里没上传文件时是空字符串，按没传处理，好报「文件不能为空」。
+  url: z.string().trim().optional().transform(emptyAsMissing),
+  fileBase64: z.string().trim().optional().transform(emptyAsMissing),
   fileName: z.string().trim().max(255).optional(),
   name: z.string().trim().max(255).optional(),
   // 多维表格自动化引用空的「模板编号」时会传空字符串，按新模板处理。
-  compareTemplateId: z.string().trim().max(80).optional().transform((value) => value || undefined),
+  compareTemplateId: z.string().trim().max(80).optional().transform(emptyAsMissing),
+  errorMode: z.enum(['status', 'body']).optional(),
 }).refine((value) => Boolean(value.url || value.fileBase64), {
   message: '模板链接或模板文件不能为空。',
 });
@@ -169,7 +173,8 @@ const ERROR_CODE_BY_STATUS: Record<number, string> = { 400: 'REJECTED', 401: 'UN
 // 多维表格自动化的 HTTP 步骤遇到非 200 会直接停住，回 200 才能把原因写回表格。不传就照旧回 4xx/5xx。
 function useBodyErrors(request: express.Request, response: express.Response): void {
   const body = request.body as { errorMode?: unknown } | undefined;
-  if (body && typeof body === 'object' && body.errorMode === 'body') response.locals.templateErrorMode = 'body';
+  const fromBody = Boolean(body && typeof body === 'object' && body.errorMode === 'body');
+  if (fromBody || request.query.errorMode === 'body') response.locals.templateErrorMode = 'body';
 }
 
 function sendJsonError(response: express.Response, status: number, payload: { ok: false; requestId: string; error: string }, errorCode?: string): void {
@@ -237,9 +242,12 @@ export function createDocumentTemplateRouter(
   // 检查模板：只读，不保存。模板内容的问题放在 problems 里、仍回 200；只有请求本身不对才回 400。
   router.post('/inspect', async (request, response) => {
     const requestId = getRequestId(request);
+    useBodyErrors(request, response);
     const parsed = inspectTemplateSchema.safeParse(request.body);
     if (!parsed.success) {
-      sendJsonError(response, 400, { ok: false, requestId, error: '请求参数不合法。' }, 'INVALID_REQUEST');
+      // 没传文件是最常见的情况（表格里点了检查但还没上传），直接说清楚。
+      const missingFile = parsed.error.issues.some((issue) => issue.code === 'custom');
+      sendJsonError(response, 400, { ok: false, requestId, error: missingFile ? '模板链接或模板文件不能为空。' : '请求参数不合法。' }, 'INVALID_REQUEST');
       return;
     }
     try {
@@ -251,7 +259,8 @@ export function createDocumentTemplateRouter(
           return;
         }
       }
-      const inspection = await service.inspectTemplate(parsed.data, { canRead: (template) => canReadDocumentTemplate(template, actor) });
+      const { errorMode: _errorMode, ...input } = parsed.data;
+      const inspection = await service.inspectTemplate(input, { canRead: (template) => canReadDocumentTemplate(template, actor) });
       response.json({ ok: true, requestId, inspection });
     } catch (error) {
       sendError(response, requestId, error);

@@ -442,6 +442,13 @@ test('模板写接口：errorMode=body 时出错回 200 带 errorCode；不传�
     }).toString(), { ...OWNER, 'content-type': 'application/x-www-form-urlencoded' });
     assert.equal(formInspect.status, 200);
     assert.equal(formInspect.json.inspection.compare.templateId, template.templateId);
+
+    const noFile = await api.call('POST', '/api/v1/document-templates/inspect', 'url=&name=x&errorMode=body', { ...OWNER, 'content-type': 'application/x-www-form-urlencoded' });
+    assert.equal(noFile.status, 200);
+    assert.equal(noFile.json.errorCode, 'INVALID_REQUEST');
+    assert.equal(noFile.json.error, '模板链接或模板文件不能为空。');
+    const noFileOld = await api.call('POST', '/api/v1/document-templates/inspect', {}, OWNER);
+    assert.equal(noFileOld.status, 400);
   } finally {
     await api.close();
   }

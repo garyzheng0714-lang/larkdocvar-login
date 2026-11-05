@@ -6,6 +6,7 @@
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-11-05 | 契约新增 | 检查模板（`POST /api/v1/document-templates/inspect`）支持可选 `errorMode=body`；模板写接口的 `errorMode` 也可以放查询参数。 | 检查模板新增可选 `errorMode`；`url`/`fileBase64` 空字符串按没传处理，两个都没有时报「模板链接或模板文件不能为空。」。不传 `errorMode` 时行为不变。 | 已同步 |
 | 2026-11-05 | 契约新增 | 模板接口（`/api/v1/document-templates/*`）和变量词典写接口也收表单体（`application/x-www-form-urlencoded`）；变量 `PUT` 新增可选 `disabled`，写接口响应新增 `summaryText`。 | 多维表格 HTTP 步骤把单元格拼进 JSON 时不转义引号和换行，改用表单体发即可。`PUT /api/v1/document-variables/{variableId}` 的 `disabled` 为真或 `name` 为空时从词典移除该条（此前 `name` 为空回 400）；成功、或 `errorMode=body` 出错时带一句 `summaryText` 可直接写回表格。JSON 调用方不受影响。 | 已同步 |
 | 2026-11-05 | 契约新增 | 变量词典写接口（`PUT`/`DELETE /api/v1/document-variables/{variableId}`）支持可选 `errorMode=body`。 | `PUT` 请求体或 `DELETE` 查询参数传 `errorMode=body` 时，出错也回 200 并带 `errorCode`（`INVALID_REQUEST`、`REJECTED`、`FORBIDDEN`、`INTERNAL_ERROR`）。不传时行为不变。 | 已同步 |
 | 2026-11-05 | 契约新增 | 上传模板、新增版本、发布版本三个写接口支持可选 `errorMode=body`，出错也回 200，方便多维表格自动化把原因写回表格。 | 请求体新增可选 `errorMode`（`status` 默认 / `body`）；`body` 时错误响应多 `errorCode`（`INVALID_REQUEST`、`REJECTED`、`UNAUTHORIZED`、`FORBIDDEN`、`INTERNAL_ERROR`），服务端故障再带 `retryable: true`。不传时行为不变。 | 已同步 |
@@ -307,7 +308,7 @@ curl -i 'https://<部署域名>/api/v1/document-templates' \
 | `visibility` | string | 否 | `private` 或 `shared`。未传时按默认模板可见性处理。 |
 | `description` | string | 否 | 模板说明，最多 1000 字符。 |
 | `expectedSha256` | string | 否 | 「检查模板」返回的 `inspection.sha256`。传了就要求这次拿到的文件和检查时是同一份，不一致返回 400 `模板文件和检查时不是同一份，请重新检查后再发布。`；不传不校验。 |
-| `errorMode` | string | 否 | 默认 `status`：出错照旧回 4xx/5xx。传 `body`：出错也回 HTTP 200，`ok=false`，多带 `errorCode`（请求不合法 `INVALID_REQUEST`、业务拒绝 `REJECTED`、未登录 `UNAUTHORIZED`、无权限 `FORBIDDEN`、服务端故障 `INTERNAL_ERROR` 并带 `retryable: true`）。API Key 本身无效时仍回 401。 |
+| `errorMode` | string | 否 | 默认 `status`：出错照旧回 4xx/5xx。传 `body`（请求体或查询参数 `?errorMode=body`）：出错也回 HTTP 200，`ok=false`，多带 `errorCode`（请求不合法 `INVALID_REQUEST`、业务拒绝 `REJECTED`、未登录 `UNAUTHORIZED`、无权限 `FORBIDDEN`、服务端故障 `INTERNAL_ERROR` 并带 `retryable: true`）。API Key 本身无效时仍回 401。 |
 
 ### 请求示例
 
@@ -1122,10 +1123,13 @@ curl -s http://localhost:3000/api/v1/document-render-jobs/job_1778540000000_abcd
 | `fileName` | string | 否 | 文件名，用于返回的 `fileName`。 |
 | `name` | string | 否 | 打算用的模板名称，用于查重名。 |
 | `compareTemplateId` | string | 否 | 要更新的模板编号。传了就和它的现用版本比变量；不传或传空字符串按新模板处理。 |
+| `errorMode` | string | 否 | 同「上传模板」；也可以用查询参数 `?errorMode=body`。 |
+
+`url`、`fileBase64` 传空字符串按没传处理；两个都没有时错误信息是「模板链接或模板文件不能为空。」。
 
 ### 响应体
 
-模板内容有问题时仍回 200，问题放在 `inspection.problems`；只有请求本身不对（没给文件、对比的模板不存在或无权查看）才回 400/403。
+模板内容有问题时仍回 200，问题放在 `inspection.problems`；只有请求本身不对（没给文件、对比的模板不存在或无权查看）才回 400/403，传 `errorMode=body` 时这些也回 200 并带 `errorCode`。
 
 | 名称 | 类型 | 描述 |
 |---|---|---|
