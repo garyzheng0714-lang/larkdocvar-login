@@ -1,19 +1,31 @@
 // 变量词典接口：/api/v1/document-variables。多维表格「变量」表按行同步过来，键用表格行号。
 // 读：能过接口钥匙/登录的都能读；写：只认 API Key 或模板管理员。
+// 写成功、或 errorMode=body 下出错，都带一句 summaryText，自动化直接写回「同步结果」。
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { documentTemplateJsonParser } from './documentRenderBodyParser';
+import { documentTemplateBodyParser } from './documentRenderBodyParser';
 import { UserFacingError } from './documentRenderStorageErrors';
 import { resolveDefaultDocumentTemplateActor, type DocumentTemplateActor } from './documentTemplateApi';
 import type { DocumentVariableStore } from './documentVariableDictionary';
 
+// 表单体里勾选框是 "true"/"false" 字符串。
+const TRUE_TEXT = new Set(['true', '1', 'yes', 'on', '是']);
+const flagSchema = z.union([z.boolean(), z.string().max(16)]).optional()
+  .transform((value) => value === true || (typeof value === 'string' && TRUE_TEXT.has(value.trim().toLowerCase())));
+
 const upsertVariableSchema = z.object({
-  name: z.string().trim().min(1).max(64),
+  // 标准名为空（行里名字被清掉）或 disabled 为真时，按这一行不再算变量处理：从词典移除。
+  name: z.string().trim().max(64).optional().default(''),
   aliases: z.union([z.string().max(2000), z.array(z.string().max(64)).max(50)]).optional(),
   description: z.string().trim().max(500).optional(),
   format: z.string().trim().max(64).optional(),
+  disabled: flagSchema,
   errorMode: z.enum(['status', 'body']).optional(),
+});
+
+const syncTimeFormat = new Intl.DateTimeFormat('zh-CN', {
+  timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
 });
 
 export type DocumentVariableRouterOptions = {
@@ -39,7 +51,12 @@ function sendJsonError(request: express.Request, response: express.Response, sta
     response.status(status).json(payload);
     return;
   }
-  response.status(200).json({ ...payload, errorCode: errorCode || ERROR_CODE_BY_STATUS[status] || 'REJECTED', ...(status >= 500 ? { retryable: true } : {}) });
+  response.status(200).json({
+    ...payload,
+    errorCode: errorCode || ERROR_CODE_BY_STATUS[status] || 'REJECTED',
+    ...(status >= 500 ? { retryable: true } : {}),
+    summaryText: payload.error,
+  });
 }
 
 function sendError(request: express.Request, response: express.Response, requestId: string, error: unknown): void {
@@ -57,7 +74,7 @@ export function createDocumentVariableRouter(
   options: DocumentVariableRouterOptions = {},
 ): express.Router {
   const router = express.Router();
-  router.use(documentTemplateJsonParser);
+  router.use(documentTemplateBodyParser);
   const resolveActor = options.resolveActor || ((request: express.Request) => resolveDefaultDocumentTemplateActor(request));
 
   async function requireWriter(request: express.Request, response: express.Response, requestId: string): Promise<boolean> {
@@ -85,8 +102,16 @@ export function createDocumentVariableRouter(
     }
     try {
       if (!await requireWriter(request, response, requestId)) return;
-      const { errorMode: _errorMode, ...input } = parsed.data;
-      response.json({ ok: true, requestId, variable: await store.upsert(String(request.params.variableId || ''), input) });
+      const { errorMode: _errorMode, disabled, ...input } = parsed.data;
+      const variableId = String(request.params.variableId || '');
+      const time = syncTimeFormat.format(new Date());
+      if (disabled || !input.name) {
+        const deleted = await store.remove(variableId);
+        const summaryText = disabled ? `已停用 ${time}` : (deleted ? '没填标准名，已移出词典' : '先填标准名');
+        response.json({ ok: true, requestId, deleted, summaryText });
+        return;
+      }
+      response.json({ ok: true, requestId, variable: await store.upsert(variableId, input), summaryText: `已同步 ${time}` });
     } catch (error) {
       sendError(request, response, requestId, error);
     }
@@ -97,7 +122,7 @@ export function createDocumentVariableRouter(
     try {
       if (!await requireWriter(request, response, requestId)) return;
       const deleted = await store.remove(String(request.params.variableId || ''));
-      response.json({ ok: true, requestId, deleted });
+      response.json({ ok: true, requestId, deleted, summaryText: deleted ? '已移出词典' : '词典里没有这个变量' });
     } catch (error) {
       sendError(request, response, requestId, error);
     }

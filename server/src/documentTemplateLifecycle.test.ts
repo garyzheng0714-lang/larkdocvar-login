@@ -70,7 +70,7 @@ async function startApi(): Promise<Api> {
       const response = await fetch(`${baseUrl}${path}`, {
         method,
         headers: { 'content-type': 'application/json', ...headers },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: body === undefined || typeof body === 'string' ? body : JSON.stringify(body),
       });
       return { status: response.status, json: await response.json() };
     },
@@ -299,6 +299,39 @@ test('变量词典：别名可以用顿号逗号分隔，一个名字只能属�
   }
 });
 
+test('变量词典：多维表格用表单体同步，引号换行原样收下；停用或清空标准名就移出词典', async () => {
+  const api = await startApi();
+  const form = (path: string, fields: Record<string, string>) => api.call('PUT', path, new URLSearchParams(fields).toString(), {
+    ...ADMIN,
+    'content-type': 'application/x-www-form-urlencoded',
+  });
+  try {
+    const saved = await form('/api/v1/document-variables/rec1?errorMode=body', { name: '身份证号', aliases: '证件号、身份"证\n居民身份证', format: '文本', disabled: 'false' });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.json.ok, true);
+    assert.deepEqual(saved.json.variable.aliases, ['证件号', '身份"证', '居民身份证']);
+    assert.match(saved.json.summaryText, /^已同步 /);
+
+    const conflict = await form('/api/v1/document-variables/rec2?errorMode=body', { name: '证件号', disabled: 'false' });
+    assert.equal(conflict.json.ok, false);
+    assert.equal(conflict.json.summaryText, conflict.json.error);
+
+    const disabled = await form('/api/v1/document-variables/rec1?errorMode=body', { name: '身份证号', disabled: 'true' });
+    assert.equal(disabled.json.deleted, true);
+    assert.match(disabled.json.summaryText, /^已停用 /);
+
+    await form('/api/v1/document-variables/rec1', { name: '身份证号', aliases: '证件号' });
+    const cleared = await form('/api/v1/document-variables/rec1', { name: '', aliases: '证件号' });
+    assert.equal(cleared.json.deleted, true);
+    assert.equal(cleared.json.summaryText, '没填标准名，已移出词典');
+
+    const list = await api.call('GET', '/api/v1/document-variables', undefined, OWNER);
+    assert.deepEqual(list.json.variables, []);
+  } finally {
+    await api.close();
+  }
+});
+
 test('别名顶替：只顶没传的变量，记下谁顶了谁', () => {
   const entries = [{ id: 'rec1', name: '身份证号', aliases: ['证件号'], updatedAt: '' }];
   const { variables, derived } = applyVariableAliases({ 身份证号: '110', 姓名: '张三' }, entries);
@@ -402,6 +435,13 @@ test('模板写接口：errorMode=body 时出错回 200 带 errorCode；不传�
     const old = await api.call('POST', `/api/v1/document-templates/${template.templateId}/versions`, { fileBase64: next.toString('base64'), expectedSha256: sha(buffer) }, OWNER);
     assert.equal(old.status, 400);
     assert.equal(old.json.errorCode, undefined);
+
+    // 多维表格自动化用表单体发：名字里带引号也不会把请求弄坏。
+    const formInspect = await api.call('POST', '/api/v1/document-templates/inspect', new URLSearchParams({
+      fileBase64: next.toString('base64'), name: '客户"确认"函', compareTemplateId: template.templateId,
+    }).toString(), { ...OWNER, 'content-type': 'application/x-www-form-urlencoded' });
+    assert.equal(formInspect.status, 200);
+    assert.equal(formInspect.json.inspection.compare.templateId, template.templateId);
   } finally {
     await api.close();
   }

@@ -25,7 +25,9 @@ function createJsonParser(limit: string): Array<express.RequestHandler | express
 
 export const documentRenderJsonParser: Array<express.RequestHandler | express.ErrorRequestHandler> = createJsonParser('10mb');
 
-export const documentTemplateJsonParser: Array<express.RequestHandler | express.ErrorRequestHandler> = [
+// 也收表单格式：多维表格自动化把单元格拼进 JSON 时不转义引号和换行，用表单体发才稳。
+export const documentTemplateBodyParser: Array<express.RequestHandler | express.ErrorRequestHandler> = [
   express.json({ limit: '30mb' }),
+  express.urlencoded({ extended: false, limit: '1mb' }),
   jsonParseErrorHandler,
 ];

@@ -1,7 +1,7 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { documentTemplateJsonParser } from './documentRenderBodyParser';
+import { documentTemplateBodyParser } from './documentRenderBodyParser';
 import { UserFacingError } from './documentRenderStorageErrors';
 import { DocumentTemplateService } from './documentTemplateService';
 import type { LoadedDocumentTemplate } from './documentTemplateService';
@@ -195,7 +195,7 @@ export function createDocumentTemplateRouter(
   options: DocumentTemplateRouterOptions = {},
 ): express.Router {
   const router = express.Router();
-  router.use(documentTemplateJsonParser);
+  router.use(documentTemplateBodyParser);
 
   router.get('/', async (request, response) => {
     const requestId = getRequestId(request);

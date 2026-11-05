@@ -6,6 +6,7 @@
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-11-05 | 契约新增 | 模板接口（`/api/v1/document-templates/*`）和变量词典写接口也收表单体（`application/x-www-form-urlencoded`）；变量 `PUT` 新增可选 `disabled`，写接口响应新增 `summaryText`。 | 多维表格 HTTP 步骤把单元格拼进 JSON 时不转义引号和换行，改用表单体发即可。`PUT /api/v1/document-variables/{variableId}` 的 `disabled` 为真或 `name` 为空时从词典移除该条（此前 `name` 为空回 400）；成功、或 `errorMode=body` 出错时带一句 `summaryText` 可直接写回表格。JSON 调用方不受影响。 | 已同步 |
 | 2026-11-05 | 契约新增 | 变量词典写接口（`PUT`/`DELETE /api/v1/document-variables/{variableId}`）支持可选 `errorMode=body`。 | `PUT` 请求体或 `DELETE` 查询参数传 `errorMode=body` 时，出错也回 200 并带 `errorCode`（`INVALID_REQUEST`、`REJECTED`、`FORBIDDEN`、`INTERNAL_ERROR`）。不传时行为不变。 | 已同步 |
 | 2026-11-05 | 契约新增 | 上传模板、新增版本、发布版本三个写接口支持可选 `errorMode=body`，出错也回 200，方便多维表格自动化把原因写回表格。 | 请求体新增可选 `errorMode`（`status` 默认 / `body`）；`body` 时错误响应多 `errorCode`（`INVALID_REQUEST`、`REJECTED`、`UNAUTHORIZED`、`FORBIDDEN`、`INTERNAL_ERROR`），服务端故障再带 `retryable: true`。不传时行为不变。 | 已同步 |
 | 2026-11-05 | 契约新增 | 为「在多维表格里运营模板」新增：检查模板、发布/退回已有版本、变量词典（标准名 + 别名）、生成时按词典顶替同义变量、出错回 200 的可选模式。 | 新增 `POST /api/v1/document-templates/inspect`、`POST /api/v1/document-templates/{templateId}/publish`、`GET/PUT/DELETE /api/v1/document-variables`；上传模板和新增版本新增可选 `expectedSha256`，版本新增 `sourceSha256`；单份生成新增可选 `aliasStrategy`、`errorMode`，响应在 `aliasStrategy=dictionary` 时多 `variables.aliased`。不传新字段时所有老接口行为不变。 | 已同步 |
@@ -84,7 +85,7 @@ Docx 渲染路由和存储实现已拆分：
 | 项目 | 说明 |
 |---|---|
 | Base URL | 由部署环境决定，本地默认 `http://localhost:3000`。 |
-| 请求格式 | JSON。除下载文件外，建议统一传 `Content-Type: application/json`。 |
+| 请求格式 | JSON。除下载文件外，建议统一传 `Content-Type: application/json`。模板接口和变量词典写接口也收表单体 `application/x-www-form-urlencoded`（字段都是字符串），多维表格 HTTP 步骤推荐用表单体：拼 JSON 时单元格里的引号、换行不会被转义。 |
 | 成功标记 | 响应体包含 `ok: true`。 |
 | 失败标记 | 响应体包含 `ok: false` 和可展示给用户的 `error`。 |
 | 请求追踪 | 可传 `x-request-id`；服务端会在响应中返回 `requestId`。不传时服务端自动生成。 |
@@ -1282,18 +1283,31 @@ curl -s http://localhost:3000/api/v1/document-templates/inspect \
 
 | 名称 | 类型 | 必填 | 描述 |
 |---|---|---|---|
-| `name` | string | 是 | 标准名，最多 64 字。两边的 `{{ }}` 会被去掉。 |
+| `name` | string | 否 | 标准名，最多 64 字。两边的 `{{ }}` 会被去掉。为空时按「这一行不再是变量」处理：从词典移除。 |
 | `aliases` | string 或 string[] | 否 | 别名。传字符串时按「、 , ， ; ； 换行」拆开；和标准名相同的会被去掉；最多 20 个。 |
 | `description` | string | 否 | 说明，最多 500 字。 |
 | `format` | string | 否 | 格式说明（如「日期」「金额」），最多 64 字。 |
+| `disabled` | boolean 或 string | 否 | 为真（`true`、`"true"`、`"1"`、`"是"`）时从词典移除这一条，等同 `DELETE`。多维表格勾选框直接引用即可。 |
 | `errorMode` | string | 否 | 传 `body` 时出错也回 200 并带 `errorCode`（同「上传模板」）。`DELETE` 用查询参数 `?errorMode=body`。 |
 
 同一个名字只能属于一组：标准名或别名已经记在别的变量下时返回 400，例如 `「证件号」已经记在变量「身份证号」下面，同一个名字只能属于一组。`
 
 ### 响应
 
-- `PUT`：`{ "ok": true, "requestId": "...", "variable": { ... } }`。
-- `DELETE`：`{ "ok": true, "requestId": "...", "deleted": true }`；本来就没有时 `deleted` 为 `false`，仍回 200。
+- `PUT`：`{ "ok": true, "requestId": "...", "variable": { ... }, "summaryText": "已同步 11/05 14:30" }`。
+- `PUT` 带 `disabled` 为真或 `name` 为空：`{ "ok": true, "requestId": "...", "deleted": true, "summaryText": "已停用 11/05 14:30" }`（`name` 为空时为「没填标准名，已移出词典」或「先填标准名」）。
+- `DELETE`：`{ "ok": true, "requestId": "...", "deleted": true, "summaryText": "已移出词典" }`；本来就没有时 `deleted` 为 `false`，仍回 200。
+- `errorMode=body` 出错时 `summaryText` 等于 `error`，所以自动化只需把 `summaryText` 写回「同步结果」。时间按北京时间。
+
+表单体示例（多维表格 HTTP 步骤，`body_type=form-urlencoded`）：
+
+```bash
+curl -X PUT 'https://<host>/api/v1/document-variables/<record_id>?errorMode=body' \
+  -H 'Authorization: Bearer <api-key>' \
+  --data-urlencode 'name=身份证号' \
+  --data-urlencode 'aliases=证件号、身份证' \
+  --data-urlencode 'disabled=false'
+```
 
 ## 模板变量
 
