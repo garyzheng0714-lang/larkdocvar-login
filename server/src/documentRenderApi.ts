@@ -1,11 +1,6 @@
 import express from 'express';
-import axios from 'axios';
-import dns from 'node:dns/promises';
-import http from 'node:http';
-import https from 'node:https';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { LookupFunction } from 'node:net';
 import { normalizeObjectPrefix, sanitizeObjectRequestId } from './objectStorageKeys';
 import JSZip from 'jszip';
 import { TemplateHandler } from 'easy-template-x';
@@ -22,17 +17,27 @@ import {
   type DocumentRenderStorage,
 } from './documentRenderStorage';
 import { createFixedLookup, isBlockedIpAddress } from './documentRenderUrlSafety';
+import { downloadTemplateDocx, MAX_TEMPLATE_DOWNLOAD_BYTES, validateTemplateUrl } from './documentTemplateDownload';
+import {
+  collectTextNodeSegments,
+  extractPreviewTextFromDocumentXml,
+  extractVariablesFromText,
+  normalizePlaceholderRuns,
+  renderText,
+  replacePlaceholdersInTextNodes,
+  textHasResidualPlaceholder,
+  xmlHasResidualPlaceholders,
+} from './documentRenderDocxText';
 import { imageVariableMapSchema, isImagePlaceholderName, normalizeImageVariableName, replaceImagePlaceholdersInDocx, type DocumentRenderImageVariableInput, type RenderedImageVariable } from './documentRenderImages';
 import type { DocumentTemplateResolver } from './documentTemplateApi';
 import { createRequestScopedDocumentTemplateResolver } from './documentTemplateAccess';
 import { convertDocxToPdfPreview } from './documentPdfPreview';
 export { createConfiguredStorage } from './documentRenderStorage';
+export { downloadTemplateDocx } from './documentTemplateDownload';
 export type { DocumentRenderStorageKind, DocumentRenderStorage, SaveGeneratedDocxInput, SavedGeneratedDocx } from './documentRenderStorage';
 
-const MAX_TEMPLATE_DOWNLOAD_BYTES = 20 * 1024 * 1024;
 const DEFAULT_MAX_UNZIPPED_BYTES = 100 * 1024 * 1024;
 const DEFAULT_MAX_ZIP_ENTRIES = 1000;
-const MAX_TEMPLATE_REDIRECTS = 3;
 const DEFAULT_DOWNLOAD_TTL_MS = 60 * 60 * 1000;
 const MAX_DOWNLOAD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -65,7 +70,6 @@ const documentRenderSchema = z.object({
 });
 
 export type DocumentRenderRequest = z.infer<typeof documentRenderSchema>;
-type VerifiedTemplateUrl = { url: URL; lookup?: LookupFunction };
 
 class MissingVariablesError extends UserFacingError {
   constructor(readonly missingVariables: string[]) {
@@ -121,34 +125,6 @@ function normalizeImageVariables(input: DocumentRenderRequest['imageVariables'])
   return output;
 }
 
-function extractVariablesFromText(input: string): string[] {
-  const variables: string[] = [];
-  const seen = new Set<string>();
-  const pattern = /\{\{\s*([^{}]+?)\s*\}\}/g;
-  let match: RegExpExecArray | null = null;
-  while ((match = pattern.exec(input)) !== null) {
-    const name = match[1]?.trim() || '';
-    if (!name || seen.has(name)) continue;
-    seen.add(name);
-    variables.push(name);
-  }
-  return variables;
-}
-
-// 残留占位符判定：渲染完成后文本里若仍残留形如 {{...}}（含空占位 {{ }}）的"完整 token"，
-// 即视为没替换干净，拒绝产出半成品。关键是只认完整 token——绝不能对替换后的文本做裸
-// includes('{{'/'}}') 扫描：用户填入的值里含字面的孤立 {{ 或 }}（公式 f(x) }}、代码、JSON、
-// 模板示例都很常见）并不构成 token，过去被误判成残留导致整单生成无故失败，是头号信任杀手。
-const RESIDUAL_PLACEHOLDER_PATTERN = /\{\{[^{}]*\}\}/;
-
-function textHasResidualPlaceholder(text: string): boolean {
-  return RESIDUAL_PLACEHOLDER_PATTERN.test(text);
-}
-
-function xmlHasResidualPlaceholders(xml: string): boolean {
-  return textHasResidualPlaceholder(collectTextNodeSegments(xml).combinedText);
-}
-
 // easy-template-x 的 getContentParts 只覆盖 document.xml + 页眉 header* + 页脚 footer* + chart，
 // 且缺失变量会被替换成空串——这些部件处理完不会再残留"真占位符"。脚注 footnotes.xml / 尾注 endnotes.xml
 // 它完全不处理，仍留着原始 {{x}}，需要事后兜底文本替换。这个集合就是"需要兜底"的部件白名单。
@@ -167,31 +143,6 @@ function isVariableContentPart(name: string): boolean {
     || EASY_TEMPLATE_FALLBACK_PARTS.has(name);
 }
 
-function renderText(input: string, variables: Record<string, string>): string {
-  return input.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, rawName: string) => {
-    const name = rawName.trim();
-    return Object.prototype.hasOwnProperty.call(variables, name) ? variables[name] : match;
-  });
-}
-
-function escapeXml(input: string): string {
-  return input
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-function unescapeXml(input: string): string {
-  return input
-    .replace(/&apos;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&gt;/g, '>')
-    .replace(/&lt;/g, '<')
-    .replace(/&amp;/g, '&');
-}
-
 function readPositiveIntegerEnv(name: string, fallback: number): number {
   const parsed = Number(process.env[name] || '');
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
@@ -204,80 +155,6 @@ function getDefaultDownloadTtl(): { ttlMs: number; ttlSeconds: number } {
 }
 const getMaxUnzippedBytes = () => readPositiveIntegerEnv('DOCUMENT_RENDER_MAX_UNZIPPED_BYTES', DEFAULT_MAX_UNZIPPED_BYTES);
 const getMaxZipEntries = () => readPositiveIntegerEnv('DOCUMENT_RENDER_MAX_ZIP_ENTRIES', DEFAULT_MAX_ZIP_ENTRIES);
-
-function allowPrivateTemplateUrls(): boolean { return process.env.DOCUMENT_TEMPLATE_ALLOW_PRIVATE_URLS === 'true'; }
-
-async function validateTemplateUrl(rawUrl: string): Promise<VerifiedTemplateUrl> {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    throw new UserFacingError('模板链接格式不正确。');
-  }
-
-  if (!['http:', 'https:'].includes(url.protocol)) {
-    throw new UserFacingError('模板链接只支持 HTTP 或 HTTPS。');
-  }
-  if (url.username || url.password) {
-    throw new UserFacingError('模板链接不能包含用户名或密码。');
-  }
-  if (url.protocol !== 'https:' && !allowPrivateTemplateUrls()) {
-    throw new UserFacingError('Docx 模板链接默认只允许 HTTPS。');
-  }
-  if (!allowPrivateTemplateUrls()) {
-    let addresses;
-    try {
-      addresses = await dns.lookup(url.hostname, { all: true, verbatim: true });
-    } catch {
-      throw new UserFacingError('Docx 模板链接无法访问，请检查链接是否正确。');
-    }
-    if (addresses.length === 0 || addresses.some((item) => isBlockedIpAddress(item.address))) {
-      throw new UserFacingError('模板链接不能指向内网或本机地址。');
-    }
-    return {
-      url,
-      lookup: createFixedLookup(url.hostname, addresses),
-    };
-  }
-  return { url };
-}
-
-export async function downloadTemplateDocx(rawUrl: string, redirectCount = 0): Promise<Buffer> {
-  const target = await validateTemplateUrl(rawUrl);
-  let response;
-  try {
-    response = await axios.get<ArrayBuffer>(target.url.toString(), {
-      responseType: 'arraybuffer',
-      timeout: 30000,
-      // axios 的 timeout 只是 socket 空闲超时——对端每 29s 滴一个字节即可绕过它无限拖住下载。
-      // 再加一个墙钟总时限硬上限，保证慢滴服务器无法让单份渲染 / 异步任务永久挂起。
-      signal: AbortSignal.timeout(60_000),
-      maxContentLength: MAX_TEMPLATE_DOWNLOAD_BYTES,
-      maxBodyLength: MAX_TEMPLATE_DOWNLOAD_BYTES,
-      maxRedirects: 0,
-      proxy: false,
-      httpAgent: target.lookup ? new http.Agent({ lookup: target.lookup }) : undefined,
-      httpsAgent: target.lookup ? new https.Agent({ lookup: target.lookup }) : undefined,
-      validateStatus: (status) => (status >= 200 && status < 300) || (status >= 300 && status < 400),
-    });
-  } catch (error) {
-    if (axios.isAxiosError(error) && String(error.message || '').includes('maxContentLength')) throw new UserFacingError('Docx 模板不能超过 20MB。');
-    throw new UserFacingError('Docx 模板链接无法访问，请检查链接是否正确。');
-  }
-
-  if (response.status >= 300 && response.status < 400) {
-    if (redirectCount >= MAX_TEMPLATE_REDIRECTS) {
-      throw new UserFacingError('模板链接重定向次数过多。');
-    }
-    const location = response.headers.location;
-    if (!location) {
-      throw new UserFacingError('模板链接重定向缺少目标地址。');
-    }
-    return downloadTemplateDocx(new URL(String(location), target.url).toString(), redirectCount + 1);
-  }
-
-  return Buffer.from(response.data);
-}
 
 function getZipObjectUncompressedSize(file: JSZip.JSZipObject): number {
   const internalData = (file as unknown as { _data?: { uncompressedSize?: number } })._data;
@@ -308,251 +185,6 @@ function hasMainDocumentRelationship(xml: string): boolean {
     /Type=["'][^"']*\/officeDocument["']/.test(item)
     && /Target=["']\/?word\/document\.xml["']/.test(item)
   ));
-}
-
-function extractPreviewTextFromDocumentXml(xml: string): string {
-  const paragraphs = xml.match(/<w:p[\s\S]*?<\/w:p>/g) || [];
-  if (paragraphs.length > 0) {
-    return paragraphs
-      .map((paragraph) => collectTextNodeSegments(paragraph).combinedText)
-      .join('\n')
-      .trim();
-  }
-
-  return collectTextNodeSegments(xml).combinedText.trim();
-}
-
-type TextNodeSegment = {
-  contentStart: number;
-  contentEnd: number;
-  textStart: number;
-  textEnd: number;
-  text: string;
-};
-
-function collectTextNodeSegments(xml: string): { segments: TextNodeSegment[]; combinedText: string } {
-  const segments: TextNodeSegment[] = [];
-  const pattern = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g;
-  let match: RegExpExecArray | null = null;
-  let textCursor = 0;
-
-  while ((match = pattern.exec(xml)) !== null) {
-    const fullMatch = match[0];
-    const rawText = match[1] || '';
-    const openingEndOffset = fullMatch.indexOf('>') + 1;
-    const contentStart = match.index + openingEndOffset;
-    const contentEnd = contentStart + rawText.length;
-    const text = unescapeXml(rawText);
-    segments.push({
-      contentStart,
-      contentEnd,
-      textStart: textCursor,
-      textEnd: textCursor + text.length,
-      text,
-    });
-    textCursor += text.length;
-  }
-
-  return {
-    segments,
-    combinedText: segments.map((segment) => segment.text).join(''),
-  };
-}
-
-function replacePlaceholdersInTextNodes(xml: string, variables: Record<string, string>): {
-  xml: string;
-  found: string[];
-} {
-  let matchedParagraph = false;
-  const foundSet = new Set<string>();
-  const outputXml = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (paragraphXml) => {
-    matchedParagraph = true;
-    const rendered = replacePlaceholdersInTextNodeScope(paragraphXml, variables);
-    for (const name of rendered.found) foundSet.add(name);
-    return rendered.xml;
-  });
-  if (matchedParagraph) {
-    return { xml: outputXml, found: Array.from(foundSet) };
-  }
-  return replacePlaceholdersInTextNodeScope(xml, variables);
-}
-
-function replacePlaceholdersInTextNodeScope(xml: string, variables: Record<string, string>): {
-  xml: string;
-  found: string[];
-} {
-  const { segments, combinedText } = collectTextNodeSegments(xml);
-  if (segments.length === 0) {
-    return { xml, found: [] };
-  }
-
-  const found = extractVariablesFromText(combinedText).filter((name) => !isImagePlaceholderName(name));
-  const operations: Array<{ start: number; end: number; replacement: string }> = [];
-  const pattern = /\{\{\s*([^{}]+?)\s*\}\}/g;
-  let match: RegExpExecArray | null = null;
-  while ((match = pattern.exec(combinedText)) !== null) {
-    const name = match[1]?.trim() || '';
-    if (!Object.prototype.hasOwnProperty.call(variables, name)) {
-      continue;
-    }
-    operations.push({
-      start: match.index,
-      end: match.index + match[0].length,
-      replacement: variables[name],
-    });
-  }
-
-  if (operations.length === 0) {
-    return { xml, found };
-  }
-
-  const segmentOutputs = segments.map((segment) => {
-    let output = '';
-    let cursor = segment.textStart;
-
-    for (const operation of operations) {
-      if (operation.end <= segment.textStart || operation.start >= segment.textEnd) {
-        continue;
-      }
-
-      const copyEnd = Math.min(operation.start, segment.textEnd);
-      if (cursor < copyEnd) {
-        output += combinedText.slice(cursor, copyEnd);
-      }
-
-      if (operation.start >= segment.textStart && operation.start < segment.textEnd) {
-        output += operation.replacement;
-      }
-
-      cursor = Math.max(cursor, Math.min(operation.end, segment.textEnd));
-    }
-
-    if (cursor < segment.textEnd) {
-      output += combinedText.slice(cursor, segment.textEnd);
-    }
-
-    return output;
-  });
-
-  let outputXml = '';
-  let xmlCursor = 0;
-  segments.forEach((segment, index) => {
-    const replacement = segmentOutputs[index], prefix = xml.slice(xmlCursor, segment.contentStart);
-    outputXml += /^\s|\s$/.test(replacement) && !prefix.includes('xml:space=') ? prefix.replace(/<w:t\b/, '<w:t xml:space="preserve"') : prefix;
-    outputXml += escapeXml(replacement);
-    xmlCursor = segment.contentEnd;
-  });
-  outputXml += xml.slice(xmlCursor);
-
-  return { xml: outputXml, found };
-}
-
-// 把每个段落里构成 {{...}} 的相邻 run 的 rPr，统一为「变量名主体重叠字符最多的那个 run」的样式。
-// easy-template-x 替换时取占位符起始 run 的样式，归一化后起始 run 已携带变量名样式，
-// 从而彻底修复「Word 把占位符拆进不同样式 run 导致替换值样式丢失」的根因。
-function normalizePlaceholderRuns(xml: string): string {
-  return xml.replace(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/g, (paragraphXml) => normalizeParagraphRuns(paragraphXml));
-}
-
-function normalizeParagraphRuns(paragraphXml: string): string {
-  const runPattern = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/g;
-  const runs: Array<{ runXml: string; rPr: string; text: string; matchStart: number; matchEnd: number; charStart: number; charEnd: number }> = [];
-  let runMatch: RegExpExecArray | null = null;
-  let charCursor = 0;
-  while ((runMatch = runPattern.exec(paragraphXml)) !== null) {
-    const runXml = runMatch[0];
-    // rPr 正则放宽：兼容自闭合 <w:rPr/> 与带属性 <w:rPr ...>，否则失配退化为空串会把样式抹掉。
-    const rPrMatch = runXml.match(/<w:rPr\b[^>]*?(?:\/>|>[\s\S]*?<\/w:rPr>)/);
-    const rPr = rPrMatch ? rPrMatch[0] : '';
-    const text = Array.from(runXml.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g)).map((part) => unescapeXml(part[1] || '')).join('');
-    runs.push({ runXml, rPr, text, matchStart: runMatch.index, matchEnd: runMatch.index + runXml.length, charStart: charCursor, charEnd: charCursor + text.length });
-    charCursor += text.length;
-  }
-  if (runs.length === 0) return paragraphXml;
-  const combinedText = runs.map((run) => run.text).join('');
-
-  const placeholderPattern = /\{\{\s*[^{}]+?\s*\}\}/g;
-  const repByRunIndex = new Map<number, string>();
-  let placeholder: RegExpExecArray | null = null;
-  while ((placeholder = placeholderPattern.exec(combinedText)) !== null) {
-    const phStart = placeholder.index;
-    const phEnd = placeholder.index + placeholder[0].length;
-    const bodyStart = phStart + 2;
-    const bodyEnd = phEnd - 2;
-    const covered: number[] = [];
-    for (let i = 0; i < runs.length; i++) {
-      if (runs[i].charStart < phEnd && runs[i].charEnd > phStart) covered.push(i);
-    }
-    if (covered.length === 0) continue;
-    // 代表样式 = 与变量名主体 [bodyStart,bodyEnd) 重叠字符最多的那个 run 的 rPr
-    let bestIndex = covered[0];
-    let bestOverlap = -1;
-    for (const i of covered) {
-      const overlap = Math.min(runs[i].charEnd, bodyEnd) - Math.max(runs[i].charStart, bodyStart);
-      if (overlap > bestOverlap) { bestOverlap = overlap; bestIndex = i; }
-    }
-    const representativeRPr = runs[bestIndex].rPr;
-    // easy-template-x 把整个变量值塞进【占位符起始 run】（covered 中最靠前的那个），值的样式只由它决定。
-    const startIndex = covered[0];
-    // 起始 run 的最终样式 = 代表样式 ∪ 主体区间其它 covered run 的字符级强调样式（下划线/加粗/斜体/删除线等）。
-    // 排除起始 run 自身样式（它常裹着花括号，样式不代表变量名，应被主体代表样式取代——保住「样式统一到主体」语义）；
-    // 但变量名主体某些字符独有的强调样式（如填空横线 <w:u> 只描在「丙」上）必须并进来，否则替换值丢失这些样式（用户报障）。
-    let startRPr = representativeRPr;
-    for (const i of covered) {
-      if (i === startIndex) continue;
-      startRPr = mergeRunPropertiesXml(startRPr, runs[i].rPr);
-    }
-    // 起始 run 写并集样式；其余 covered run 仍统一为代表样式（维持占位符整体样式一致的既有设计）。
-    for (const i of covered) repByRunIndex.set(i, i === startIndex ? startRPr : representativeRPr);
-  }
-  if (repByRunIndex.size === 0) return paragraphXml;
-
-  let output = paragraphXml;
-  const indices = Array.from(repByRunIndex.keys()).sort((a, b) => b - a); // 从后往前改写，避免位置偏移
-  for (const i of indices) {
-    const run = runs[i];
-    const targetRPr = repByRunIndex.get(i) || '';
-    let newRunXml: string;
-    if (run.rPr) {
-      newRunXml = run.runXml.replace(run.rPr, targetRPr); // targetRPr 为空串时即删除原 rPr
-    } else if (targetRPr) {
-      newRunXml = run.runXml.replace(/(<w:r\b[^>]*>)/, `$1${targetRPr}`);
-    } else {
-      newRunXml = run.runXml;
-    }
-    output = output.slice(0, run.matchStart) + newRunXml + output.slice(run.matchEnd);
-  }
-  return output;
-}
-
-// 取出 <w:rPr> 的内部内容（成对标签取其间内容，自闭合 <w:rPr/> 视为空内容）。
-function extractRunPropertiesInner(rPr: string): string {
-  const paired = rPr.match(/<w:rPr\b[^>]*>([\s\S]*?)<\/w:rPr>/);
-  if (paired) return paired[1];
-  return ''; // 自闭合 <w:rPr/>
-}
-
-// 合并两个 <w:rPr>：以 baseRPr 为基底，把 ownRPr 里 base 缺失的顶层字符级样式子标签并进去。
-// 按子标签名去重，base 已有的样式不被 own 覆盖（保住整段一致样式的代表语义）；
-// own 独有的样式（如只覆盖变量名部分字符的 <w:u>）则保留，避免 run 归一化误删字符级样式。
-function mergeRunPropertiesXml(baseRPr: string, ownRPr: string): string {
-  if (!ownRPr) return baseRPr;
-  if (!baseRPr) return ownRPr;
-  // 注意：必须先剥掉 <w:rPr> 外层壳再匹配子标签，否则正则会把整个 <w:rPr>…</w:rPr> 当成单个子元素。
-  const childPattern = /<w:([A-Za-z]+)\b[^>]*?(?:\/>|>[\s\S]*?<\/w:\1>)/g;
-  const baseInner = extractRunPropertiesInner(baseRPr);
-  const ownInner = extractRunPropertiesInner(ownRPr);
-  const baseTags = new Set(Array.from(baseInner.matchAll(childPattern)).map((m) => m[1]));
-  const additions: string[] = [];
-  for (const m of ownInner.matchAll(childPattern)) {
-    if (!baseTags.has(m[1])) additions.push(m[0]);
-  }
-  if (additions.length === 0) return baseRPr;
-  // 把 own 独有子元素插到 base 的 </w:rPr> 之前；base 为自闭合 <w:rPr/> 时先展开成成对标签。
-  if (/<w:rPr\b[^>]*\/>/.test(baseRPr)) {
-    return baseRPr.replace(/<w:rPr\b([^>]*?)\/>/, `<w:rPr$1>${additions.join('')}</w:rPr>`);
-  }
-  return baseRPr.replace(/<\/w:rPr>/, `${additions.join('')}</w:rPr>`);
 }
 
 function getDocxTextEngine(): 'easy-template-x' | 'legacy' {
