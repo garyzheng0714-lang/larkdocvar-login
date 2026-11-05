@@ -6,9 +6,9 @@
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
-| 2026-11-05 | 契约新增 | 为「在多维表格里运营模板」新增：检查模板、发布/退回已有版本、变量词典（标准名 + 别名）、生成时按词典顶替同义变量、出错回 200 的可选模式。 | 新增 `POST /api/v1/document-templates/inspect`、`POST /api/v1/document-templates/{templateId}/publish`、`GET/PUT/DELETE /api/v1/document-variables`；上传模板和新增版本新增可选 `expectedSha256`，版本新增 `sourceSha256`；单份生成新增可选 `aliasStrategy`、`errorMode`，响应在 `aliasStrategy=dictionary` 时多 `variables.aliased`。不传新字段时所有老接口行为不变。 | 待同步 |
-| 2026-10-26 | 运维 | 生产 `DOCUMENT_RENDER_API_KEY` 改由 FBIF 中台下发，更新 API Key 获取与 401 排查说明。 | 不改路由、字段与鉴权方式。 | 待同步 |
-| 2026-07-17 | 文档校准 | 按当前代码补齐绑定 Base `open_id` 的 OAuth handoff 路由；明确旧 `/start`、`/login-status` 才是退役入口。 | 新增 `handoff/start`、`handoff/:code` 说明；不改变 API 实现。 | 待同步 |
+| 2026-11-05 | 契约新增 | 为「在多维表格里运营模板」新增：检查模板、发布/退回已有版本、变量词典（标准名 + 别名）、生成时按词典顶替同义变量、出错回 200 的可选模式。 | 新增 `POST /api/v1/document-templates/inspect`、`POST /api/v1/document-templates/{templateId}/publish`、`GET/PUT/DELETE /api/v1/document-variables`；上传模板和新增版本新增可选 `expectedSha256`，版本新增 `sourceSha256`；单份生成新增可选 `aliasStrategy`、`errorMode`，响应在 `aliasStrategy=dictionary` 时多 `variables.aliased`。不传新字段时所有老接口行为不变。 | 已同步 |
+| 2026-10-26 | 运维 | 生产 `DOCUMENT_RENDER_API_KEY` 改由 FBIF 中台下发，更新 API Key 获取与 401 排查说明。 | 不改路由、字段与鉴权方式。 | 已同步 |
+| 2026-07-17 | 文档校准 | 按当前代码补齐绑定 Base `open_id` 的 OAuth handoff 路由；明确旧 `/start`、`/login-status` 才是退役入口。 | 新增 `handoff/start`、`handoff/:code` 说明；不改变 API 实现。 | 已同步 |
 | 2026-07-12 | 契约调整 | 稳定性加固：异步任务（`/api/v1/document-render-jobs`）不再内联返回 `download.fileBase64`，结果一律通过 `download.url` 下载。单份生成、同步批量不受影响。此前异步大批量（最多 500 条）+ 大模板 + `includeFileBase64=true` 会累积撑爆内存并让结果 JSON 超出存储上限。同时异步任务现已正确接受并转发 `missingStrategy`/`unusedStrategy`。 | 异步任务请求即使传 `output.includeFileBase64=true` 也不会在结果里返回 `download.fileBase64`；请用 `download.url` 下载。异步任务请求体的 `missingStrategy`（`fail`/`blank`）与 `unusedStrategy`（`error`/`ignore`）现已生效（此前被静默忽略）。单份/同步批量的 `includeFileBase64` 行为不变。 | 已同步 |
 | 2026-06-24 | 契约新增 | 新增 `unusedStrategy=ignore`：模板正文里没有的多余变量从报错改为忽略（默认仍 `error` 报错以保护变量名拼写检查）。便于多维表格工作流用同一套变量喂不同模板。 | 单份/批量/异步 Docx 渲染请求新增可选字段 `unusedStrategy`（默认 `error` / `ignore`）；传 `ignore` 时多余变量不阻断生成，响应 `variables.unused` 仍会列出。 | 已同步 |
 | 2026-06-23 | 文档完善 | 新增「业务系统 / 多维表格工作流集成提示」：响应体只取接口 JSON 本体（不含 HTTP `headers`/`status_code` 壳）；补充 `download.url` 有效期说明与 `output.expiresInSeconds` 用法。 | 不改路由与字段；纯文档与集成指引。 | 已同步 |
