@@ -13,6 +13,7 @@ import { createDocumentRenderBatchRouter } from './documentRenderBatchApi';
 import { createDocumentRenderJobRouter } from './documentRenderJobApi';
 import { createDocumentTemplateRouter, type DocumentTemplateApiService } from './documentTemplateApi';
 import { DocumentTemplateService } from './documentTemplateService';
+import { createDocumentVariableRouter } from './documentVariableApi';
 import { FeishuTemplateService } from './feishu';
 import { getFeishuAppCredentials } from './auth';
 import { initDatabase, closeDatabase } from './storage';
@@ -49,7 +50,15 @@ const documentTemplateService = {
   getTemplate: (...args: Parameters<DocumentTemplateService['getTemplate']>) => getDocumentTemplateService().getTemplate(...args),
   loadTemplate: (...args: Parameters<DocumentTemplateService['loadTemplate']>) => getDocumentTemplateService().loadTemplate(...args),
   deleteTemplate: (...args: Parameters<DocumentTemplateService['deleteTemplate']>) => getDocumentTemplateService().deleteTemplate(...args),
+  publishVersion: (...args: Parameters<DocumentTemplateService['publishVersion']>) => getDocumentTemplateService().publishVersion(...args),
+  inspectTemplate: (...args: Parameters<DocumentTemplateService['inspectTemplate']>) => getDocumentTemplateService().inspectTemplate(...args),
 } satisfies DocumentTemplateApiService;
+
+const documentVariableStore = {
+  list: () => getDocumentTemplateService().variables.list(),
+  upsert: (...args: Parameters<DocumentTemplateService['variables']['upsert']>) => getDocumentTemplateService().variables.upsert(...args),
+  remove: (...args: Parameters<DocumentTemplateService['variables']['remove']>) => getDocumentTemplateService().variables.remove(...args),
+};
 
 const feishuService = hasCredential
   ? new FeishuTemplateService({
@@ -117,7 +126,8 @@ registerAuthSessionRoutes(app);
 app.use('/api/v1/document-templates', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentTemplateRouter(documentTemplateService, { enforceOwnership: true }));
 app.use('/api/v1/document-render-jobs', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentRenderJobRouter({ templateResolver: documentTemplateService }));
 app.use('/api/v1/document-renders', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentRenderBatchRouter({ templateResolver: documentTemplateService }));
-app.use('/api/v1/document-renders', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentRenderRouter({ templateResolver: documentTemplateService }));
+app.use('/api/v1/document-renders', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentRenderRouter({ templateResolver: documentTemplateService, variableDictionary: documentVariableStore }));
+app.use('/api/v1/document-variables', enforceDocumentRenderBrowserOrigin, requireDocumentRenderApiKey, createDocumentVariableRouter(documentVariableStore));
 app.use(enforceMutationOrigin);
 app.use(express.json({ limit: '2mb' }));
 

@@ -18,6 +18,7 @@ const templateInputSchema = z.object({
   category: z.string().trim().max(64).optional(),
   visibility: z.enum(['private', 'shared']).optional(),
   description: z.string().trim().max(1000).optional(),
+  expectedSha256: z.string().trim().max(64).optional(),
 });
 
 const createTemplateSchema = templateInputSchema.refine((value) => Boolean(value.url || value.fileBase64), {
@@ -29,11 +30,25 @@ const createTemplateVersionSchema = templateInputSchema.omit({ templateId: true 
 });
 
 const updateTemplateMetadataSchema = templateInputSchema
-  .omit({ templateId: true, url: true, fileBase64: true, fileName: true })
+  .omit({ templateId: true, url: true, fileBase64: true, fileName: true, expectedSha256: true })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {
     message: '模板信息不能为空。',
   });
+
+const inspectTemplateSchema = z.object({
+  url: z.string().trim().min(1).optional(),
+  fileBase64: z.string().trim().min(1).optional(),
+  fileName: z.string().trim().max(255).optional(),
+  name: z.string().trim().max(255).optional(),
+  compareTemplateId: z.string().trim().min(1).optional(),
+}).refine((value) => Boolean(value.url || value.fileBase64), {
+  message: '模板链接或模板文件不能为空。',
+});
+
+const publishVersionSchema = z.object({
+  versionId: z.string().trim().min(1).max(120),
+});
 
 export type DocumentTemplateResolver = {
   loadTemplate(templateId: string, versionId?: string): Promise<LoadedDocumentTemplate>;
@@ -47,7 +62,9 @@ export type DocumentTemplateApiService = Pick<
   'updateTemplateMetadata' |
   'getTemplate' |
   'loadTemplate' |
-  'deleteTemplate'
+  'deleteTemplate' |
+  'publishVersion' |
+  'inspectTemplate'
 >;
 
 export type DocumentTemplateActor = {
@@ -196,6 +213,30 @@ export function createDocumentTemplateRouter(
     }
   });
 
+  // 检查模板：只读，不保存。模板内容的问题放在 problems 里、仍回 200；只有请求本身不对才回 400。
+  router.post('/inspect', async (request, response) => {
+    const requestId = getRequestId(request);
+    const parsed = inspectTemplateSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
+      return;
+    }
+    try {
+      const actor = await resolveTemplateReader(request, options);
+      if (parsed.data.compareTemplateId) {
+        const compared = await service.getTemplate(parsed.data.compareTemplateId);
+        if (!canReadDocumentTemplate(compared, actor)) {
+          response.status(403).json({ ok: false, requestId, error: '没有权限查看此模板。' });
+          return;
+        }
+      }
+      const inspection = await service.inspectTemplate(parsed.data, { canRead: (template) => canReadDocumentTemplate(template, actor) });
+      response.json({ ok: true, requestId, inspection });
+    } catch (error) {
+      sendError(response, requestId, error);
+    }
+  });
+
   router.get('/:templateId', async (request, response) => {
     const requestId = getRequestId(request);
     try {
@@ -278,6 +319,28 @@ export function createDocumentTemplateRouter(
         ok: true,
         requestId,
         template: await service.addVersion(templateId, { ...parsed.data, updatedByOpenId: actor.openId }),
+      });
+    } catch (error) {
+      sendError(response, requestId, error);
+    }
+  });
+
+  // 把已有版本设为现用版本（发布错了退回旧版本）。不上传文件，不新建版本。
+  router.post('/:templateId/publish', async (request, response) => {
+    const requestId = getRequestId(request);
+    const parsed = publishVersionSchema.safeParse(request.body);
+    if (!parsed.success) {
+      response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
+      return;
+    }
+    try {
+      const templateId = String(request.params.templateId || '');
+      const actor = await requireTemplateManager(request, response, requestId, service, templateId, options);
+      if (!actor) return;
+      response.json({
+        ok: true,
+        requestId,
+        template: await service.publishVersion(templateId, parsed.data.versionId, actor.openId),
       });
     } catch (error) {
       sendError(response, requestId, error);

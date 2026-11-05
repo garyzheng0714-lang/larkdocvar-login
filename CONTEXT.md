@@ -48,7 +48,11 @@
 | `GET /api/v1/document-templates/:templateId/versions` | 查询模板的版本列表。 |
 | `POST /api/v1/document-templates/:templateId/versions` | 为已有模板新增版本并设为当前版本。 |
 | `DELETE /api/v1/document-templates/:templateId` | 软删除模板；`purge=true` 会删除对象存储里的模板对象。 |
-| `POST /api/v1/document-renders` | 单份 Doc/Docx 生成。Docx 支持 `template.url` 或 `template.templateId`。 |
+| `POST /api/v1/document-templates/inspect` | 检查模板（只读）：能否发布、是否要审核、写法问题、重复模板、和现用版本的变量差异。 |
+| `POST /api/v1/document-templates/:templateId/publish` | 把已有版本设为现用版本，用于退回旧版本。 |
+| `GET /api/v1/document-variables` | 变量词典：标准名 + 别名。 |
+| `PUT/DELETE /api/v1/document-variables/:variableId` | 改词典（键是多维表格「变量」表行号），只认 API Key 或管理员。 |
+| `POST /api/v1/document-renders` | 单份 Doc/Docx 生成。Docx 支持 `template.url` 或 `template.templateId`。可选 `aliasStrategy=dictionary`（按词典顶替同义变量）、`errorMode=body`（出错也回 200，带 `errorCode`）。 |
 | `GET /api/v1/document-renders/downloads/:id` | local 开发存储的临时下载地址；客户端只使用 API 返回的 `download.url`，不要手写拼接。 |
 | `POST /api/v1/document-renders/batch` | 同步批量生成，最多 100 条。 |
 | `POST /api/v1/document-render-jobs` | 提交异步批量任务，最多 500 条。 |

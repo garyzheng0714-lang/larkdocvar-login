@@ -64,6 +64,11 @@ API 文档维护红线：
 - `PATCH /api/v1/document-templates/:templateId`
 - `POST /api/v1/document-templates/:templateId/versions`
 - `DELETE /api/v1/document-templates/:templateId`
+- `POST /api/v1/document-templates/inspect`
+- `POST /api/v1/document-templates/:templateId/publish`
+- `GET /api/v1/document-variables`
+- `PUT /api/v1/document-variables/:variableId`
+- `DELETE /api/v1/document-variables/:variableId`
 - `POST /api/v1/document-renders`
 - `GET /api/v1/document-renders/downloads/:id`（local 开发存储临时下载，客户端只使用 `download.url`）
 - `POST /api/v1/document-renders/batch`
@@ -96,7 +101,7 @@ API 文档维护红线：
 
 已知技术债：
 
-- 单文件上限按全局 500 行。`server/src/documentRenderApi.ts`（约 940 行）超限最多；新增校验、下载或路由逻辑前先继续拆分，存储 provider 细节不得回流。`feishu.ts`、`useGenerate.ts`、`authSessionRoutes.ts` 等 500 行以上文件改动时顺带按模块边界拆分。
+- 单文件上限按全局 500 行。`server/src/documentRenderApi.ts` 已拆到约 400 行（渲染引擎在 `documentRenderDocx.ts`、文本处理在 `documentRenderDocxText.ts`、模板下载在 `documentTemplateDownload.ts`），模板服务拆出了分析、检查、缩略图、存储锁；存储 provider 细节不得回流。`feishu.ts`、`useGenerate.ts`、`authSessionRoutes.ts` 等 500 行以上文件改动时顺带按模块边界拆分。
 - 侧边栏前端已拆到 `src/components/document-generator/`；`_design.css` 现在只负责导入模块，但 `PrimaryScreen.tsx`、侧栏、模板页和进度样式模块仍偏大，继续改前端时按功能边界拆分。
 - OAuth handoff 当前是单进程内存状态；多实例前必须改为共享存储或配置粘性路由，并在真实 Base 中确认 Base 与 OAuth `open_id` 属于同一命名空间。
 - handoff 身份不匹配时，当前实现会在服务端日志和接口响应中带出完整身份标识，前端还会展示缩写诊断。修复并在真实拒绝路径复验前，不得宣称 OAuth 失败链路已满足隐私边界。

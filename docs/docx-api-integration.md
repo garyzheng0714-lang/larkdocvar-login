@@ -1,11 +1,12 @@
 # Docx API 参考文档
 
-最后更新：2026-10-26
+最后更新：2026-11-05
 
 ## 更新日志
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-11-05 | 契约新增 | 为「在多维表格里运营模板」新增：检查模板、发布/退回已有版本、变量词典（标准名 + 别名）、生成时按词典顶替同义变量、出错回 200 的可选模式。 | 新增 `POST /api/v1/document-templates/inspect`、`POST /api/v1/document-templates/{templateId}/publish`、`GET/PUT/DELETE /api/v1/document-variables`；上传模板和新增版本新增可选 `expectedSha256`，版本新增 `sourceSha256`；单份生成新增可选 `aliasStrategy`、`errorMode`，响应在 `aliasStrategy=dictionary` 时多 `variables.aliased`。不传新字段时所有老接口行为不变。 | 待同步 |
 | 2026-10-26 | 运维 | 生产 `DOCUMENT_RENDER_API_KEY` 改由 FBIF 中台下发，更新 API Key 获取与 401 排查说明。 | 不改路由、字段与鉴权方式。 | 待同步 |
 | 2026-07-17 | 文档校准 | 按当前代码补齐绑定 Base `open_id` 的 OAuth handoff 路由；明确旧 `/start`、`/login-status` 才是退役入口。 | 新增 `handoff/start`、`handoff/:code` 说明；不改变 API 实现。 | 待同步 |
 | 2026-07-12 | 契约调整 | 稳定性加固：异步任务（`/api/v1/document-render-jobs`）不再内联返回 `download.fileBase64`，结果一律通过 `download.url` 下载。单份生成、同步批量不受影响。此前异步大批量（最多 500 条）+ 大模板 + `includeFileBase64=true` 会累积撑爆内存并让结果 JSON 超出存储上限。同时异步任务现已正确接受并转发 `missingStrategy`/`unusedStrategy`。 | 异步任务请求即使传 `output.includeFileBase64=true` 也不会在结果里返回 `download.fileBase64`；请用 `download.url` 下载。异步任务请求体的 `missingStrategy`（`fail`/`blank`）与 `unusedStrategy`（`error`/`ignore`）现已生效（此前被静默忽略）。单份/同步批量的 `includeFileBase64` 行为不变。 | 已同步 |
@@ -226,6 +227,11 @@ curl -i 'https://<部署域名>/api/v1/document-templates' \
 | `POST` | `/api/v1/document-render-jobs` | 10. 提交异步批量任务。 |
 | `GET` | `/api/v1/document-render-jobs/{jobId}` | 11. 查询异步任务进度。 |
 | `GET` | `/api/v1/document-render-jobs/{jobId}/results` | 12. 查询异步任务结果。 |
+| `POST` | `/api/v1/document-templates/inspect` | 13. 检查模板（只读，不保存）。 |
+| `POST` | `/api/v1/document-templates/{templateId}/publish` | 14. 发布或退回到已有版本。 |
+| `GET` | `/api/v1/document-variables` | 15. 查询变量词典。 |
+| `PUT` | `/api/v1/document-variables/{variableId}` | 16. 新增或修改词典里的一个变量。 |
+| `DELETE` | `/api/v1/document-variables/{variableId}` | 16. 删除词典里的一个变量。 |
 
 ## 模板缩略图
 
@@ -297,6 +303,7 @@ curl -i 'https://<部署域名>/api/v1/document-templates' \
 | `category` | string | 否 | 模板分类，最多 64 字符。 |
 | `visibility` | string | 否 | `private` 或 `shared`。未传时按默认模板可见性处理。 |
 | `description` | string | 否 | 模板说明，最多 1000 字符。 |
+| `expectedSha256` | string | 否 | 「检查模板」返回的 `inspection.sha256`。传了就要求这次拿到的文件和检查时是同一份，不一致返回 400 `模板文件和检查时不是同一份，请重新检查后再发布。`；不传不校验。 |
 
 ### 请求示例
 
@@ -330,7 +337,8 @@ curl -s http://localhost:3000/api/v1/document-templates \
 | `template.versions[]` | array | 模板版本列表。公开响应不会返回原始 `sourceUrl`。 |
 | `template.versions[].storagePath` | string | 模板源文件在对象存储中的 key 或本地开发路径。 |
 | `template.versions[].fileName` | string | 模板源文件名。 |
-| `template.versions[].sha256` | string | 模板源文件 SHA-256。 |
+| `template.versions[].sha256` | string | 模板源文件 SHA-256（批注转变量之后实际存下的文件）。 |
+| `template.versions[].sourceSha256` | string | 上传前原文件的 SHA-256，和「检查模板」返回的 `sha256` 对得上。2026-11-05 之前的版本没有这个字段。 |
 | `template.versions[].size` | number | 模板源文件字节数。 |
 | `template.versions[].variables` | string[] | 服务端从模板中提取出的变量名。 |
 | `template.versions[].thumbnail` | object | 服务端从该版本模板中提取出的缩略图。字段结构见「模板缩略图」。 |
@@ -612,6 +620,7 @@ curl -s -X PATCH http://localhost:3000/api/v1/document-templates/fbiftemp_202605
 | `category` | string | 否 | 传入后会更新模板分类。 |
 | `visibility` | string | 否 | 传入后会更新模板可见性，值为 `private` 或 `shared`。 |
 | `description` | string | 否 | 传入后会更新模板说明；传空字符串会清空说明。 |
+| `expectedSha256` | string | 否 | 同「上传模板」：「检查模板」返回的 `inspection.sha256`，不一致返回 400。 |
 
 ### 请求示例
 
@@ -704,6 +713,8 @@ curl -s -X DELETE 'http://localhost:3000/api/v1/document-templates/fbiftemp_2026
 | `imageVariables` | object | 否 | 图片变量，见「图片变量」。 |
 | `missingStrategy` | string | 否 | 缺失文本变量处理策略。默认 `fail`；传 `blank` 时缺失文本变量按空字符串生成，图片变量仍必须提供。 |
 | `unusedStrategy` | string | 否 | 多余变量（模板正文里没有的变量名）处理策略。默认 `error`：返回 400 并在 `unusedVariables` 列出，用于发现变量名拼写错误。传 `ignore`：忽略多余变量、不阻断生成，响应 `variables.unused` 仍会列出。批量给不同模板喂同一套变量时用 `ignore`。 |
+| `aliasStrategy` | string | 否 | 同义变量处理。默认 `none`（不顶替）。传 `dictionary`：按「变量词典」让同一组里的变量互相顶替，例如词典里「身份证号」的别名有「证件号」，请求只传了 `身份证号`，模板写的 `{{证件号}}` 也会填上。只顶请求里没传的变量；被顶上的变量列在响应 `variables.aliased`，顶别人的变量不算多余。**仅单份生成支持。** |
+| `errorMode` | string | 否 | 出错时怎么回。默认 `status`：照旧回 400/500。传 `body`：出错也回 HTTP 200，`ok=false`，多带 `errorCode`（见下方「`errorMode=body` 的错误响应」），服务端故障时还带 `retryable: true`。给多维表格自动化用：HTTP 步骤遇到非 200 会直接停住，回 200 才能把失败原因写回表格。**仅单份生成支持。** |
 | `output.fileName` | string | 否 | 下载文件名。服务端会自动补 `.docx`。 |
 | `output.expiresInSeconds` | number | 否 | 下载链接有效期，最大 7 天。 |
 | `output.includeFileBase64` | boolean | 否 | 是否在 `download.fileBase64` 返回文件内容。只建议侧边栏附件写回使用。**仅单份生成 / 同步批量有效；异步任务会忽略该字段**（大批量内联 base64 会撑爆内存/存储），异步一律用 `download.url` 下载。 |
@@ -743,6 +754,7 @@ curl -s http://localhost:3000/api/v1/document-renders \
 | `preview.pdf` | object | 请求 `output.includePdfPreview=true` 时返回，包含 `contentType`、`size`、`fileBase64`。 |
 | `variables.provided` | string[] | 请求提供的变量名。 |
 | `variables.unused` | string[] | 请求提供但模板未使用的变量。成功时为空数组。 |
+| `variables.aliased` | object | 只在 `aliasStrategy=dictionary` 时返回。键是模板里被顶上的变量，值是顶它的请求变量，例如 `{ "证件号": "身份证号" }`。 |
 | `download` | object | Docx 下载对象。`doc` 模式不会返回该字段；字段结构见「下载对象」。 |
 
 ### 响应示例
@@ -792,6 +804,29 @@ curl -s http://localhost:3000/api/v1/document-renders \
 | `400` | `PDF 预览服务未配置，请联系管理员。` | 请求了 `output.includePdfPreview=true`，但服务端未配置 `GOTENBERG_URL`。 |
 | `400` | `有变量没有出现在模板中，请检查变量名。` | 查看 `unusedVariables` 并修正变量名。 |
 | `400` | `模板中仍有未替换的变量占位符，请检查模板。` | 检查模板中是否有无法识别或拆分异常的占位符。 |
+| `400` | `变量词典未配置，不能使用 aliasStrategy=dictionary。` | 服务端没挂变量词典；去掉 `aliasStrategy` 或联系运维。 |
+
+### `errorMode=body` 的错误响应
+
+HTTP 状态码固定 200，用 `ok` 判断成败：
+
+```json
+{
+  "ok": false,
+  "requestId": "req-001",
+  "error": "还有变量没有填写：部门。请补齐后再生成。",
+  "missingVariables": ["部门"],
+  "errorCode": "MISSING_VARIABLES"
+}
+```
+
+| `errorCode` | 对应的默认状态码 | 说明 |
+|---|---|---|
+| `INVALID_REQUEST` | `400` | 请求体不合法（缺 `template.format` 等）。 |
+| `MISSING_VARIABLES` | `400` | 模板要的变量没传，看 `missingVariables`。 |
+| `UNUSED_VARIABLES` | `400` | 传了模板里没有的变量，看 `unusedVariables`。 |
+| `RENDER_REJECTED` | `400` | 其它业务错误：模板不存在、已删除、文件损坏等，看 `error`。 |
+| `INTERNAL_ERROR` | `500` | 服务端故障，另带 `retryable: true`，可以稍后重试。 |
 
 ## 9. 同步批量生成
 
@@ -1061,6 +1096,194 @@ curl -s http://localhost:3000/api/v1/document-render-jobs/job_1778540000000_abcd
   ]
 }
 ```
+
+## 13. 检查模板
+
+### 请求
+
+| 项目 | 说明 |
+|---|---|
+| HTTP URL | `/api/v1/document-templates/inspect` |
+| HTTP Method | `POST` |
+| 适用场景 | 发布模板前先读一遍：能不能发布、要不要审核、哪里写错了、模板库里有没有重复的。**只读，不保存任何东西。** |
+| 权限 | 能查看模板的调用方都能调；`compareTemplateId` 指向的模板需要有查看权限；重复列表只列调用方能看到的模板。 |
+
+### 请求体
+
+| 名称 | 类型 | 必填 | 描述 |
+|---|---|---|---|
+| `url` | string | 二选一 | Docx 下载链接（例如多维表格附件的临时下载链接）。 |
+| `fileBase64` | string | 二选一 | Docx 文件 Base64 内容。 |
+| `fileName` | string | 否 | 文件名，用于返回的 `fileName`。 |
+| `name` | string | 否 | 打算用的模板名称，用于查重名。 |
+| `compareTemplateId` | string | 否 | 要更新的模板编号。传了就和它的现用版本比变量；不传按新模板处理。 |
+
+### 响应体
+
+模板内容有问题时仍回 200，问题放在 `inspection.problems`；只有请求本身不对（没给文件、对比的模板不存在或无权查看）才回 400/403。
+
+| 名称 | 类型 | 描述 |
+|---|---|---|
+| `inspection.publishable` | boolean | 没有 `error` 级问题时为 `true`。 |
+| `inspection.needsReview` | boolean | 新模板或变量有增减时为 `true`（要审核后发布）；变量和现用版本一样时为 `false`。 |
+| `inspection.summaryText` | string | 一句话结论，可直接写回表格，例如「可以发布：共 2 个变量。变量和现在用的版本一样，模板负责人可以直接发布。」 |
+| `inspection.variables` | string[] | 模板里的变量（批注转变量后）。 |
+| `inspection.variablesText` | string | 变量用「、」连起来的文字，方便写回文本字段。 |
+| `inspection.sha256` | string | 原文件 SHA-256。发布时作为 `expectedSha256` 传回，保证发布的就是检查过的那份。 |
+| `inspection.size` | number | 原文件字节数。 |
+| `inspection.fileName` | string | 规范化后的文件名。 |
+| `inspection.thumbnail` | object | 缩略图，结构见「模板缩略图」。文件读不了时不返回。 |
+| `inspection.problems[]` | array | 发现的问题：`code`、`level`（`error` 要改才能发 / `warning` 提醒）、`message`。 |
+| `inspection.problemsText` | string | 所有问题拼成的多行文字，每行以【要改】或【提醒】开头。 |
+| `inspection.aliasHints[]` | array | 模板里用了词典别名的变量：`{ variable, standardName }`。 |
+| `inspection.unknownVariables` | string[] | 词典里还没有的变量。词典为空时为空数组。 |
+| `inspection.duplicates[]` | array | 模板库里疑似重复的模板：`{ templateId, name, reason }`，`reason` 为 `same-file`（同一个文件）、`same-variables`（变量完全一样）、`similar-name`（名字很像）。不含 `compareTemplateId` 本身。 |
+| `inspection.compare` | object | 传了 `compareTemplateId` 才有：`templateId`、`name`、`activeVersionId`、`added`、`removed`、`variablesChanged`。 |
+
+`problems[].code`：
+
+| code | 级别 | 含义 |
+|---|---|---|
+| `UNREADABLE` | error | 文件拿不到或不是能用的 Docx。 |
+| `NO_VARIABLES` | error | 没找到任何 `{{变量}}`。 |
+| `FULLWIDTH_BRACES` | error | 用了中文大括号 `｛｛ ｝｝`，生成时不会替换。 |
+| `EMPTY_PLACEHOLDER` | error | 有空的 `{{ }}`。 |
+| `UNPAIRED_BRACES` | error | `{{` 和 `}}` 没配对。 |
+| `SINGLE_BRACES` | warning | 有单层大括号 `{变量}`，生成时不会替换。 |
+| `ALIAS_NAME` | warning | 模板用的是词典里的别名，建议统一成标准名。 |
+| `SAME_AS_ACTIVE` | warning | 和对比模板的现用版本是同一个文件。 |
+
+### 请求示例
+
+```bash
+curl -s http://localhost:3000/api/v1/document-templates/inspect \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <api-key>' \
+  -d '{
+    "url": "https://example.com/templates/contract-v3.docx",
+    "name": "通用合同模板",
+    "compareTemplateId": "tpl_001"
+  }'
+```
+
+### 响应示例
+
+```json
+{
+  "ok": true,
+  "requestId": "req-001",
+  "inspection": {
+    "fileName": "模板.docx",
+    "sha256": "<64 位十六进制>",
+    "size": 12345,
+    "variables": ["客户名称", "金额", "税额"],
+    "variablesText": "客户名称、金额、税额",
+    "problems": [],
+    "problemsText": "",
+    "aliasHints": [],
+    "unknownVariables": [],
+    "duplicates": [],
+    "compare": {
+      "templateId": "tpl_001",
+      "name": "通用合同模板",
+      "activeVersionId": "tpl_001_v002",
+      "added": ["税额"],
+      "removed": [],
+      "variablesChanged": true
+    },
+    "publishable": true,
+    "needsReview": true,
+    "summaryText": "可以发布：共 3 个变量。比现在用的版本新增 税额，需要审核后发布。"
+  }
+}
+```
+
+## 14. 发布或退回到已有版本
+
+### 请求
+
+| 项目 | 说明 |
+|---|---|
+| HTTP URL | `/api/v1/document-templates/{templateId}/publish` |
+| HTTP Method | `POST` |
+| 适用场景 | 把模板已有的某个版本设为现用版本。发布新版本后发现不对，用它退回旧版本。不上传文件、不新建版本。 |
+| 权限 | 同「新增模板版本」：管理员、API Key 调用方或模板创建者。 |
+
+### 请求体
+
+| 名称 | 类型 | 必填 | 描述 |
+|---|---|---|---|
+| `versionId` | string | 是 | 要设为现用的版本，例如 `tpl_001_v001`。已经是现用版本时原样返回。 |
+
+### 响应体
+
+响应结构同「上传模板」，`template.activeVersionId` 指向传入的版本。之后不指定 `versionId` 的生成请求都用这个版本。
+
+### 常见错误
+
+| HTTP 状态码 | 错误信息 | 排查建议 |
+|---|---|---|
+| `400` | `模板版本不存在。` | 先用「查询模板版本」确认版本号。 |
+| `400` | `模板已删除，不能发布版本。` | 模板已删除。 |
+| `403` | `只有管理员或模板创建者可以修改此模板。` | 换有权限的调用方。 |
+
+## 15. 查询变量词典
+
+变量词典记「同一个意思的变量」：一个标准名 + 若干别名，例如标准名「身份证号」、别名「证件号」。用于「检查模板」提示统一写法，以及生成时 `aliasStrategy=dictionary` 互相顶替。词典和模板存在同一个模板库存储里（`_variables.json`）。
+
+### 请求
+
+| 项目 | 说明 |
+|---|---|
+| HTTP URL | `/api/v1/document-variables` |
+| HTTP Method | `GET` |
+| 权限 | 通过 API Key 或登录会话即可读。 |
+
+### 响应示例
+
+```json
+{
+  "ok": true,
+  "requestId": "req-001",
+  "variables": [
+    {
+      "id": "rec_example",
+      "name": "身份证号",
+      "aliases": ["证件号"],
+      "description": "员工身份证号码",
+      "format": "文本",
+      "updatedAt": "2026-11-05T00:00:00.000Z"
+    }
+  ]
+}
+```
+
+## 16. 新增、修改或删除词典变量
+
+### 请求
+
+| 项目 | 说明 |
+|---|---|
+| HTTP URL | `/api/v1/document-variables/{variableId}` |
+| HTTP Method | `PUT`（新增或整条覆盖）/ `DELETE` |
+| 适用场景 | 多维表格「变量」表按行同步：`variableId` 用表格行号，改名不丢。 |
+| 权限 | 只认 API Key 调用方或模板管理员；普通登录用户返回 403。 |
+
+### 请求体（PUT）
+
+| 名称 | 类型 | 必填 | 描述 |
+|---|---|---|---|
+| `name` | string | 是 | 标准名，最多 64 字。两边的 `{{ }}` 会被去掉。 |
+| `aliases` | string 或 string[] | 否 | 别名。传字符串时按「、 , ， ; ； 换行」拆开；和标准名相同的会被去掉；最多 20 个。 |
+| `description` | string | 否 | 说明，最多 500 字。 |
+| `format` | string | 否 | 格式说明（如「日期」「金额」），最多 64 字。 |
+
+同一个名字只能属于一组：标准名或别名已经记在别的变量下时返回 400，例如 `「证件号」已经记在变量「身份证号」下面，同一个名字只能属于一组。`
+
+### 响应
+
+- `PUT`：`{ "ok": true, "requestId": "...", "variable": { ... } }`。
+- `DELETE`：`{ "ok": true, "requestId": "...", "deleted": true }`；本来就没有时 `deleted` 为 `false`，仍回 200。
 
 ## 模板变量
 
