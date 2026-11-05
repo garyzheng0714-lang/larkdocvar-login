@@ -1119,7 +1119,7 @@ curl -s http://localhost:3000/api/v1/document-render-jobs/job_1778540000000_abcd
 | `fileBase64` | string | 二选一 | Docx 文件 Base64 内容。 |
 | `fileName` | string | 否 | 文件名，用于返回的 `fileName`。 |
 | `name` | string | 否 | 打算用的模板名称，用于查重名。 |
-| `compareTemplateId` | string | 否 | 要更新的模板编号。传了就和它的现用版本比变量；不传按新模板处理。 |
+| `compareTemplateId` | string | 否 | 要更新的模板编号。传了就和它的现用版本比变量；不传或传空字符串按新模板处理。 |
 
 ### 响应体
 
@@ -1129,6 +1129,8 @@ curl -s http://localhost:3000/api/v1/document-render-jobs/job_1778540000000_abcd
 |---|---|---|
 | `inspection.publishable` | boolean | 没有 `error` 级问题时为 `true`。 |
 | `inspection.needsReview` | boolean | 新模板或变量有增减时为 `true`（要审核后发布）；变量和现用版本一样时为 `false`。 |
+| `inspection.status` | string | `blocked`（检查没过）、`needs-review`（等审核）、`ready`（能发布）。 |
+| `inspection.statusText` | string | 同上的中文：`检查没过` / `等审核` / `能发布`，可直接写进表格的单选字段。 |
 | `inspection.summaryText` | string | 一句话结论，可直接写回表格，例如「可以发布：共 2 个变量。变量和现在用的版本一样，模板负责人可以直接发布。」 |
 | `inspection.variables` | string[] | 模板里的变量（批注转变量后）。 |
 | `inspection.variablesText` | string | 变量用「、」连起来的文字，方便写回文本字段。 |
@@ -1196,6 +1198,8 @@ curl -s http://localhost:3000/api/v1/document-templates/inspect \
     },
     "publishable": true,
     "needsReview": true,
+    "status": "needs-review",
+    "statusText": "等审核",
     "summaryText": "可以发布：共 3 个变量。比现在用的版本新增 税额，需要审核后发布。"
   }
 }

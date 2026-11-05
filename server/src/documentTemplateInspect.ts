@@ -49,8 +49,16 @@ export type TemplateInspection = {
   };
   publishable: boolean;
   needsReview: boolean;
+  // 一个词的结论，给多维表格「状态」单选直接写回：blocked=检查没过，needs-review=等审核，ready=能发布。
+  status: 'blocked' | 'needs-review' | 'ready';
+  statusText: '检查没过' | '等审核' | '能发布';
   summaryText: string;
 };
+
+function statusOf(publishable: boolean, needsReview: boolean): Pick<TemplateInspection, 'status' | 'statusText'> {
+  if (!publishable) return { status: 'blocked', statusText: '检查没过' };
+  return needsReview ? { status: 'needs-review', statusText: '等审核' } : { status: 'ready', statusText: '能发布' };
+}
 
 export type InspectableTemplate = {
   templateId: string;
@@ -200,6 +208,7 @@ function unreadableInspection(fileName: string, message: string): TemplateInspec
     duplicates: [],
     publishable: false,
     needsReview: true,
+    ...statusOf(false, true),
     summaryText: `不能发布：${message}`,
   };
 }
@@ -283,6 +292,7 @@ export async function inspectTemplate(
     ...(compare ? { compare } : {}),
     publishable,
     needsReview: !compare || compare.variablesChanged,
+    ...statusOf(publishable, !compare || compare.variablesChanged),
   };
   return { ...inspection, summaryText: buildSummary(inspection) };
 }

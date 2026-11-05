@@ -98,6 +98,7 @@ test('检查模板：新模板能发布、要审核，返回变量和可写回�
     assert.equal(inspection.sha256, sha(buffer));
     assert.equal(inspection.publishable, true);
     assert.equal(inspection.needsReview, true);
+    assert.equal(inspection.statusText, '等审核');
     assert.deepEqual(inspection.problems, []);
     assert.match(inspection.summaryText, /可以发布.*新模板，需要审核/);
     // 检查只读：模板库里不会多出模板。
@@ -126,6 +127,8 @@ test('检查模板：有写法错误或没有变量时不能发布，仍回 200 
     assert.equal(result.status, 200);
     const inspection = result.json.inspection;
     assert.equal(inspection.publishable, false);
+    assert.equal(inspection.status, 'blocked');
+    assert.equal(inspection.statusText, '检查没过');
     assert.ok(inspection.problems.some((problem: { code: string }) => problem.code === 'FULLWIDTH_BRACES'));
     assert.ok(inspection.problems.some((problem: { code: string }) => problem.code === 'UNPAIRED_BRACES'));
     assert.match(inspection.summaryText, /^不能发布：/);
@@ -140,6 +143,11 @@ test('检查模板：有写法错误或没有变量时不能发布，仍回 200 
     const noVariables = await api.call('POST', '/api/v1/document-templates/inspect', { fileBase64: empty.toString('base64') }, OWNER);
     assert.equal(noVariables.json.inspection.publishable, false);
     assert.equal(noVariables.json.inspection.problems[0].code, 'NO_VARIABLES');
+
+    const emptyCompare = await api.call('POST', '/api/v1/document-templates/inspect', { fileBase64: (await createDocx(['{{甲}}'])).toString('base64'), compareTemplateId: '' }, OWNER);
+    assert.equal(emptyCompare.status, 200);
+    assert.equal(emptyCompare.json.inspection.compare, undefined);
+    assert.equal(emptyCompare.json.inspection.needsReview, true);
 
     const missingFile = await api.call('POST', '/api/v1/document-templates/inspect', {}, OWNER);
     assert.equal(missingFile.status, 400);
@@ -157,6 +165,7 @@ test('检查模板：对比现用版本，变量没变不用审核，变量有�
     const sameVariables = await createDocx([...original, '附件：报价明细']);
     const unchanged = await api.call('POST', '/api/v1/document-templates/inspect', { fileBase64: sameVariables.toString('base64'), compareTemplateId: template.templateId }, OWNER);
     assert.equal(unchanged.json.inspection.needsReview, false);
+    assert.equal(unchanged.json.inspection.statusText, '能发布');
     assert.deepEqual(unchanged.json.inspection.compare.added, []);
     assert.match(unchanged.json.inspection.summaryText, /模板负责人可以直接发布/);
 

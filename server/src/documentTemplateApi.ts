@@ -42,7 +42,8 @@ const inspectTemplateSchema = z.object({
   fileBase64: z.string().trim().min(1).optional(),
   fileName: z.string().trim().max(255).optional(),
   name: z.string().trim().max(255).optional(),
-  compareTemplateId: z.string().trim().min(1).optional(),
+  // 多维表格自动化引用空的「模板编号」时会传空字符串，按新模板处理。
+  compareTemplateId: z.string().trim().max(80).optional().transform((value) => value || undefined),
 }).refine((value) => Boolean(value.url || value.fileBase64), {
   message: '模板链接或模板文件不能为空。',
 });
