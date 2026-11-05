@@ -358,3 +358,35 @@ test('检查模板：变量表里记成别名的变量会提醒改成标准名',
     await api.close();
   }
 });
+
+test('模板写接口：errorMode=body 时出错回 200 带 errorCode；不传照旧 4xx', async () => {
+  const api = await startApi();
+  try {
+    const buffer = await createDocx(['{{客户名称}}']);
+    const mismatch = await api.call('POST', '/api/v1/document-templates', { fileBase64: buffer.toString('base64'), expectedSha256: 'b'.repeat(64), errorMode: 'body' }, OWNER);
+    assert.equal(mismatch.status, 200);
+    assert.equal(mismatch.json.ok, false);
+    assert.equal(mismatch.json.errorCode, 'REJECTED');
+    assert.match(mismatch.json.error, /不是同一份/);
+
+    const invalid = await api.call('POST', '/api/v1/document-templates', { errorMode: 'body' }, OWNER);
+    assert.equal(invalid.status, 200);
+    assert.equal(invalid.json.errorCode, 'INVALID_REQUEST');
+
+    const template = await upload(api, buffer);
+    const forbidden = await api.call('POST', `/api/v1/document-templates/${template.templateId}/publish`, { versionId: template.activeVersionId, errorMode: 'body' }, STRANGER);
+    assert.equal(forbidden.status, 200);
+    assert.equal(forbidden.json.errorCode, 'FORBIDDEN');
+
+    const next = await createDocx(['{{客户名称}} v2']);
+    const badVersion = await api.call('POST', `/api/v1/document-templates/${template.templateId}/versions`, { fileBase64: next.toString('base64'), expectedSha256: sha(buffer), errorMode: 'body' }, OWNER);
+    assert.equal(badVersion.status, 200);
+    assert.equal(badVersion.json.errorCode, 'REJECTED');
+
+    const old = await api.call('POST', `/api/v1/document-templates/${template.templateId}/versions`, { fileBase64: next.toString('base64'), expectedSha256: sha(buffer) }, OWNER);
+    assert.equal(old.status, 400);
+    assert.equal(old.json.errorCode, undefined);
+  } finally {
+    await api.close();
+  }
+});

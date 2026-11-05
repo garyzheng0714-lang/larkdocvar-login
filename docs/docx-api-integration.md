@@ -6,6 +6,7 @@
 
 | 日期 | 类型 | 变更内容 | API 影响 | 飞书云文档 |
 |---|---|---|---|---|
+| 2026-11-05 | 契约新增 | 上传模板、新增版本、发布版本三个写接口支持可选 `errorMode=body`，出错也回 200，方便多维表格自动化把原因写回表格。 | 请求体新增可选 `errorMode`（`status` 默认 / `body`）；`body` 时错误响应多 `errorCode`（`INVALID_REQUEST`、`REJECTED`、`UNAUTHORIZED`、`FORBIDDEN`、`INTERNAL_ERROR`），服务端故障再带 `retryable: true`。不传时行为不变。 | 已同步 |
 | 2026-11-05 | 契约新增 | 为「在多维表格里运营模板」新增：检查模板、发布/退回已有版本、变量词典（标准名 + 别名）、生成时按词典顶替同义变量、出错回 200 的可选模式。 | 新增 `POST /api/v1/document-templates/inspect`、`POST /api/v1/document-templates/{templateId}/publish`、`GET/PUT/DELETE /api/v1/document-variables`；上传模板和新增版本新增可选 `expectedSha256`，版本新增 `sourceSha256`；单份生成新增可选 `aliasStrategy`、`errorMode`，响应在 `aliasStrategy=dictionary` 时多 `variables.aliased`。不传新字段时所有老接口行为不变。 | 已同步 |
 | 2026-10-26 | 运维 | 生产 `DOCUMENT_RENDER_API_KEY` 改由 FBIF 中台下发，更新 API Key 获取与 401 排查说明。 | 不改路由、字段与鉴权方式。 | 已同步 |
 | 2026-07-17 | 文档校准 | 按当前代码补齐绑定 Base `open_id` 的 OAuth handoff 路由；明确旧 `/start`、`/login-status` 才是退役入口。 | 新增 `handoff/start`、`handoff/:code` 说明；不改变 API 实现。 | 已同步 |
@@ -304,6 +305,7 @@ curl -i 'https://<部署域名>/api/v1/document-templates' \
 | `visibility` | string | 否 | `private` 或 `shared`。未传时按默认模板可见性处理。 |
 | `description` | string | 否 | 模板说明，最多 1000 字符。 |
 | `expectedSha256` | string | 否 | 「检查模板」返回的 `inspection.sha256`。传了就要求这次拿到的文件和检查时是同一份，不一致返回 400 `模板文件和检查时不是同一份，请重新检查后再发布。`；不传不校验。 |
+| `errorMode` | string | 否 | 默认 `status`：出错照旧回 4xx/5xx。传 `body`：出错也回 HTTP 200，`ok=false`，多带 `errorCode`（请求不合法 `INVALID_REQUEST`、业务拒绝 `REJECTED`、未登录 `UNAUTHORIZED`、无权限 `FORBIDDEN`、服务端故障 `INTERNAL_ERROR` 并带 `retryable: true`）。API Key 本身无效时仍回 401。 |
 
 ### 请求示例
 
@@ -621,6 +623,7 @@ curl -s -X PATCH http://localhost:3000/api/v1/document-templates/fbiftemp_202605
 | `visibility` | string | 否 | 传入后会更新模板可见性，值为 `private` 或 `shared`。 |
 | `description` | string | 否 | 传入后会更新模板说明；传空字符串会清空说明。 |
 | `expectedSha256` | string | 否 | 同「上传模板」：「检查模板」返回的 `inspection.sha256`，不一致返回 400。 |
+| `errorMode` | string | 否 | 同「上传模板」。 |
 
 ### 请求示例
 
@@ -1214,6 +1217,7 @@ curl -s http://localhost:3000/api/v1/document-templates/inspect \
 | 名称 | 类型 | 必填 | 描述 |
 |---|---|---|---|
 | `versionId` | string | 是 | 要设为现用的版本，例如 `tpl_001_v001`。已经是现用版本时原样返回。 |
+| `errorMode` | string | 否 | 同「上传模板」。 |
 
 ### 响应体
 

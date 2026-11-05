@@ -19,6 +19,7 @@ const templateInputSchema = z.object({
   visibility: z.enum(['private', 'shared']).optional(),
   description: z.string().trim().max(1000).optional(),
   expectedSha256: z.string().trim().max(64).optional(),
+  errorMode: z.enum(['status', 'body']).optional(),
 });
 
 const createTemplateSchema = templateInputSchema.refine((value) => Boolean(value.url || value.fileBase64), {
@@ -30,7 +31,7 @@ const createTemplateVersionSchema = templateInputSchema.omit({ templateId: true 
 });
 
 const updateTemplateMetadataSchema = templateInputSchema
-  .omit({ templateId: true, url: true, fileBase64: true, fileName: true, expectedSha256: true })
+  .omit({ templateId: true, url: true, fileBase64: true, fileName: true, expectedSha256: true, errorMode: true })
   .strict()
   .refine((value) => Object.keys(value).length > 0, {
     message: '模板信息不能为空。',
@@ -48,6 +49,7 @@ const inspectTemplateSchema = z.object({
 
 const publishVersionSchema = z.object({
   versionId: z.string().trim().min(1).max(120),
+  errorMode: z.enum(['status', 'body']).optional(),
 });
 
 export type DocumentTemplateResolver = {
@@ -108,7 +110,7 @@ async function requireTemplateActor(
   if (!options.enforceOwnership) return { isAdmin: true };
   const actor = await (options.resolveActor || ((currentRequest) => resolveDefaultDocumentTemplateActor(currentRequest, options.resolveSession)))(request);
   if (actor.isAdmin || actor.openId) return actor;
-  response.status(401).json({ ok: false, requestId, error: '登录状态没有接上，当前文件和填写内容已保留。请重新打开飞书侧边栏或登录后再点保存。' });
+  sendJsonError(response, 401, { ok: false, requestId, error: '登录状态没有接上，当前文件和填写内容已保留。请重新打开飞书侧边栏或登录后再点保存。' });
   return null;
 }
 
@@ -150,7 +152,7 @@ async function requireTemplateManager(
   if (!actor) return null;
   const template = await service.getTemplate(templateId);
   if (canManageTemplate(template, actor, manageOptions)) return actor;
-  response.status(403).json({ ok: false, requestId, error: '只有管理员或模板创建者可以修改此模板。' });
+  sendJsonError(response, 403, { ok: false, requestId, error: '只有管理员或模板创建者可以修改此模板。' });
   return null;
 }
 
@@ -160,14 +162,31 @@ function getRequestId(request: express.Request): string {
   return typeof requestId === 'string' && requestId.trim() ? requestId.trim().slice(0, 128) : randomUUID();
 }
 
+const ERROR_CODE_BY_STATUS: Record<number, string> = { 400: 'REJECTED', 401: 'UNAUTHORIZED', 403: 'FORBIDDEN', 500: 'INTERNAL_ERROR' };
+
+// 上传、新增版本、发布这三个写接口可选 errorMode=body：出错也回 200 并带 errorCode，
+// 多维表格自动化的 HTTP 步骤遇到非 200 会直接停住，回 200 才能把原因写回表格。不传就照旧回 4xx/5xx。
+function useBodyErrors(request: express.Request, response: express.Response): void {
+  const body = request.body as { errorMode?: unknown } | undefined;
+  if (body && typeof body === 'object' && body.errorMode === 'body') response.locals.templateErrorMode = 'body';
+}
+
+function sendJsonError(response: express.Response, status: number, payload: { ok: false; requestId: string; error: string }, errorCode?: string): void {
+  if (response.locals.templateErrorMode !== 'body') {
+    response.status(status).json(payload);
+    return;
+  }
+  response.status(200).json({ ...payload, errorCode: errorCode || ERROR_CODE_BY_STATUS[status] || 'REJECTED', ...(status >= 500 ? { retryable: true } : {}) });
+}
+
 function sendError(response: express.Response, requestId: string, error: unknown): void {
   if (error instanceof UserFacingError) {
-    response.status(400).json({ ok: false, requestId, error: error.message });
+    sendJsonError(response, 400, { ok: false, requestId, error: error.message });
     return;
   }
   // eslint-disable-next-line no-console
   console.error(`[document-template:${requestId}]`, error instanceof Error ? error.message : String(error));
-  response.status(500).json({ ok: false, requestId, error: '模板服务暂时不可用，请稍后重试。' });
+  sendJsonError(response, 500, { ok: false, requestId, error: '模板服务暂时不可用，请稍后重试。' });
 }
 
 export function createDocumentTemplateRouter(
@@ -191,9 +210,10 @@ export function createDocumentTemplateRouter(
 
   router.post('/', async (request, response) => {
     const requestId = getRequestId(request);
+    useBodyErrors(request, response);
     const parsed = createTemplateSchema.safeParse(request.body);
     if (!parsed.success) {
-      response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
+      sendJsonError(response, 400, { ok: false, requestId, error: '请求参数不合法。' }, 'INVALID_REQUEST');
       return;
     }
     try {
@@ -218,7 +238,7 @@ export function createDocumentTemplateRouter(
     const requestId = getRequestId(request);
     const parsed = inspectTemplateSchema.safeParse(request.body);
     if (!parsed.success) {
-      response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
+      sendJsonError(response, 400, { ok: false, requestId, error: '请求参数不合法。' }, 'INVALID_REQUEST');
       return;
     }
     try {
@@ -226,7 +246,7 @@ export function createDocumentTemplateRouter(
       if (parsed.data.compareTemplateId) {
         const compared = await service.getTemplate(parsed.data.compareTemplateId);
         if (!canReadDocumentTemplate(compared, actor)) {
-          response.status(403).json({ ok: false, requestId, error: '没有权限查看此模板。' });
+          sendJsonError(response, 403, { ok: false, requestId, error: '没有权限查看此模板。' });
           return;
         }
       }
@@ -243,7 +263,7 @@ export function createDocumentTemplateRouter(
       const actor = await resolveTemplateReader(request, options);
       const template = await service.getTemplate(String(request.params.templateId || ''));
       if (!canReadDocumentTemplate(template, actor)) {
-        response.status(403).json({ ok: false, requestId, error: '没有权限查看此模板。' });
+        sendJsonError(response, 403, { ok: false, requestId, error: '没有权限查看此模板。' });
         return;
       }
       response.json({ ok: true, requestId, template });
@@ -258,7 +278,7 @@ export function createDocumentTemplateRouter(
       const actor = await resolveTemplateReader(request, options);
       const template = await service.getTemplate(String(request.params.templateId || ''));
       if (!canReadDocumentTemplate(template, actor)) {
-        response.status(403).json({ ok: false, requestId, error: '没有权限查看此模板。' });
+        sendJsonError(response, 403, { ok: false, requestId, error: '没有权限查看此模板。' });
         return;
       }
       response.json({ ok: true, requestId, templateId: template.templateId, activeVersionId: template.activeVersionId, versions: template.versions });
@@ -271,7 +291,7 @@ export function createDocumentTemplateRouter(
     const requestId = getRequestId(request);
     const parsed = updateTemplateMetadataSchema.safeParse(request.body);
     if (!parsed.success) {
-      response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
+      sendJsonError(response, 400, { ok: false, requestId, error: '请求参数不合法。' }, 'INVALID_REQUEST');
       return;
     }
     try {
@@ -298,9 +318,10 @@ export function createDocumentTemplateRouter(
 
   router.post('/:templateId/versions', async (request, response) => {
     const requestId = getRequestId(request);
+    useBodyErrors(request, response);
     const parsed = createTemplateVersionSchema.safeParse(request.body);
     if (!parsed.success) {
-      response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
+      sendJsonError(response, 400, { ok: false, requestId, error: '请求参数不合法。' }, 'INVALID_REQUEST');
       return;
     }
     try {
@@ -328,9 +349,10 @@ export function createDocumentTemplateRouter(
   // 把已有版本设为现用版本（发布错了退回旧版本）。不上传文件，不新建版本。
   router.post('/:templateId/publish', async (request, response) => {
     const requestId = getRequestId(request);
+    useBodyErrors(request, response);
     const parsed = publishVersionSchema.safeParse(request.body);
     if (!parsed.success) {
-      response.status(400).json({ ok: false, requestId, error: '请求参数不合法。' });
+      sendJsonError(response, 400, { ok: false, requestId, error: '请求参数不合法。' }, 'INVALID_REQUEST');
       return;
     }
     try {
